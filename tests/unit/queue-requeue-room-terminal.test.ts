@@ -31,6 +31,19 @@ import { serializeMark } from "@content/features/requeue-pending";
 import type { Settings } from "@shared/types";
 
 const PENDING_KEY = "pn_requeue_pending";
+const NOT_READY_EXIT_KEY = "pn_requeue_not_ready_exit";
+
+/** Навигация наблюдаемая: jsdom глотает location.assign в virtual console,
+ *  и мутант «не уводить» был зелёным (adversarial 28.09.2026, находка 1). */
+const assignSpy = vi.fn();
+const jsdomLocation = location; // живой pathname: маршруты тестов ходят через history.replaceState
+vi.stubGlobal("location", {
+  get pathname() {
+    return jsdomLocation.pathname;
+  },
+  origin: jsdomLocation.origin,
+  assign: assignSpy,
+});
 const EXIT_MESSAGE = "комната распущена после готовности — уходим на страницу поиска";
 const ctx = { settings: { requeue_after_lobby_fail_enabled: true } as Settings };
 
@@ -73,6 +86,7 @@ function errorScreen(buttons: Array<{ href?: string; title: string }>): void {
 }
 
 beforeEach(() => {
+  assignSpy.mockClear();
   sessionStorage.clear();
   document.body.innerHTML = "";
   history.replaceState(null, "", "/game");
@@ -344,21 +358,64 @@ describe("RQ-7 (пересмотрен 28.09.2026): неготового тож�
     domSubscriber?.();
     vi.advanceTimersByTime(12_500);
 
-    // Навигация — общий с готовым путём код ниже ветки (его сторожат
-    // EXIT-тесты); здесь сторожим РАЗВИЛКУ: увели, но без метки.
     expect(infoHas("БЕЗ автоклика")).toBe(true);
     expect(infoHas(EXIT_MESSAGE), "это НЕ возврат с автокликом").toBe(false);
+    expect(assignSpy, "увод РЕАЛЕН, а не только строка в логе").toHaveBeenCalledWith(
+      "/game-search",
+    );
     expect(
       sessionStorage.getItem(PENDING_KEY),
       "метки нет: машина «Играть» за неготового не нажмёт",
     ).toBeNull();
+    expect(
+      sessionStorage.getItem(NOT_READY_EXIT_KEY),
+      "мост-объяснение взведён: страница поиска скажет почему",
+    ).toBe("1");
   });
 
-  test("пока отсчёт идёт, тоста нет — игрок ещё может нажать «Готов»", () => {
+  test("чужая метка этапа 1 гаснет при роспуске без готовности — и гаснет ДО отсрочек", () => {
+    // Обход, от которого защищает clearPending (adversarial 28.09.2026,
+    // находка 2): принял лобби на поиске → в комнате «Готов» не нажал →
+    // быстрый роспуск → приземление с живой меткой = автоклик за неготового.
+    // Прежний тест был вакуумным: метки в сценарии никогда не было.
+    sessionStorage.setItem(PENDING_KEY, serializeMark({ issuedAt: Date.now(), refreshedAt: Date.now() }));
+    pregameWithCountdown(false, "00:02");
+    queueRequeueFeature.enable(ctx);
+    domSubscriber?.();
+    document.querySelector(".disbandment-timer")?.remove();
+    domSubscriber?.();
+    vi.advanceTimersByTime(12_500);
+    expect(sessionStorage.getItem(PENDING_KEY), "чужая метка снята").toBeNull();
+  });
+
+  test("неготовый в фоновой вкладке: метка гаснет СРАЗУ, навигация ждёт возвращения", () => {
+    // Находка 5: отсрочка держала чужую метку живой в фоне — сайтовая
+    // навигация успела бы донести её до автоклика.
+    sessionStorage.setItem(PENDING_KEY, serializeMark({ issuedAt: Date.now(), refreshedAt: Date.now() }));
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    try {
+      pregameWithCountdown(false, "00:02");
+      queueRequeueFeature.enable(ctx);
+      domSubscriber?.();
+      document.querySelector(".disbandment-timer")?.remove();
+      domSubscriber?.();
+      vi.advanceTimersByTime(12_500);
+      expect(sessionStorage.getItem(PENDING_KEY), "метка снята даже в фоне").toBeNull();
+      expect(assignSpy, "фоновую вкладку не дёргаем (отсрочка для всех)").not.toHaveBeenCalled();
+      expect(infoHas("вкладка в фоне")).toBe(true);
+    } finally {
+      Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    }
+  });
+
+  test("пока отсчёт идёт — никакого увода: игрок ещё может нажать «Готов»", () => {
+    // Прежний ассерт «тоста нет» стал тривиально истинным после смерти
+    // тоста (adversarial 28.09.2026, находка 8) — сторожим само действие.
     pregameWithCountdown(false, "00:20");
     queueRequeueFeature.enable(ctx);
     domSubscriber?.();
-    expect(vi.mocked(showToast)).not.toHaveBeenCalled();
+    expect(assignSpy).not.toHaveBeenCalled();
+    expect(infoHas("БЕЗ автоклика")).toBe(false);
   });
 });
 
@@ -441,6 +498,22 @@ describe("RQ-8/RQ-9: эпизоды и маршруты", () => {
     domSubscriber?.();
     expect(infoHas("взводим автоклик")).toBe(true);
     expect(sessionStorage.getItem(PENDING_KEY), "метка одноразовая").toBeNull();
+  });
+
+  test("приземление неготового на поиске объяснено плашкой — один раз, без автоклика", () => {
+    // Молчаливый принудительный увод (adversarial 28.09.2026, находка 4):
+    // тост в комнате мелькнул бы миллисекунды, объясняет страница поиска.
+    sessionStorage.setItem(NOT_READY_EXIT_KEY, "1");
+    history.replaceState(null, "", "/game-search");
+    document.body.innerHTML = "";
+    queueRequeueFeature.enable(ctx);
+    domSubscriber?.();
+    expect(vi.mocked(showToast)).toHaveBeenCalledWith(
+      expect.stringContaining("Лобби распущено"),
+      expect.anything(),
+    );
+    expect(sessionStorage.getItem(NOT_READY_EXIT_KEY), "мост одноразовый").toBeNull();
+    expect(infoHas("взводим автоклик"), "автоклик за неготового не взводится").toBe(false);
   });
 
   test("бэкофф на главной истекает сам: мост доводит до поиска без мутаций", () => {
