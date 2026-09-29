@@ -169,6 +169,13 @@ export function parseGameRows(payload: unknown): { rows: GameRow[]; total: numbe
     };
     const id = typeof r?.id === "number" ? r.id : Number(r?.id);
     if (!Number.isSafeInteger(id) || id <= 0) continue;
+    // Судейство — не игра (жалоба 29.09.2026, profile/43013): у судьи
+    // role.type="judge", result «neutural», mmr null — прежний разбор давал
+    // «мирный, поражение» в последних играх, «Моём вечере» и пересечениях.
+    // Фильтр здесь один на всех потребителей. total сервера при этом
+    // включает судейства — расхождение строк с total уже штатное
+    // (постраничная обрезка), потребители на равенство не рассчитывают.
+    if (r.role?.type === "judge") continue;
     const mmrAfter = r.mmr?.mmr;
     const mmrDiff = r.mmr?.mmr_diff;
     rows.push({

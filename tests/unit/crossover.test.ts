@@ -135,6 +135,33 @@ describe("разбор ответа истории игр", () => {
     expect(parsed?.total).toBe(373);
   });
 
+  test("судейство — не игра: фильтруется на разборе (жалоба 29.09.2026)", () => {
+    // Живая форма (profile/43013): role judge, result «neutural», mmr null.
+    // Прежний разбор давал «мирный, поражение» — судью показывало
+    // проигравшим в его же судейских играх.
+    const parsed = parseGameRows({
+      totalCount: 3,
+      rows: [
+        {
+          id: 642458,
+          role: { type: "judge", title: "Судья" },
+          result: { title: "Поб. Мирных", code: "neutural" },
+          mmr: null,
+          date_start: "2026-09-27 18:00:00",
+        },
+        {
+          id: 643127,
+          role: { type: "civilian", title: "Мирный" },
+          result: { code: "fail" },
+          mmr: { mmr: 8218, mmr_diff: 17 },
+          date_start: "2026-09-28 18:00:00",
+        },
+      ],
+    });
+    expect(parsed?.rows.map((r) => r.id), "осталась только настоящая игра").toEqual([643127]);
+    expect(parsed?.rows[0].role).toBe("civilian");
+  });
+
   test("поражение — это НЕ победа", () => {
     const parsed = parseGameRows({ rows: [{ id: 1, role: { type: "mafia" }, result: { code: "fail" } }] });
     expect(parsed?.rows[0].win).toBe(false);
