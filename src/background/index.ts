@@ -342,9 +342,62 @@ async function reconcileObsConnection(probe = false, ignorePersistedBlock = fals
   await obs.connect(s.obs_host, s.obs_password);
 }
 
+/**
+ * Нужен ли немедленный «пинок» подключению OBS при входе в игровую комнату.
+ * Чистая функция — сторожится мутационно.
+ *
+ * Жалоба 01.10.2026: OBS запустили ПОЗЖЕ браузера — бюджет плотных попыток
+ * сгорел за 50 с до начала игры, редкий режим пробует раз в 5 минут, и
+ * первая ночь осталась без ночной сцены. Вход в комнату — явный сигнал
+ * «сейчас будет эфир», ему положена одна немедленная плотная попытка.
+ *
+ * «Нет» — когда попытка противоречит воле пользователя (ручной дисконнект),
+ * блокировке по паролю/протоколу (священна, см. watchdogTick) или
+ * бессмысленна: уже подключены/подключаемся, интеграция выключена.
+ */
+export function shouldKickObsOnRoomEntry(input: {
+  extensionEnabled: boolean;
+  obsEnabled: boolean;
+  manuallyDisconnected: boolean;
+  reconnectBlocked: boolean;
+  connectedToCurrent: boolean;
+  busy: boolean;
+}): boolean {
+  return (
+    input.extensionEnabled &&
+    input.obsEnabled &&
+    !input.manuallyDisconnected &&
+    !input.reconnectBlocked &&
+    !input.connectedToCurrent &&
+    !input.busy
+  );
+}
+
 async function handleObsCommand(cmd: ObsCommandMsg["command"], data: ObsCommandMsg["data"]) {
   return enqueueObs(async () => {
     switch (cmd) {
+      case "room_entered": {
+        const s = await getSettings();
+        const kick = shouldKickObsOnRoomEntry({
+          extensionEnabled: s.extension_enabled !== false,
+          obsEnabled: s.obs_enabled === true && Boolean(s.obs_host),
+          manuallyDisconnected: await isManuallyDisconnected(),
+          reconnectBlocked: await isAutoReconnectBlocked(),
+          connectedToCurrent: obs.isConnectedTo(s.obs_host, s.obs_password),
+          // Живое соединение/попытка/таймер плотной цепочки — не мешаем;
+          // исчерпанный бюджет таймера не держит, и busy тогда false.
+          busy: obs.hasConnectionActivity(),
+        });
+        if (!kick) return { kicked: false };
+        log.info(
+          "background",
+          "вход в игровую комнату: OBS не подключён — немедленная плотная попытка",
+        );
+        obs.resetReconnectAttempts();
+        await setObsWatchdog(true);
+        await obs.connect(s.obs_host, s.obs_password);
+        return { kicked: true };
+      }
       case "connect":
         if (!(await getSetting("extension_enabled"))) {
           throw new Error("Расширение выключено (тумблер в шапке настроек)");

@@ -353,10 +353,29 @@ let isVisible = false;
 // ─────────────────────────── OBS-команды (через background) ───────────────────────────
 
 async function obsCommand(
-  command: "get_status" | "set_scene",
+  command: "get_status" | "set_scene" | "room_entered",
   data?: { sceneName?: string; manual?: boolean },
 ): Promise<any> {
   return sendRuntime<any>({ type: "obs_command", command, data });
+}
+
+/** Последнее известное роутеру состояние «мы в игровой комнате». */
+let obsRoomRouteLast = false;
+
+/**
+ * Сигнал роутера «вошли в игровую комнату» → background даёт мёртвому
+ * соединению OBS немедленную плотную попытку вместо ожидания редкого тика
+ * (жалоба 01.10.2026: OBS запустили позже браузера, бюджет сгорел до игры).
+ * Все гейты (настройки, ручной дисконнект, блокировка, «уже подключены») —
+ * на стороне background: правда о соединении живёт там.
+ */
+export function syncObsRoomRoute(inRoom: boolean): void {
+  if (inRoom === obsRoomRouteLast) return;
+  obsRoomRouteLast = inRoom;
+  if (!inRoom) return;
+  void obsCommand("room_entered").catch(() => {
+    /* background спит/недоступен — редкий режим остаётся страховкой */
+  });
 }
 
 /**
@@ -503,7 +522,10 @@ async function restorePersistedAutoState(status: any = null): Promise<boolean> {
     // монтировалась видимой на дневной сцене.
     lastAppliedRoleVisibility = null;
 
-    const applied = applyRoleVisibility(currentTimeOfDay === "night");
+    // Через roleTargetFor (жалоба 01.10.2026): restore не имеет права
+    // показать роль, пока эфир не на ночной сцене — autoSwitchScene ниже
+    // сам перезапустит показ после подтверждённой смены.
+    const applied = applyRoleVisibility(roleTargetFor(currentTimeOfDay) === "visible");
     if (!applied) scheduleRoleVisibility(currentTimeOfDay, 1);
 
     await autoSwitchScene(currentTimeOfDay);
@@ -544,6 +566,45 @@ function setImportant(el: HTMLElement, prop: string, value: string): void {
 }
 
 /**
+ * Разрешён ли НОЧНОЙ показ роли. Чистая функция — сторожится мутационно.
+ *
+ * Показ роли ночью безопасен только когда эфир УЖЕ на ночной (приватной)
+ * сцене: 01.10.2026 OBS был не подключён, автосмена упала, стрим остался на
+ * дневной сцене с игровым экраном — а автопоказ роли об этом не знал, и роль
+ * уехала зрителям («ночь не включилась, роль видно было»). Показ и смена
+ * сцены — одна рука, не две.
+ *
+ * Ночная сцена НЕ настроена — защищать нечего (стример не пользуется
+ * автосценами, прежнее поведение сохраняется). currentScene обновляется
+ * только подтверждённым switchScene или событием/статусом самого OBS — это
+ * и есть подтверждение «эфир на ночной».
+ */
+export function nightRoleShowAllowed(input: {
+  nightScene: string;
+  currentScene: string | null;
+}): boolean {
+  return !input.nightScene || input.currentScene === input.nightScene;
+}
+
+/** Целевая видимость роли для фазы С УЧЁТОМ сцены (живое состояние модуля). */
+function roleTargetFor(timeOfDay: TimeOfDay): "visible" | "hidden" {
+  return timeOfDay === "night" && nightRoleShowAllowed({ nightScene, currentScene })
+    ? "visible"
+    : "hidden";
+}
+
+/**
+ * ШОВ для auto-start (жалоба 01.10.2026): его ночной автопоказ жмёт НАТИВНЫЙ
+ * D — сайт раскрывает роль мимо нашего пина, и гейт внутри этой панели его
+ * не останавливает. Обе руки ночного показа обязаны вестись от одной правды.
+ * Без автосцен (режим выключен) ждать нечего — прежнее поведение.
+ */
+export function nightSceneSafeForRoleShow(): boolean {
+  if (!autoModeEnabled) return true;
+  return nightRoleShowAllowed({ nightScene, currentScene });
+}
+
+/**
  * Желаемая видимость роли — ВЫВОДИТСЯ из фазы, а не хранится. Adversarial
  * 29.08.2026 (находка A): самолечение гейтилось на латч, а любой путь
  * неудачи гасил латч в null — при бюджете ретраев ~1,25 с (день) F5 или
@@ -559,7 +620,10 @@ function desiredRoleVisibility(): "visible" | "hidden" | null {
   // у кого включена только автосмена (adversarial 31.08.2026, Н2).
   // Fail-safe направление: спрятать до первой распознанной фазы.
   if (!currentTimeOfDay) return "hidden";
-  return currentTimeOfDay === "night" ? "visible" : "hidden";
+  // Ночь дополнительно гейтится сценой (жалоба 01.10.2026): пока эфир не на
+  // ночной сцене, desired = hidden — и heal-опрос сам покажет роль, как
+  // только сцена реально переключится (или спрячет, если стример ушёл с неё).
+  return roleTargetFor(currentTimeOfDay);
 }
 
 /**
@@ -577,7 +641,10 @@ function healRolePin(): void {
 }
 
 function scheduleRoleVisibility(timeOfDay: TimeOfDay, attempt = 0): void {
-  const shouldShowRoles = timeOfDay === "night";
+  // Цель с учётом сцены (жалоба 01.10.2026): ночь без подтверждённой ночной
+  // сцены планирует hidden, а показ придёт повторным вызовом из
+  // autoSwitchScene после успешной смены (или от heal-опроса по событию OBS).
+  const shouldShowRoles = roleTargetFor(timeOfDay) === "visible";
   const targetVisibility = shouldShowRoles ? "visible" : "hidden";
 
   if (pendingRoleVisibilityTimer) {
@@ -606,7 +673,9 @@ function scheduleRoleVisibility(timeOfDay: TimeOfDay, attempt = 0): void {
     // Страховка второй линии: сам таймер гасится в stopDOMMonitoring/disable,
     // но проверка здесь дешёвая и закрывает будущие пути взведения.
     if (!autoModeEnabled) return;
-    const applied = applyRoleVisibility(shouldShowRoles);
+    // Цель ПЕРЕсчитывается на срабатывании: за время задержки сцена могла
+    // подтвердиться (или уйти) — применяем правду момента, не снимок.
+    const applied = applyRoleVisibility(roleTargetFor(timeOfDay) === "visible");
     if (applied) return;
     if (attempt < 5) {
       scheduleRoleVisibility(timeOfDay, attempt + 1);
@@ -1165,9 +1234,22 @@ async function autoSwitchScene(timeOfDay: TimeOfDay): Promise<void> {
   try {
     // Подтверждение отдельной строкой: «попытались» и «сцена реально
     // переключилась» — разные события, и в жалобе важно именно второе.
-    if (await switchScene(targetScene)) log.info(SCOPE, "сцена переключена:", targetScene);
+    if (await switchScene(targetScene)) {
+      log.info(SCOPE, "сцена переключена:", targetScene);
+      // Ночь: показ роли ждал подтверждённой сцены (roleTargetFor) — теперь
+      // сцена наша, перезапускаем показ (жалоба 01.10.2026).
+      if (timeOfDay === "night") scheduleRoleVisibility(timeOfDay);
+    }
   } catch (e) {
     log.error(SCOPE, "Failed to auto-switch scene", e, "(target:", targetScene, ")");
+    // Молчание здесь стоило стримеру роли в эфире (жалоба 01.10.2026): о
+    // проблеме узнали от зрителей. Ночью объясняем и последствие для роли.
+    showToast(
+      timeOfDay === "night"
+        ? "OBS: ночная сцена не переключена (нет подключения) — роль оставлена скрытой"
+        : "OBS: сцена не переключена — проверьте подключение",
+      { key: "obs-scene-switch-fail" },
+    );
   }
 }
 
@@ -1366,6 +1448,14 @@ function handleOBSEvent(eventType: string, data: any): void {
 
         panel?.setScenes(scenes, currentScene);
         panel?.setConnectionStatus("Подключено", "connected");
+        // (Ре)коннект посреди игры: 01.10.2026 OBS поднялся ЧЕРЕЗ 30 с после
+        // начала ночи, но сцену никто не переключил — следующая попытка была
+        // бы только на смене фазы. Догоняем известную фазу сейчас; гейты
+        // (автомод, комната, «уже на месте») — внутри autoSwitchScene.
+        if (autoModeEnabled && currentTimeOfDay) {
+          void autoSwitchScene(currentTimeOfDay);
+          healRolePin();
+        }
       }
       break;
 
@@ -1373,6 +1463,10 @@ function handleOBSEvent(eventType: string, data: any): void {
       currentScene = data ?? null;
       if (!panel && autoModeEnabled && hasActiveGameInterface()) doShow();
       panel?.setCurrentScene(currentScene);
+      // Сцена эфира сменилась (нами или СТРИМЕРОМ РУКАМИ) — желаемая
+      // видимость роли могла измениться вместе с ней: ушли с ночной сцены →
+      // роль прячется, вернулись → показывается (жалоба 01.10.2026).
+      healRolePin();
       break;
 
     case "obs_connected":

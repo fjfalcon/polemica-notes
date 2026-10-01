@@ -21,6 +21,7 @@ import { log } from "@core/log";
 import { showToast } from "@core/toast";
 import { isPinnedElement, liftPins, restoreLiftedPins } from "../role-pin";
 import { isRoleFaked } from "./role-faker";
+import { nightSceneSafeForRoleShow } from "../panels/obs-panel";
 import { SITE, TEXT, OWN, classifyPhaseText, endedScreenVisible, SITE_CLASS } from "@core/selectors";
 import { isAutoAcceptSuppressed } from "../auto-accept-gate";
 import { noteAutoAcceptDispatched } from "./queue-requeue";
@@ -92,6 +93,8 @@ let rolePhaseCheckTimer: ReturnType<typeof setTimeout> | null = null;
 let lastDetectedRolePhase: "day" | "night" | null = null;
 let pendingNightRoleShowTimer: ReturnType<typeof setTimeout> | null = null;
 let nightAutoShowAttempts = 0;
+/** «Показ отложен: эфир не на ночной сцене» — одна строка на ночь, не 30. */
+let nightShowSceneDeferredLogged = false;
 let nightAutoShowStartedAt = 0;
 
 // ─────────────────────────── автопринятие игр ───────────────────────────
@@ -887,6 +890,19 @@ function scheduleNightRoleAutoShow(delayMs: number) {
       log.info(SCOPE, "ночной показ роли пропущен: игрок только что действовал сам");
       return;
     }
+    // Эфир ещё НЕ на ночной сцене (жалоба 01.10.2026: OBS был отключён,
+    // сцена осталась дневной, а нативный D раскрыл роль зрителям). Ждём
+    // сцену короткими повторами: её принесёт реконнект OBS или сам стример.
+    // Счётчик попыток не трогаем: это не «не смогли», это «нельзя».
+    if (!nightSceneSafeForRoleShow()) {
+      if (!nightShowSceneDeferredLogged) {
+        nightShowSceneDeferredLogged = true;
+        log.info(SCOPE, "ночной показ роли отложен: эфир не на ночной сцене OBS");
+      }
+      scheduleNightRoleAutoShow(2000);
+      return;
+    }
+    nightShowSceneDeferredLogged = false;
     log.debug(SCOPE, "night-show fire");
 
     // 1) Убираем CSS-скрытие

@@ -189,7 +189,8 @@ export interface ObsCommandMsg {
     | "record_start"
     | "record_stop"
     | "replay_save"
-    | "replay_setup";
+    | "replay_setup"
+    | "room_entered";
   data?: {
     url?: string;
     password?: string;

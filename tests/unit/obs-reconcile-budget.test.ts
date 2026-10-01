@@ -125,7 +125,7 @@ vi.mock("../../src/background/notes-coordinator", () => ({
 
 import { browser } from "@core/env";
 import { log } from "@core/log";
-import { OBS_RECONNECT_ATTEMPTS_KEY } from "../../src/background/obs-client";
+import { OBS_RECONNECT_ATTEMPTS_KEY, OBS_RETRY_BLOCKED_KEY } from "../../src/background/obs-client";
 
 const OBS_WATCHDOG_ALARM = "polemica:obs-watchdog";
 
@@ -603,5 +603,77 @@ describe("пароль привязан к адресу (финальная мо
     await flushMicrotasks();
     // Уносить нечего — привязка не мешает.
     expect(FakeSocket.created, "подключаемся как обычно").toBeGreaterThan(0);
+  });
+});
+
+/**
+ * «Пинок» OBS при входе в игровую комнату (жалоба 01.10.2026): OBS запустили
+ * ПОЗЖЕ браузера — бюджет плотных попыток сгорел за 50 с до игры, редкий
+ * режим пробует раз в 5 минут, и первая ночь осталась без ночной сцены.
+ * Вход в комнату — сигнал «сейчас эфир»: мёртвому соединению одна
+ * немедленная плотная попытка; воля пользователя и блокировки — священны.
+ */
+describe("room_entered: немедленная попытка при входе в комнату", () => {
+  async function send(msg: unknown): Promise<unknown> {
+    for (const fn of wiring.onMessage) {
+      const res = fn(msg, { tab: undefined });
+      if (res !== undefined) return await res;
+    }
+    return undefined;
+  }
+  const roomEntered = () => send({ type: "obs_command", command: "room_entered" });
+
+  test("исчерпанный бюджет + мёртвый OBS: вход в комнату подключает немедленно", async () => {
+    store.data[OBS_RECONNECT_ATTEMPTS_KEY] = 10;
+    // Свежая метка редкого режима: именно она держала бы паузу 5 минут.
+    store.data["obs_degraded_attempt_at"] = Date.now();
+    await bootBackground();
+    expect(FakeSocket.created).toBe(0);
+
+    const reply = roomEntered() as Promise<{ success: boolean; data?: { kicked?: boolean } }>;
+    await flushMicrotasks();
+    FakeSocket.last!.hello();
+    await flushMicrotasks();
+    FakeSocket.last!.identified();
+    await expect(reply).resolves.toMatchObject({ success: true, data: { kicked: true } });
+
+    expect(FakeSocket.created).toBe(1);
+    expect(store.data[OBS_RECONNECT_ATTEMPTS_KEY], "бюджет сброшен — цепочка снова плотная").toBe(0);
+  });
+
+  test("ручной «Отключиться» уважается: входа в комнату недостаточно", async () => {
+    store.data[OBS_RECONNECT_ATTEMPTS_KEY] = 10;
+    store.data["obs_manual_disconnect"] = true;
+    await bootBackground();
+    await expect(roomEntered()).resolves.toMatchObject({ data: { kicked: false } });
+    expect(FakeSocket.created).toBe(0);
+  });
+
+  test("блокировка по паролю/протоколу священна", async () => {
+    store.data[OBS_RECONNECT_ATTEMPTS_KEY] = 10;
+    store.data[OBS_RETRY_BLOCKED_KEY] = true;
+    await bootBackground();
+    await expect(roomEntered()).resolves.toMatchObject({ data: { kicked: false } });
+    expect(FakeSocket.created).toBe(0);
+  });
+
+  test("выключенная интеграция OBS — пинка нет", async () => {
+    settings.current.obs_enabled = false;
+    store.data[OBS_RECONNECT_ATTEMPTS_KEY] = 10;
+    await bootBackground();
+    await expect(roomEntered()).resolves.toMatchObject({ data: { kicked: false } });
+    expect(FakeSocket.created).toBe(0);
+  });
+
+  test("живое соединение не трогаем: второй сокет не создаётся", async () => {
+    await bootBackground();
+    await flushMicrotasks();
+    FakeSocket.last?.hello();
+    await flushMicrotasks();
+    FakeSocket.last?.identified();
+    await flushMicrotasks();
+    const before = FakeSocket.created;
+    await expect(roomEntered()).resolves.toMatchObject({ data: { kicked: false } });
+    expect(FakeSocket.created).toBe(before);
   });
 });

@@ -214,3 +214,88 @@ describe("смена сцены только по живому распозна�
     );
   });
 });
+
+/**
+ * Жалоба 01.10.2026: смена сцены упала (OBS не подключён), а ночной показ
+ * роли об этом не знал — роль уехала зрителям на дневной сцене. Показ и
+ * сцена — ОДНА рука: каждая точка, решающая «visible», обязана выводить
+ * цель через roleTargetFor (фаза × подтверждённая сцена), а нативный D в
+ * auto-start — через шов nightSceneSafeForRoleShow. Сторожим по исходнику,
+ * как и латч: ловушка на неосторожную правку.
+ */
+describe("жалоба 01.10.2026: ночной показ роли ждёт ночную сцену", () => {
+  const autoStart = fs.readFileSync(
+    path.join(ROOT, "src/content/features/auto-start.ts"),
+    "utf8",
+  );
+
+  test("desiredRoleVisibility выводит цель через roleTargetFor", () => {
+    const body = source.slice(
+      source.indexOf("function desiredRoleVisibility"),
+      source.indexOf("function healRolePin"),
+    );
+    expect(body).toMatch(/return roleTargetFor\(currentTimeOfDay\);/);
+    expect(body, "сырое `night → visible` возвращает утечку").not.toMatch(
+      /currentTimeOfDay === "night"\s*\?\s*"visible"/,
+    );
+  });
+
+  test("scheduleRoleVisibility: цель гейтится сценой и ПЕРЕсчитывается в таймере", () => {
+    const body = source.slice(
+      source.indexOf("function scheduleRoleVisibility"),
+      source.indexOf("async function hideRoleBeforeDaySceneSwitch"),
+    );
+    expect(body).toMatch(/const shouldShowRoles = roleTargetFor\(timeOfDay\) === "visible";/);
+    expect(body, "снимок цели в таймере — класс «отравленный снимок»").toMatch(
+      /applyRoleVisibility\(roleTargetFor\(timeOfDay\) === "visible"\)/,
+    );
+  });
+
+  test("restore после F5 не показывает роль мимо гейта сцены", () => {
+    const body = source.slice(
+      source.indexOf("async function restorePersistedAutoState"),
+      source.indexOf("// ─────────────────────────── видимость своей роли"),
+    );
+    expect(body).toMatch(/applyRoleVisibility\(roleTargetFor\(currentTimeOfDay\) === "visible"\)/);
+    expect(body).not.toMatch(/applyRoleVisibility\(currentTimeOfDay === "night"\)/);
+  });
+
+  test("успешная ночная смена сцены перезапускает показ; провал — объясняется тостом", () => {
+    const body = source.slice(
+      source.indexOf("async function autoSwitchScene"),
+      source.indexOf("function startDOMMonitoring"),
+    );
+    expect(body, "гейт закрыт при планировании — показ запускает сцена").toMatch(
+      /if \(timeOfDay === "night"\) scheduleRoleVisibility\(timeOfDay\);/,
+    );
+    expect(body, "молчаливый провал смены уже стоил роли в эфире").toMatch(/showToast\(/);
+  });
+
+  test("события OBS будят выравнивание: реконнект — сцену, смена сцены — роль", () => {
+    const body = source.slice(
+      source.indexOf("function handleOBSEvent"),
+      source.indexOf("function applyAutoSettings"),
+    );
+    expect(body, "scenes_updated (реконнект) догоняет известную фазу").toMatch(
+      /void autoSwitchScene\(currentTimeOfDay\);/,
+    );
+    const changed = body.slice(body.indexOf('case "obs_scene_changed"'));
+    expect(changed, "смена сцены лечит желаемую видимость роли").toMatch(/healRolePin\(\);/);
+  });
+
+  test("auto-start: нативный D ночью гейтится сценой, без расхода попыток", () => {
+    const start = autoStart.indexOf("function scheduleNightRoleAutoShow");
+    const body = autoStart.slice(start, autoStart.indexOf("function getTexts", start));
+    const gate = body.slice(
+      body.indexOf("nightSceneSafeForRoleShow()"),
+      body.indexOf("log.debug(SCOPE, \"night-show fire\")"),
+    );
+    expect(gate.length, "гейт стоит ДО показа").toBeGreaterThan(10);
+    expect(gate, "отложенный показ повторяется — сцену принесёт реконнект").toMatch(
+      /scheduleNightRoleAutoShow\(2000\);/,
+    );
+    expect(gate, "«нельзя» не тратит бюджет «не смогли»").not.toMatch(
+      /nightAutoShowAttempts\+\+/,
+    );
+  });
+});

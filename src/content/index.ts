@@ -40,7 +40,7 @@ import { postgameSearchFeature } from "./features/postgame-search";
 import { nickPlateFeature } from "./features/nick-plate";
 import { wsLogFeature } from "./features/ws-log";
 import { controlsSafetyFeature } from "./features/controls-safety";
-import { obsPanelFeature } from "./panels/obs-panel";
+import { obsPanelFeature, syncObsRoomRoute } from "./panels/obs-panel";
 import { sessionStatsFeature } from "./panels/session-stats-panel";
 import { profileCrossoverFeature, profileIdFromPath, syncProfileCrossoverRoute } from "./features/profile-crossover";
 import { profileMmrChartFeature, syncProfileMmrRoute } from "./features/profile-mmr-chart";
@@ -110,6 +110,7 @@ function setupUrlRouter(extensionEnabledAtBoot: boolean): void {
     syncProfileMmrRoute(profileIdFromPath(location.pathname));
     syncObsRecordRoute(isGameRoomPath(location.pathname));
     syncContractWatchRoute(isGameRoomPath(location.pathname));
+    syncObsRoomRoute(isGameRoomPath(location.pathname));
     if (matchId !== lastMatchId) {
       lastMatchId = matchId;
       // Мастер-выключатель: не качаем страницу матча впустую — все
