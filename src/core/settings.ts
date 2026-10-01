@@ -129,6 +129,11 @@ export const DEFAULT_SETTINGS: Settings = {
   // Выключено по умолчанию (решение владельца 01.10.2026): пасхалка меняет
   // привычный вид протокола — включает её каждый сам.
   unicorn_hearts_enabled: false,
+  // Дефолты меток: сердце → 🦄 (так фича и родилась в 9.63.0 — уже
+  // включившим ничего не меняем), остальные пустые = родные иконки.
+  protocol_emoji_civ: "🦄",
+  protocol_emoji_maf: "",
+  protocol_emoji_vice: "",
   queue_peek_standard: true,
   queue_peek_polite: true,
   queue_peek_prime: true,

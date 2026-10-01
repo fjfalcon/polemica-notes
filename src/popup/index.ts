@@ -29,6 +29,13 @@ import {
 import { formatKeyCode, isModifierCode } from "@core/keyboard";
 // Список углов — общий с content-скриптом (см. shared/nick-plate).
 import { PLATE_POSITIONS } from "@shared/nick-plate";
+import {
+  DEFAULT_PROTOCOL_EMOJI,
+  PROTOCOL_EMOJI_PALETTE,
+  PROTOCOL_EMOJI_SETTING,
+  PROTOCOL_MARKS,
+  normalizeProtocolEmoji,
+} from "@shared/protocol-emoji";
 import { readControlPosition } from "@shared/controls-layout";
 import { CUSTOM_THEME, readButtonColor } from "@shared/button-theme";
 import { readLastGamesCount } from "@shared/last-games";
@@ -1498,6 +1505,12 @@ document.addEventListener("DOMContentLoaded", () => {
     set("role_marker_icons_enabled", items.role_marker_icons_enabled);
     syncRoleMarkerIconsRow();
     set("unicorn_hearts_enabled", items.unicorn_hearts_enabled);
+    for (const mark of PROTOCOL_MARKS) {
+      const inp = $<HTMLInputElement>(PROTOCOL_EMOJI_SETTING[mark]);
+      // Нормализация и на чтении: мусор из storage не должен уехать в поле.
+      if (inp) inp.value = normalizeProtocolEmoji(items[PROTOCOL_EMOJI_SETTING[mark]]);
+    }
+    syncProtocolEmojiRows();
     set("compact_nicknames_enabled", items.compact_nicknames_enabled);
     set("nick_click_toggle_enabled", items.nick_click_toggle_enabled);
     const npp = $<HTMLSelectElement>("nick_plate_position");
@@ -1629,6 +1642,9 @@ document.addEventListener("DOMContentLoaded", () => {
       role_marker_enabled: cb("role_marker_enabled", false),
       role_marker_icons_enabled: cb("role_marker_icons_enabled", true),
       unicorn_hearts_enabled: cb("unicorn_hearts_enabled", false),
+      protocol_emoji_civ: readProtocolEmoji("civ"),
+      protocol_emoji_maf: readProtocolEmoji("maf"),
+      protocol_emoji_vice: readProtocolEmoji("vice"),
       compact_nicknames_enabled: cb("compact_nicknames_enabled", false),
       nick_click_toggle_enabled: cb("nick_click_toggle_enabled", true),
       nick_plate_position: $<HTMLSelectElement>("nick_plate_position")?.value || "default",
@@ -1820,6 +1836,9 @@ document.addEventListener("DOMContentLoaded", () => {
     "role_marker_enabled",
     "role_marker_icons_enabled",
     "unicorn_hearts_enabled",
+    "protocol_emoji_civ",
+    "protocol_emoji_maf",
+    "protocol_emoji_vice",
     "compact_nicknames_enabled",
     "nick_click_toggle_enabled",
     "nick_plate_position",
@@ -1861,6 +1880,54 @@ document.addEventListener("DOMContentLoaded", () => {
     row.style.display = $<HTMLInputElement>("role_marker_enabled")?.checked ? "" : "none";
   }
   $("role_marker_enabled")?.addEventListener("change", syncRoleMarkerIconsRow);
+
+  /** Значение поля эмодзи метки протокола (нормализованное; "" = не подменять). */
+  function readProtocolEmoji(mark: (typeof PROTOCOL_MARKS)[number]): string {
+    const inp = $<HTMLInputElement>(PROTOCOL_EMOJI_SETTING[mark]);
+    // Поля нет в DOM — не выдумываем «пусто», оставляем дефолт настройки.
+    return inp ? normalizeProtocolEmoji(inp.value) : DEFAULT_PROTOCOL_EMOJI[mark];
+  }
+
+  /** Поля эмодзи и палитра видны только при включённой подмене протокола. */
+  function syncProtocolEmojiRows(): void {
+    const rows = $("protocol_emoji_rows");
+    if (!rows) return;
+    rows.style.display = $<HTMLInputElement>("unicorn_hearts_enabled")?.checked ? "" : "none";
+  }
+  $("unicorn_hearts_enabled")?.addEventListener("change", syncProtocolEmojiRows);
+
+  // Палитра-пикалка: клик кладёт эмодзи в последнее трогнутое поле (дефолт —
+  // сердце) и сохраняет через обычный change. Собственная палитра, а не
+  // системный пикер: тот открывается отдельным окном, и Firefox на потере
+  // фокуса ЗАКРЫВАЕТ попап (тот же урок, что у палитры цвета кнопки).
+  {
+    const palette = $("protocol_emoji_palette");
+    let activeEmojiInput: HTMLInputElement | null = null;
+    for (const mark of PROTOCOL_MARKS) {
+      const inp = $<HTMLInputElement>(PROTOCOL_EMOJI_SETTING[mark]);
+      inp?.addEventListener("focus", () => {
+        activeEmojiInput = inp;
+      });
+      // change ждёт blur, а попап часто закрывают сразу после вставки эмодзи —
+      // сохраняем и на input (вставка/набор), значение нормализуется при сборе.
+      inp?.addEventListener("input", saveSettings);
+    }
+    if (palette) {
+      for (const emoji of PROTOCOL_EMOJI_PALETTE) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = emoji;
+        btn.title = "Поставить в выбранное поле";
+        btn.addEventListener("click", () => {
+          const target = activeEmojiInput ?? $<HTMLInputElement>(PROTOCOL_EMOJI_SETTING.civ);
+          if (!target) return;
+          target.value = emoji;
+          target.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+        palette.appendChild(btn);
+      }
+    }
+  }
 
   // Свой цвет: СОБСТВЕННАЯ палитра внутри попапа + поле #rrggbb. Никакого
   // <input type=color>: системная пипетка на macOS открывается отдельным

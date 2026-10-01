@@ -69,7 +69,7 @@ import { log } from "@core/log";
 import { getOwnUserId } from "@core/own-user";
 import { profileCrossoverFeature, syncProfileCrossoverRoute } from "@content/features/profile-crossover";
 import { profileMmrChartFeature, syncProfileMmrRoute } from "@content/features/profile-mmr-chart";
-import { UNICORN_SYMBOL_ID, unicornHeartsFeature } from "@content/features/unicorn-hearts";
+import { protocolEmojiFeature, symbolId } from "@content/features/protocol-emoji";
 import type { FeatureContext } from "@core/feature";
 
 const ROUND_MS = 600;
@@ -129,7 +129,7 @@ beforeEach(() => {
 afterEach(() => {
   profileCrossoverFeature.disable();
   profileMmrChartFeature.disable();
-  unicornHeartsFeature.disable();
+  protocolEmojiFeature.disable();
   syncProfileCrossoverRoute(null);
   syncProfileMmrRoute(null);
   vi.useRealTimers();
@@ -207,13 +207,15 @@ describe("§4 fixpoint: единороги вместо сердец", () => {
     document.body.appendChild(img);
 
     const before = domObserver.subscriberCount();
-    void unicornHeartsFeature.enable({ settings: {} } as unknown as FeatureContext);
+    void protocolEmojiFeature.enable({
+      settings: { protocol_emoji_civ: "🦄", protocol_emoji_maf: "", protocol_emoji_vice: "" },
+    } as unknown as FeatureContext);
     expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
     // Сама подмена пишет в DOM (href, контейнер символа) — эти мутации
     // возвращаются подписчику; фикспоинт докажет, что второй проход тих.
     const r = await driveToFixpoint();
     expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
-    expect(heart.getAttribute("href")).toBe(`#${UNICORN_SYMBOL_ID}`);
+    expect(heart.getAttribute("href")).toBe(`#${symbolId("civ")}`);
     expect(pistol.getAttributeNS(XLINK_NS, "href")).toContain("#guess-maf");
     expect(img.getAttribute("src")).toContain("data:image/svg+xml");
   });

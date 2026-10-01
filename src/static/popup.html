@@ -134,6 +134,21 @@
         .sel { min-width: 130px; width: auto; }
         .row .sel { flex: 0 0 auto; }
 
+        /* Эмодзи протокола ПУ: узкое поле + палитра-пикалка */
+        .emoji-inp {
+            width: 52px; padding: 5px 0; font-size: 17px; text-align: center;
+            color: var(--text); background: var(--bg);
+            border: 1px solid var(--border); border-radius: 8px; flex: 0 0 auto;
+        }
+        .emoji-palette {
+            display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 0 2px;
+        }
+        .emoji-palette button {
+            font-size: 16px; line-height: 1; padding: 5px 6px; cursor: pointer;
+            background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+        }
+        .emoji-palette button:hover { background: rgba(255,255,255,.12); }
+
         .status { font-size: 11px; text-align: center; color: var(--muted); margin: 8px 0; }
         #scenes_list {
             max-height: 110px; overflow-y: auto; border: 1px solid var(--border);
@@ -345,8 +360,20 @@
             <div class="row" id="role_marker_icons_row" style="display:none"><span>— Использовать иконки<span class="hint">в метке — иконка роли с сайта; выключено — подписи «Мир/Шер/Дон»</span></span>
                 <label class="switch"><input type="checkbox" id="role_marker_icons_enabled" checked><span class="slider"></span></label>
             </div>
-            <div class="row"><span>Единороги вместо сердец<span class="hint">протокол ПУ: метка «сердце» (мирный) рисуется единорогом — на плитках, в строке протокола и на кнопке у самого ПУ</span></span>
+            <div class="row"><span>Эмодзи в протоколе ПУ<span class="hint">метки протокола рисуются выбранными эмодзи — на плитках, в строке протокола и на кнопках у самого ПУ. Видно только вам. Пустое поле = родная иконка сайта</span></span>
                 <label class="switch"><input type="checkbox" id="unicorn_hearts_enabled"><span class="slider"></span></label>
+            </div>
+            <div id="protocol_emoji_rows" style="display:none">
+                <div class="row"><span>— Сердце (мирный)</span>
+                    <input id="protocol_emoji_civ" class="emoji-inp" maxlength="16" autocomplete="off">
+                </div>
+                <div class="row"><span>— Пистолет (мафия)</span>
+                    <input id="protocol_emoji_maf" class="emoji-inp" maxlength="16" autocomplete="off">
+                </div>
+                <div class="row"><span>— Корона</span>
+                    <input id="protocol_emoji_vice" class="emoji-inp" maxlength="16" autocomplete="off">
+                </div>
+                <div class="emoji-palette" id="protocol_emoji_palette"></div>
             </div>
             <div class="row"><span>Цветные ники игроков<span class="hint">цвет задаётся в заметке игрока (кнопка ✎ на плитке); палитра — как у рамок</span></span>
                 <label class="switch"><input type="checkbox" id="nick_colors_enabled" checked><span class="slider"></span></label>

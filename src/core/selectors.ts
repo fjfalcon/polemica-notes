@@ -544,20 +544,29 @@ export const TEXT = {
 } as const;
 
 /**
- * Протокол ПУ: метка «сердце» (мирный) в игровой комнате (unicorn-hearts).
+ * Протокол ПУ: метки (сердце/пистолет/корона) в игровой комнате
+ * (protocol-emoji).
  *
- * Сайт рисует её ДВУМЯ разными механизмами (сверено по room/bundle 01.10.2026):
+ * Сайт рисует их ДВУМЯ разными механизмами (сверено по room/bundle 01.10.2026):
  *  1. RoomIcon: `<svg><use xlink:href="…спрайт.svg#guess-civ">` — метки на
  *     плитках, строка протокола в состояниях, «оставлен как». Якорь — фрагмент
- *     `#guess-civ`: ИМЯ символа в спрайте, переживает любые пересборки сайта
+ *     `#guess-*`: ИМЯ символа в спрайте, переживает любые пересборки сайта
  *     (хэш имени файла стоит ПЕРЕД `#` и в матч не входит).
- *  2. Кнопка пикера у самого ПУ: `<img src="…<contenthash>.svg">` (красное
- *     сердце #E53659, webpack-модуль guessCiv.svg). Якорь — contenthash:
- *     меняется ТОЛЬКО если сайт перерисует само сердце; тогда этот пункт
+ *  2. Кнопки пикера у самого ПУ: `<img src="…<contenthash>.svg">`
+ *     (webpack-модули guessCiv/guessMaf/guessVice.svg). Якорь — contenthash:
+ *     меняется ТОЛЬКО если сайт перерисует саму иконку; тогда её пункт
  *     молча отвалится (пункт 1 — нет), и хэш надо сверить заново.
  */
-export const GUESS_CIV_FRAGMENT = "#guess-civ";
-export const GUESS_CIV_PICKER_IMG = 'img[src$="8bd3b0d043b384ffb24e.svg"]';
+export const GUESS_FRAGMENT = {
+  civ: "#guess-civ",
+  maf: "#guess-maf",
+  vice: "#guess-vice",
+} as const;
+export const GUESS_PICKER_IMG = {
+  civ: 'img[src$="8bd3b0d043b384ffb24e.svg"]',
+  maf: 'img[src$="24b5ad3bd86f4bb33b4e.svg"]',
+  vice: 'img[src$="f8eb2b2335b96664affa.svg"]',
+} as const;
 
 /** CSS-классы/идентификаторы, создаваемые САМИМ расширением (наши, не сайта). */
 export const OWN = {
@@ -583,8 +592,8 @@ export const OWN = {
   tooltip: "pn-tooltip",
   /** <style> с правилами страницы матча, создаётся фичей. */
   matchPageStyle: "polemica-match-page-style",
-  /** Скрытый <svg> с символом единорога (unicorn-hearts). Префикс обязателен. */
-  unicornSprite: "pn-unicorn-sprite",
+  /** Скрытый <svg> с эмодзи-символами меток протокола (protocol-emoji). */
+  protocolEmojiSprite: "pn-protocol-emoji-sprite",
 } as const;
 
 /**
