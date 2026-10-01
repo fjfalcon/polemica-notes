@@ -85,6 +85,18 @@ function ensureSymbol(): void {
 /** Подменить все сердца на странице. Идемпотентна; возвращает число подмен. */
 export function applyUnicorns(): number {
   let changed = 0;
+  // СНАЧАЛА уборка перенацеленных узлов (adversarial 01.10.2026): Vue правит
+  // ТОЛЬКО xlink:href (его канал в шаблоне RoomIcon), а наш href по SVG2
+  // ГЛАВНЕЕ — снял ПУ сердце и поставил пистолет, а рисовался бы единорог.
+  // Узел с нашей меткой, чей xlink больше не сердце и не наш символ, Vue
+  // забрал под другую иконку: снимаем СВОЙ href и метку, xlink не трогаем.
+  for (const use of document.querySelectorAll(`use[${ORIG_HREF_ATTR}]`)) {
+    const live = use.getAttributeNS(XLINK_NS, "href");
+    if (live === `#${UNICORN_SYMBOL_ID}` || (live && live.endsWith(GUESS_CIV_FRAGMENT))) continue;
+    if (use.getAttribute("href") === `#${UNICORN_SYMBOL_ID}`) use.removeAttribute("href");
+    use.removeAttribute(ORIG_HREF_ATTR);
+    changed++;
+  }
   for (const use of document.querySelectorAll("use")) {
     // Сайт пишет xlink:href (legacy-ветка Vue); href — на случай его миграции.
     const href = use.getAttribute("href") ?? use.getAttributeNS(XLINK_NS, "href");
@@ -93,6 +105,13 @@ export function applyUnicorns(): number {
     use.setAttribute(ORIG_HREF_ATTR, href);
     use.setAttribute("href", `#${UNICORN_SYMBOL_ID}`);
     use.setAttributeNS(XLINK_NS, "xlink:href", `#${UNICORN_SYMBOL_ID}`);
+    changed++;
+  }
+  // Та же уборка для пикера: Vue сменил src — метка «наш» протухла.
+  for (const img of document.querySelectorAll<HTMLImageElement>(`img[${ORIG_SRC_ATTR}]`)) {
+    const src = img.getAttribute("src");
+    if (src === UNICORN_IMG_SRC || img.matches(GUESS_CIV_PICKER_IMG)) continue;
+    img.removeAttribute(ORIG_SRC_ATTR);
     changed++;
   }
   for (const img of document.querySelectorAll<HTMLImageElement>(GUESS_CIV_PICKER_IMG)) {
@@ -108,15 +127,25 @@ export function applyUnicorns(): number {
 function restore(): void {
   for (const use of document.querySelectorAll(`use[${ORIG_HREF_ATTR}]`)) {
     const orig = use.getAttribute(ORIG_HREF_ATTR);
-    if (orig) {
+    // Откатываем только узел, который ЕЩЁ наш: перенацеленному (см. уборку в
+    // applyUnicorns — между проходами есть окно) нельзя вернуть «оригинал»,
+    // это надело бы сердце на чужую иконку. Снимаем только свой href.
+    const live = use.getAttributeNS(XLINK_NS, "href");
+    const ours =
+      live === `#${UNICORN_SYMBOL_ID}` ||
+      use.getAttribute("href") === `#${UNICORN_SYMBOL_ID}`;
+    if (orig && ours && (!live || live === `#${UNICORN_SYMBOL_ID}`)) {
       use.setAttribute("href", orig);
       use.setAttributeNS(XLINK_NS, "xlink:href", orig);
+    } else if (use.getAttribute("href") === `#${UNICORN_SYMBOL_ID}`) {
+      use.removeAttribute("href");
     }
     use.removeAttribute(ORIG_HREF_ATTR);
   }
   for (const img of document.querySelectorAll(`img[${ORIG_SRC_ATTR}]`)) {
     const orig = img.getAttribute(ORIG_SRC_ATTR);
-    if (orig) img.setAttribute("src", orig);
+    // Тот же принцип: src, который уже не наш data-URI, трогать нельзя.
+    if (orig && img.getAttribute("src") === UNICORN_IMG_SRC) img.setAttribute("src", orig);
     img.removeAttribute(ORIG_SRC_ATTR);
   }
 }

@@ -130,6 +130,39 @@ describe("applyUnicorns", () => {
     expect(use.getAttribute("href")).toBe(`#${UNICORN_SYMBOL_ID}`);
   });
 
+  test("Vue перенацелил узел на пистолет — наш href снимается, не перебивает", () => {
+    // Adversarial 01.10.2026: Vue правит только xlink:href, а href по SVG2
+    // ГЛАВНЕЕ — без уборки у пистолета рисовался бы единорог.
+    const use = makeUse(SPRITE_HREF);
+    applyUnicorns();
+    use.setAttributeNS(XLINK_NS, "xlink:href", "/room/bundle/f59bacbc2885635c4d91.svg#guess-maf");
+    expect(applyUnicorns()).toBe(1); // одна уборка
+    expect(use.getAttribute("href")).toBeNull();
+    expect(use.hasAttribute(ORIG_HREF_ATTR)).toBe(false);
+    expect(use.getAttributeNS(XLINK_NS, "href")).toContain("#guess-maf");
+    expect(applyUnicorns()).toBe(0); // уборка идемпотентна
+  });
+
+  test("цикл сердце → пистолет → сердце: подмена возвращается с чистым оригиналом", () => {
+    const use = makeUse(SPRITE_HREF);
+    applyUnicorns();
+    use.setAttributeNS(XLINK_NS, "xlink:href", "/room/bundle/f59bacbc2885635c4d91.svg#guess-maf");
+    applyUnicorns();
+    use.setAttributeNS(XLINK_NS, "xlink:href", SPRITE_HREF);
+    expect(applyUnicorns()).toBe(1);
+    expect(use.getAttribute("href")).toBe(`#${UNICORN_SYMBOL_ID}`);
+    expect(use.getAttribute(ORIG_HREF_ATTR)).toBe(SPRITE_HREF);
+  });
+
+  test("img пикера перенацелен Vue — метка протухает, src не трогается", () => {
+    const img = makeImg(PICKER_SRC);
+    applyUnicorns();
+    img.setAttribute("src", "/room/bundle/24b5ad3bd86f4bb33b4e.svg"); // пистолет
+    expect(applyUnicorns()).toBe(1); // уборка метки
+    expect(img.getAttribute("src")).toBe("/room/bundle/24b5ad3bd86f4bb33b4e.svg");
+    expect(img.hasAttribute(ORIG_SRC_ATTR)).toBe(false);
+  });
+
   test("картинка пикера ПУ меняется на data-URI, чужие — нет", () => {
     const heart = makeImg(PICKER_SRC);
     const other = makeImg("/room/bundle/24b5ad3bd86f4bb33b4e.svg"); // guessMaf
@@ -155,6 +188,21 @@ describe("unicornHeartsFeature", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  test("disable НЕ надевает сердце на перенацеленный узел (окно между проходами)", () => {
+    const use = makeUse(SPRITE_HREF);
+    const img = makeImg(PICKER_SRC);
+    void unicornHeartsFeature.enable(ctx);
+    // Vue перенацелил ОБА сразу после последнего прохода — уборка не успела.
+    use.setAttributeNS(XLINK_NS, "xlink:href", "/room/bundle/f59bacbc2885635c4d91.svg#guess-maf");
+    img.setAttribute("src", "/room/bundle/24b5ad3bd86f4bb33b4e.svg");
+    unicornHeartsFeature.disable();
+    expect(use.getAttribute("href")).toBeNull(); // свой href снят, сердце НЕ вернулось
+    expect(use.getAttributeNS(XLINK_NS, "href")).toContain("#guess-maf");
+    expect(use.hasAttribute(ORIG_HREF_ATTR)).toBe(false);
+    expect(img.getAttribute("src")).toBe("/room/bundle/24b5ad3bd86f4bb33b4e.svg");
+    expect(img.hasAttribute(ORIG_SRC_ATTR)).toBe(false);
   });
 
   test("disable возвращает сайту сердца и убирает контейнер", () => {
