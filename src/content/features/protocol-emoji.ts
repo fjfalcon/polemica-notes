@@ -21,6 +21,7 @@
  * СЕЙЧАС, а не снимок прошлого (класс «отравленный снимок»).
  */
 import { log } from "@core/log";
+import { escapeHtml } from "@core/escape";
 import { onDomChange, registerOwnContainer, unregisterOwnContainer } from "@core/dom";
 import { GUESS_FRAGMENT, GUESS_PICKER_IMG, OWN } from "@core/selectors";
 import type { Feature, FeatureContext } from "@core/feature";
@@ -50,10 +51,14 @@ const TEXT_ATTRS = 'x="12" y="12" text-anchor="middle" dominant-baseline="centra
 let config: Record<ProtocolMark, string> = { ...DEFAULT_PROTOCOL_EMOJI };
 
 export function imgSrcFor(mark: ProtocolMark): string {
+  // Экранируем (adversarial 01.10.2026): значение приходит из настроек —
+  // в т.ч. из sync с другого устройства — и сырые &/< ломают XML data-URI.
+  // Символы спрайта пишутся через textContent и экранирования не требуют.
+  const glyph = escapeHtml(config[mark]);
   return (
     "data:image/svg+xml," +
     encodeURIComponent(
-      `<svg xmlns="${SVG_NS}" viewBox="0 0 24 24"><text ${TEXT_ATTRS}>${config[mark]}</text></svg>`,
+      `<svg xmlns="${SVG_NS}" viewBox="0 0 24 24"><text ${TEXT_ATTRS}>${glyph}</text></svg>`,
     )
   );
 }

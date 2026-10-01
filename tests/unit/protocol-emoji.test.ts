@@ -179,6 +179,55 @@ describe("adversarial 9.63.0: Vue перенацеливает узлы", () => 
   });
 });
 
+describe("adversarial 9.64.0: добивка углов", () => {
+  test("XML-спецсимвол в поле не ломает data-URI пикера", () => {
+    // Значение приходит из настроек (в т.ч. sync с другого устройства):
+    // сырой & делал SVG невалидным — картинка пикера умирала молча.
+    protocolEmojiFeature.update?.(ctx({ protocol_emoji_civ: "&" }));
+    const img = makeImg(IMG_CIV);
+    applyProtocolEmoji();
+    const decoded = decodeURIComponent(img.getAttribute("src") ?? "");
+    expect(decoded).toContain(">&amp;</text>");
+    expect(decoded).not.toContain(">&</text>");
+  });
+
+  test("сайт мигрировал на href (без xlink): метка всё равно подменяется и откатывается", () => {
+    const svg = document.createElementNS(SVG_NS, "svg");
+    const use = document.createElementNS(SVG_NS, "use");
+    use.setAttribute("href", CIV); // ТОЛЬКО href — xlink нет
+    svg.appendChild(use);
+    document.body.appendChild(svg);
+    expect(applyProtocolEmoji()).toBe(1);
+    expect(use.getAttribute("href")).toBe(`#${symbolId("civ")}`);
+    expect(use.getAttribute(ORIG_HREF_ATTR)).toBe(CIV);
+    protocolEmojiFeature.update?.(ctx({ protocol_emoji_civ: "" }));
+    applyProtocolEmoji();
+    expect(use.getAttribute("href")).toBe(CIV);
+    expect(use.hasAttribute(ORIG_HREF_ATTR)).toBe(false);
+  });
+
+  test("Vue увёл узел на НЕ-метку (#voted): следы сняты, чужой xlink цел", () => {
+    const use = makeUse(CIV);
+    applyProtocolEmoji();
+    use.setAttributeNS(XLINK_NS, "xlink:href", `${SPRITE}#voted`);
+    expect(applyProtocolEmoji()).toBe(1);
+    expect(use.getAttribute("href")).toBeNull();
+    expect(use.hasAttribute(ORIG_HREF_ATTR)).toBe(false);
+    expect(use.getAttributeNS(XLINK_NS, "href")).toBe(`${SPRITE}#voted`);
+  });
+
+  test("img переехал сердце → пистолет при включённом пистолете: оригинал — правда, не снимок", () => {
+    protocolEmojiFeature.update?.(ctx({ protocol_emoji_maf: "🤡" }));
+    const img = makeImg(IMG_CIV);
+    applyProtocolEmoji();
+    img.setAttribute("src", IMG_MAF); // Vue перенацелил кнопку
+    applyProtocolEmoji();
+    expect(img.getAttribute("src")).toBe(imgSrcFor("maf"));
+    // Откат вернул бы пистолет, а не сердце из протухшего снимка.
+    expect(img.getAttribute(ORIG_SRC_ATTR)).toBe(IMG_MAF);
+  });
+});
+
 describe("смена эмодзи на лету (update)", () => {
   test("символ и data-URI перерисовываются новым эмодзи", () => {
     const use = makeUse(CIV);
