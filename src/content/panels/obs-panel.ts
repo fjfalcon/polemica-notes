@@ -552,9 +552,14 @@ function applyRoleVisibility(isRoleVisible: boolean): boolean {
   // была ли роль реально скрыта перед дневной сценой, и успешное переключение
   // сцены создавало ложное ощущение полного успеха (OP-1).
   if (previous !== lastAppliedRoleVisibility) {
+    // Формулировка без привязки к фазе (adversarial 01.10.2026): «скрыта»
+    // теперь бывает и НОЧЬЮ (гейт сцены), и старый текст «для дневной фазы»
+    // врал бы в логе ровно в том инциденте, ради которого гейт появился.
     log.info(
       SCOPE,
-      isRoleVisible ? "роль показана для ночной фазы" : "роль скрыта для дневной фазы",
+      isRoleVisible
+        ? "роль показана (ночь, эфир на ночной сцене)"
+        : "роль скрыта (день или эфир не на ночной сцене)",
     );
   }
   return true;
@@ -1482,6 +1487,9 @@ function handleOBSEvent(eventType: string, data: any): void {
       if (!panel && autoModeEnabled && hasActiveGameInterface()) doShow();
       panel?.setScenes(scenes, currentScene);
       panel?.setConnectionStatus("Не подключено", "error");
+      // Сцена больше не известна → ночной гейт закрылся: прячем роль сразу,
+      // а не через 2с-опрос (fail-safe: эфир может оставаться на дневной).
+      healRolePin();
       break;
   }
 }

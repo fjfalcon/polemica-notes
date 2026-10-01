@@ -281,6 +281,10 @@ describe("жалоба 01.10.2026: ночной показ роли ждёт н�
     );
     const changed = body.slice(body.indexOf('case "obs_scene_changed"'));
     expect(changed, "смена сцены лечит желаемую видимость роли").toMatch(/healRolePin\(\);/);
+    const disconnected = body.slice(body.indexOf('case "obs_disconnected"'));
+    expect(disconnected, "обрыв OBS закрывает гейт сразу, не через 2с-опрос").toMatch(
+      /healRolePin\(\);/,
+    );
   });
 
   test("auto-start: нативный D ночью гейтится сценой, без расхода попыток", () => {
