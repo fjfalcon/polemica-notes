@@ -543,6 +543,22 @@ export const TEXT = {
   banWarningMarker: ["блокировк"],
 } as const;
 
+/**
+ * Протокол ПУ: метка «сердце» (мирный) в игровой комнате (unicorn-hearts).
+ *
+ * Сайт рисует её ДВУМЯ разными механизмами (сверено по room/bundle 01.10.2026):
+ *  1. RoomIcon: `<svg><use xlink:href="…спрайт.svg#guess-civ">` — метки на
+ *     плитках, строка протокола в состояниях, «оставлен как». Якорь — фрагмент
+ *     `#guess-civ`: ИМЯ символа в спрайте, переживает любые пересборки сайта
+ *     (хэш имени файла стоит ПЕРЕД `#` и в матч не входит).
+ *  2. Кнопка пикера у самого ПУ: `<img src="…<contenthash>.svg">` (красное
+ *     сердце #E53659, webpack-модуль guessCiv.svg). Якорь — contenthash:
+ *     меняется ТОЛЬКО если сайт перерисует само сердце; тогда этот пункт
+ *     молча отвалится (пункт 1 — нет), и хэш надо сверить заново.
+ */
+export const GUESS_CIV_FRAGMENT = "#guess-civ";
+export const GUESS_CIV_PICKER_IMG = 'img[src$="8bd3b0d043b384ffb24e.svg"]';
+
 /** CSS-классы/идентификаторы, создаваемые САМИМ расширением (наши, не сайта). */
 export const OWN = {
   statsButton: "stats-button",
@@ -567,6 +583,8 @@ export const OWN = {
   tooltip: "pn-tooltip",
   /** <style> с правилами страницы матча, создаётся фичей. */
   matchPageStyle: "polemica-match-page-style",
+  /** Скрытый <svg> с символом единорога (unicorn-hearts). Префикс обязателен. */
+  unicornSprite: "pn-unicorn-sprite",
 } as const;
 
 /**

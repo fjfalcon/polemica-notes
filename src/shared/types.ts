@@ -120,6 +120,8 @@ export interface Settings {
   nick_click_toggle_enabled: boolean;
   /** Угол плитки для плашки игрока: default | top-left | top-right | bottom-right. */
   nick_plate_position: string;
+  /** Протокол ПУ: метка «сердце» (мирный) рисуется единорогом. */
+  unicorn_hearts_enabled: boolean;
   /** «В поиск»: подтверждать модалку «Покинуть лобби» автоматически.
    *  false — машина останавливается на модалке и ждёт клика игрока,
    *  после подтверждения продолжает сама (нажмёт «Играть»). */

@@ -156,6 +156,7 @@ describe("зачисление DOM-подписчиков (§4, механика
     expect([...coveredByFixpoint()]).toEqual([
       "src/content/features/profile-crossover.ts",
       "src/content/features/profile-mmr-chart.ts",
+      "src/content/features/unicorn-hearts.ts",
     ]);
   });
 });

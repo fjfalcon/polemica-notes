@@ -126,6 +126,9 @@ export const DEFAULT_SETTINGS: Settings = {
   nick_click_toggle_enabled: true,
   // «default» — угол сайта (снизу слева): вид стола по умолчанию не меняем.
   nick_plate_position: "default",
+  // Выключено по умолчанию (решение владельца 01.10.2026): пасхалка меняет
+  // привычный вид протокола — включает её каждый сам.
+  unicorn_hearts_enabled: false,
   queue_peek_standard: true,
   queue_peek_polite: true,
   queue_peek_prime: true,

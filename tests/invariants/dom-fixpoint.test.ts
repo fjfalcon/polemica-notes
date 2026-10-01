@@ -69,6 +69,7 @@ import { log } from "@core/log";
 import { getOwnUserId } from "@core/own-user";
 import { profileCrossoverFeature, syncProfileCrossoverRoute } from "@content/features/profile-crossover";
 import { profileMmrChartFeature, syncProfileMmrRoute } from "@content/features/profile-mmr-chart";
+import { UNICORN_SYMBOL_ID, unicornHeartsFeature } from "@content/features/unicorn-hearts";
 import type { FeatureContext } from "@core/feature";
 
 const ROUND_MS = 600;
@@ -128,6 +129,7 @@ beforeEach(() => {
 afterEach(() => {
   profileCrossoverFeature.disable();
   profileMmrChartFeature.disable();
+  unicornHeartsFeature.disable();
   syncProfileCrossoverRoute(null);
   syncProfileMmrRoute(null);
   vi.useRealTimers();
@@ -183,6 +185,37 @@ describe("§4 fixpoint: профильные карточки", () => {
     expect(r.settled, `DOM не затих за ${r.rounds} раундов`).toBe(true);
     expect(document.querySelector(".pn-mmr-chart")?.textContent).toContain("Путь MMR");
     expect(document.querySelector(".pn-profile-crossover")).toBeNull();
+  });
+});
+
+describe("§4 fixpoint: единороги вместо сердец", () => {
+  test("комната с протоколом ПУ: подмена один раз, чужие метки целы, DOM затихает", async () => {
+    const SVG_NS = "http://www.w3.org/2000/svg";
+    const XLINK_NS = "http://www.w3.org/1999/xlink";
+    const makeUse = (href: string) => {
+      const svg = document.createElementNS(SVG_NS, "svg");
+      const use = document.createElementNS(SVG_NS, "use");
+      use.setAttributeNS(XLINK_NS, "xlink:href", href);
+      svg.appendChild(use);
+      document.body.appendChild(svg);
+      return use;
+    };
+    const heart = makeUse("/room/bundle/f59bacbc2885635c4d91.svg#guess-civ");
+    const pistol = makeUse("/room/bundle/f59bacbc2885635c4d91.svg#guess-maf");
+    const img = document.createElement("img");
+    img.setAttribute("src", "/room/bundle/8bd3b0d043b384ffb24e.svg");
+    document.body.appendChild(img);
+
+    const before = domObserver.subscriberCount();
+    void unicornHeartsFeature.enable({ settings: {} } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    // Сама подмена пишет в DOM (href, контейнер символа) — эти мутации
+    // возвращаются подписчику; фикспоинт докажет, что второй проход тих.
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    expect(heart.getAttribute("href")).toBe(`#${UNICORN_SYMBOL_ID}`);
+    expect(pistol.getAttributeNS(XLINK_NS, "href")).toContain("#guess-maf");
+    expect(img.getAttribute("src")).toContain("data:image/svg+xml");
   });
 });
 

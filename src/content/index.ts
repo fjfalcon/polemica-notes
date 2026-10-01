@@ -30,6 +30,7 @@ import { roleFakerFeature } from "./features/role-faker";
 import { pauseHotkeyFeature } from "./features/pause-hotkey";
 import { f5RefreshFeature } from "./features/f5-refresh";
 import { roleMarkerFeature } from "./features/role-marker";
+import { unicornHeartsFeature } from "./features/unicorn-hearts";
 import { updateNotifyFeature } from "./features/update-notify";
 import { connectionDiagFeature, syncConnectionDiagRoute } from "./features/connection-diag";
 import { queueGuardFeature, syncQueueGuardRoute } from "./features/queue-guard";
@@ -63,6 +64,7 @@ const manager = new FeatureManager().register(
   freezeWatchFeature,
   f5RefreshFeature,
   roleMarkerFeature,
+  unicornHeartsFeature,
   updateNotifyFeature,
   connectionDiagFeature,
   queueGuardFeature,

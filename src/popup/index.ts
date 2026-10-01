@@ -1497,6 +1497,7 @@ document.addEventListener("DOMContentLoaded", () => {
     set("role_marker_enabled", items.role_marker_enabled);
     set("role_marker_icons_enabled", items.role_marker_icons_enabled);
     syncRoleMarkerIconsRow();
+    set("unicorn_hearts_enabled", items.unicorn_hearts_enabled);
     set("compact_nicknames_enabled", items.compact_nicknames_enabled);
     set("nick_click_toggle_enabled", items.nick_click_toggle_enabled);
     const npp = $<HTMLSelectElement>("nick_plate_position");
@@ -1627,6 +1628,7 @@ document.addEventListener("DOMContentLoaded", () => {
       note_indicator_enabled: cb("note_indicator_enabled", true),
       role_marker_enabled: cb("role_marker_enabled", false),
       role_marker_icons_enabled: cb("role_marker_icons_enabled", true),
+      unicorn_hearts_enabled: cb("unicorn_hearts_enabled", false),
       compact_nicknames_enabled: cb("compact_nicknames_enabled", false),
       nick_click_toggle_enabled: cb("nick_click_toggle_enabled", true),
       nick_plate_position: $<HTMLSelectElement>("nick_plate_position")?.value || "default",
@@ -1817,6 +1819,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "note_indicator_enabled",
     "role_marker_enabled",
     "role_marker_icons_enabled",
+    "unicorn_hearts_enabled",
     "compact_nicknames_enabled",
     "nick_click_toggle_enabled",
     "nick_plate_position",
