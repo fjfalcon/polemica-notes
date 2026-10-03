@@ -40,7 +40,12 @@ vi.mock("@content/features/queue-requeue", () => ({
   noteIntentClick: vi.fn(() => calls.push("note")),
 }));
 
-import { CLICK_DELAY_MS, autoReadyFeature, findReadyButton } from "@content/features/auto-ready";
+import {
+  CLICK_DELAY_MS,
+  autoReadyFeature,
+  findReadyButton,
+  noteTrustedInput,
+} from "@content/features/auto-ready";
 import { noteIntentClick } from "@content/features/queue-requeue";
 import { safeClick } from "@core/dom";
 import { log } from "@core/log";
@@ -133,6 +138,31 @@ describe("автоклик с выдержкой", () => {
     expect(clicks()).toBe(0);
   });
 
+  test("живой ввод игрока откладывает автоклик (гонка toggle, adversarial 03.10.2026)", () => {
+    // Игрок мог кликнуть «Готов» сам: active встаёт только после ответа
+    // сервера, и наш клик в это окно снял бы его готовность вторым toggle.
+    pregame();
+    void autoReadyFeature.enable(ctx);
+    vi.advanceTimersByTime(CLICK_DELAY_MS + 50);
+    // Тестовый шов (jsdom не создаёт доверенные события), как в requeue.
+    noteTrustedInput();
+    pass();
+    expect(clicks(), "ввод свежий — уступаем").toBe(0);
+    // Ввод утих — следующий проход кликает (латч не расходовался).
+    vi.advanceTimersByTime(1600);
+    pass();
+    expect(clicks()).toBe(1);
+  });
+
+  test("синтетический ввод (isTrusted=false) автоклик НЕ откладывает", () => {
+    pregame();
+    void autoReadyFeature.enable(ctx);
+    vi.advanceTimersByTime(CLICK_DELAY_MS + 50);
+    document.dispatchEvent(new Event("pointerdown")); // чужой скрипт
+    pass();
+    expect(clicks()).toBe(1);
+  });
+
   test("disabled-кнопку не жмём", () => {
     pregame({ disabled: true });
     void autoReadyFeature.enable(ctx);
@@ -149,11 +179,15 @@ describe("бюджет: один клик на лобби (плюс одна п�
     vi.advanceTimersByTime(CLICK_DELAY_MS + 50);
     pass();
     expect(clicks()).toBe(1);
+    // Окно верификации ЩЕДРОЕ (adversarial 03.10.2026): повтор раньше ~3 с
+    // попал бы в лаг сервера и вторым toggle снял бы свежую готовность.
+    vi.advanceTimersByTime(1000);
+    expect(clicks(), "ранний повтор — гонка с лагом сервера").toBe(1);
     // active так и не появился → verify делает одну повторную попытку.
-    vi.advanceTimersByTime(1600);
+    vi.advanceTimersByTime(2200);
     expect(clicks()).toBe(2);
     // И снова тишина от сервера → терминальная строка, больше не кликаем.
-    vi.advanceTimersByTime(1600);
+    vi.advanceTimersByTime(3100);
     expect(vi.mocked(log.warn).mock.calls.join(" ")).toContain("не подтвердилась");
     vi.advanceTimersByTime(CLICK_DELAY_MS * 5);
     pass();
@@ -168,7 +202,7 @@ describe("бюджет: один клик на лобби (плюс одна п�
     pass();
     expect(clicks()).toBe(1);
     pregame({ active: true }); // сервер подтвердил
-    vi.advanceTimersByTime(1600);
+    vi.advanceTimersByTime(3100);
     pass();
     vi.advanceTimersByTime(CLICK_DELAY_MS * 3);
     pass();
@@ -181,7 +215,7 @@ describe("бюджет: один клик на лобби (плюс одна п�
     vi.advanceTimersByTime(CLICK_DELAY_MS + 50);
     pass();
     pregame({ active: true });
-    vi.advanceTimersByTime(1600);
+    vi.advanceTimersByTime(3100);
     expect(clicks()).toBe(1);
     // Ушли в поиск и вернулись в новое лобби.
     window.history.replaceState(null, "", "/game-search");

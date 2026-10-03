@@ -32,12 +32,36 @@ import type { Feature } from "@core/feature";
 const SCOPE = "auto-ready";
 /** Выдержка от первого появления кнопки до автоклика. */
 export const CLICK_DELAY_MS = 1200;
-/** Через сколько проверяем, что готовность реально встала. */
-const VERIFY_DELAY_MS = 1500;
+/**
+ * Через сколько проверяем, что готовность реально встала. Щедро (adversarial
+ * 03.10.2026): active сайт вешает только ПОСЛЕ ответа сервера, и повтор в
+ * окно медленного ответа стал бы вторым toggle — снятием только что
+ * поставленной готовности.
+ */
+const VERIFY_DELAY_MS = 3000;
+/**
+ * Бэкофф живого ввода (adversarial 03.10.2026): игрок кликнул «Готов» сам за
+ * мгновение до нас — active ещё не встал (ждёт сервер), и наш клик снял бы
+ * его готовность вторым toggle. Любой настоящий ввод поблизости по времени —
+ * уступаем и пробуем следующим проходом.
+ */
+export const USER_BACKOFF_MS = 1500;
 
 let offDom: (() => void) | null = null;
 let scanTimer: ReturnType<typeof setTimeout> | null = null;
 let verifyTimer: ReturnType<typeof setTimeout> | null = null;
+let trustedListener: ((e: Event) => void) | null = null;
+/** Последний НАСТОЯЩИЙ ввод игрока (isTrusted) — автоклик уступает ему. */
+let lastTrustedInputAt = 0;
+
+/**
+ * Отметить настоящее действие игрока. Доверенность (isTrusted) проверяет
+ * слушатель; экспорт — тестовый шов, как в queue-requeue: jsdom не умеет
+ * создавать доверенные события, а бэкофф обязан быть покрыт мутационно.
+ */
+export function noteTrustedInput(): void {
+  lastTrustedInputAt = Date.now();
+}
 
 let lastPathname = "";
 /** Автоклик в этом лобби уже сделан (или отдан на верификацию). */
@@ -124,6 +148,10 @@ function tick(): void {
     return;
   }
   if (Date.now() - firstSeenAt < CLICK_DELAY_MS) return;
+  // Игрок только что действовал сам (клик/клавиша) — его клик по «Готов» мог
+  // ещё не получить active от сервера, и наш клик стал бы вторым toggle.
+  // Не латчимся: следующий проход попробует снова, когда ввод утихнет.
+  if (Date.now() - lastTrustedInputAt < USER_BACKOFF_MS) return;
 
   clickedThisRoom = true;
   // ДО клика и синхронно: автоклик приравнен к клику игрока (см. шапку), и
@@ -141,6 +169,13 @@ export const autoReadyFeature: Feature = {
   enable() {
     lastPathname = location.pathname;
     resetRoomLatches();
+    lastTrustedInputAt = 0;
+    // capture на документе: видим ввод раньше любых обработчиков сайта.
+    trustedListener = (e: Event) => {
+      if (e.isTrusted) noteTrustedInput();
+    };
+    document.addEventListener("pointerdown", trustedListener, true);
+    document.addEventListener("keydown", trustedListener, true);
     tick();
     // Троттлинг как у соседей: прегейм не требует реакции на каждый кадр.
     offDom = onDomChange(() => {
@@ -159,6 +194,12 @@ export const autoReadyFeature: Feature = {
       clearTimeout(scanTimer);
       scanTimer = null;
     }
+    if (trustedListener) {
+      document.removeEventListener("pointerdown", trustedListener, true);
+      document.removeEventListener("keydown", trustedListener, true);
+      trustedListener = null;
+    }
+    lastTrustedInputAt = 0;
     resetRoomLatches();
   },
 };
