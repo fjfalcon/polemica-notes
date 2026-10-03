@@ -34,6 +34,9 @@ export const DEFAULT_SETTINGS: Settings = {
   stats_button_theme: "default",
   stats_button_color: DEFAULT_CUSTOM_COLOR,
   auto_accept_enabled: true,
+  // Выключено по умолчанию (запрос пользователей 03.10.2026): фича жмёт
+  // кнопку за игрока — включается осознанно, как requeue и queue_peek.
+  auto_ready_enabled: false,
   skip_start_screen_enabled: true,
   pause_hotkey_enabled: true,
   pause_hotkey_code: "F8",

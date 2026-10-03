@@ -76,6 +76,8 @@ export interface Settings {
   ctl_pos_finish: string;
   ctl_pos_outcry: string;
   ctl_pos_guess: string;
+  /** Автоматически нажимать «Готов» после захода в лобби. */
+  auto_ready_enabled: boolean;
   /** Возвращать F5 нормальное обновление страницы (сайт перехватывает его под настройки). */
   f5_refresh_fix_enabled: boolean;
   /** Клавиша подмены роли (KeyboardEvent.code, дефолт KeyF). */

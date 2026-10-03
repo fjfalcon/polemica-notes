@@ -19,6 +19,7 @@ import { getOwnUserId } from "@core/own-user";
 
 import { searchFeature } from "./features/search";
 import { autoStartFeature } from "./features/auto-start";
+import { autoReadyFeature } from "./features/auto-ready";
 import { cameraHealthFeature } from "./features/camera-health";
 import { freezeWatchFeature } from "./features/freeze-watch";
 import { hotkeyHintsFeature } from "./features/hotkey-hints";
@@ -53,6 +54,7 @@ import { twitchPanelFeature } from "./panels/twitch-panel";
 const manager = new FeatureManager().register(
   searchFeature,
   autoStartFeature,
+  autoReadyFeature,
   playerNotesFeature,
   matchStatsFeature,
   tooltipFeature,

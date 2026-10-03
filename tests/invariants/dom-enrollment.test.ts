@@ -154,6 +154,7 @@ describe("зачисление DOM-подписчиков (§4, механика
     // Страж стража: если dom-fixpoint переименуют/выпотрошат, «покрытие»
     // не должно молча стать пустым при зелёном зачислении.
     expect([...coveredByFixpoint()]).toEqual([
+      "src/content/features/auto-ready.ts",
       "src/content/features/profile-crossover.ts",
       "src/content/features/profile-mmr-chart.ts",
       "src/content/features/protocol-emoji.ts",

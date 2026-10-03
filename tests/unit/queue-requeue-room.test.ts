@@ -20,7 +20,7 @@ vi.mock("@core/log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { queueRequeueFeature } from "@content/features/queue-requeue";
+import { noteIntentClick, queueRequeueFeature } from "@content/features/queue-requeue";
 import { log } from "@core/log";
 import type { Settings } from "@shared/types";
 
@@ -145,6 +145,21 @@ describe("этап 2: комната до старта игры", () => {
     pregameWithButton(false);
     domSubscriber?.();
     expect(sessionStorage.getItem(PENDING_KEY)).toBeNull();
+  });
+
+  test("автоклик «Готов» (auto-ready → noteIntentClick) взводит этап 2: полный автоматизм", () => {
+    // Решение владельца 03.10.2026: включивший автонажатие «Готов» выбрал
+    // «развалилось → прыгаем обратно» — автоклик приравнен к клику игрока.
+    // auto-ready зовёт noteIntentClick СИНХРОННО до safeClick, с ещё
+    // НЕ-active кнопкой — ровно этот путь здесь и проигрывается.
+    roomJustLoaded();
+    queueRequeueFeature.enable(ctx);
+    pregameWithButton(false);
+    const btn = document.querySelector<HTMLElement>(".controls .button")!;
+    noteIntentClick(btn);
+    pregameWithButton(true); // сервер подтвердил готовность
+    domSubscriber?.();
+    expect(sessionStorage.getItem(PENDING_KEY)).not.toBeNull();
   });
 
   test("пустые .substage в свежей комнате не считаются стадией матча", () => {

@@ -70,6 +70,7 @@ import { getOwnUserId } from "@core/own-user";
 import { profileCrossoverFeature, syncProfileCrossoverRoute } from "@content/features/profile-crossover";
 import { profileMmrChartFeature, syncProfileMmrRoute } from "@content/features/profile-mmr-chart";
 import { protocolEmojiFeature, symbolId } from "@content/features/protocol-emoji";
+import { autoReadyFeature } from "@content/features/auto-ready";
 import type { FeatureContext } from "@core/feature";
 
 const ROUND_MS = 600;
@@ -130,6 +131,7 @@ afterEach(() => {
   profileCrossoverFeature.disable();
   profileMmrChartFeature.disable();
   protocolEmojiFeature.disable();
+  autoReadyFeature.disable();
   syncProfileCrossoverRoute(null);
   syncProfileMmrRoute(null);
   vi.useRealTimers();
@@ -218,6 +220,30 @@ describe("§4 fixpoint: единороги вместо сердец", () => {
     expect(heart.getAttribute("href")).toBe(`#${symbolId("civ")}`);
     expect(pistol.getAttributeNS(XLINK_NS, "href")).toContain("#guess-maf");
     expect(img.getAttribute("src")).toContain("data:image/svg+xml");
+  });
+});
+
+describe("§4 fixpoint: автонажатие «Готов»", () => {
+  test("лобби с кнопкой: автоклик не рождает мутаций и DOM затихает", async () => {
+    window.history.replaceState(null, "", "/game");
+    document.body.innerHTML =
+      '<div class="controls"><div class="button">Готов</div>' +
+      '<div class="button active">Микрофон</div></div>';
+    // Харнес НЕ мокает @core/dom (в этом его смысл), а jsdom не считает
+    // вёрстку — честному isVisible нужна «геометрия» на самом узле.
+    const readyBtn = document.querySelector<HTMLElement>(".controls .button")!;
+    readyBtn.getBoundingClientRect = () => ({ width: 80, height: 32 }) as DOMRect;
+    const before = domObserver.subscriberCount();
+    void autoReadyFeature.enable({ settings: {} } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    // Выдержка прошла; подписчика будит ПОСТОРОННЯЯ мутация (в бою лобби
+    // мутирует постоянно — счётчик готовности, таймеры).
+    await vi.advanceTimersByTimeAsync(1300);
+    document.body.appendChild(document.createElement("i"));
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    // Клик реально ушёл (фича не просто промолчала всю выдержку).
+    expect(vi.mocked(log.info).mock.calls.join(" ")).toContain("автоклик «Готов» отправлен");
   });
 });
 

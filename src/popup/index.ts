@@ -71,6 +71,7 @@ const MAX_BACKUP_BYTES = 10 * 1024 * 1024;
 /** Настройки, включающие действия за игрока и сетевые подключения. */
 const OPERATIONAL_KEYS = [
   "auto_accept_enabled",
+  "auto_ready_enabled",
   "requeue_after_lobby_fail_enabled",
   "postgame_requeue_enabled",
   "queue_peek_enabled",
@@ -1478,6 +1479,7 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     set("disable_webcam_clicks", items.disable_webcam_clicks);
     set("auto_accept_enabled", items.auto_accept_enabled);
+    set("auto_ready_enabled", items.auto_ready_enabled);
     set("camera_rotate_enabled", items.camera_rotate_enabled);
     set("camera_reload_enabled", items.camera_reload_enabled);
     set("stream_lost_icon_enabled", items.stream_lost_icon_enabled);
@@ -1624,6 +1626,7 @@ document.addEventListener("DOMContentLoaded", () => {
       enable_role_faker: cb("enable_role_faker"),
       disable_webcam_clicks: cb("disable_webcam_clicks", false),
       auto_accept_enabled: cb("auto_accept_enabled", true),
+      auto_ready_enabled: cb("auto_ready_enabled", false),
       camera_rotate_enabled: cb("camera_rotate_enabled", true),
       camera_reload_enabled: cb("camera_reload_enabled", true),
       stream_lost_icon_enabled: cb("stream_lost_icon_enabled", true),
@@ -1818,6 +1821,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "role_phase_auto_switch_enabled",
     "disable_webcam_clicks",
     "auto_accept_enabled",
+    "auto_ready_enabled",
     "camera_rotate_enabled",
     "camera_reload_enabled",
     "stream_lost_icon_enabled",
