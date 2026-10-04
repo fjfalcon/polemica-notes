@@ -126,6 +126,49 @@ describe("пин своей роли", () => {
     expect(pinHolds("hidden")).toBe(true);
   });
 
+  test("жалоба 04.10.2026: подъём для V — ПОКАЗ, чужой hidden из снимка не возвращается", () => {
+    // auto-start при входе в игру прячет роль своим inline-слоем ДО пина
+    // obs-панели; пин снимает снимок с этим hidden. Прежний подъём
+    // восстанавливал снимок — V не показывал ничего.
+    const el = mountRole();
+    el.style.display = "none";
+    el.style.visibility = "hidden";
+    el.style.opacity = "0";
+    el.style.pointerEvents = "none";
+    pinOwnRole("hidden");
+    expect(liftPins()).toBe(true);
+    expect(el.style.display, "display:none от auto-start снят").toBe("");
+    expect(el.style.visibility).toBe("");
+    expect(el.style.opacity).toBe("");
+    expect(el.style.pointerEvents).toBe("");
+    // Отпустили V — пин вернулся, роль снова скрыта.
+    restoreLiftedPins();
+    expect(el.style.visibility).toBe("hidden");
+    expect(pinHolds("hidden")).toBe(true);
+    // Снимок цел: teardown вернёт ровно исходное (включая display).
+    releasePins();
+    expect(el.style.display, "снимок display не отравлен подъёмом").toBe("none");
+    expect(el.style.visibility).toBe("hidden");
+  });
+
+  test("V ночью: подъём visible-пина не прячет роль из снимка", () => {
+    const el = mountRole();
+    el.style.visibility = "hidden"; // чужой hidden под ночным пином
+    pinOwnRole("visible");
+    liftPins();
+    expect(el.style.visibility, "подсматривание не имеет права ПРЯТАТЬ").toBe("");
+  });
+
+  test("visible-пин снимает чужой display:none (ночной показ при скрытии на входе)", () => {
+    const el = mountRole();
+    el.style.display = "none";
+    pinOwnRole("visible");
+    expect(el.style.display, "visibility:visible не перебивает display:none").toBe("");
+    expect(el.style.visibility).toBe("visible");
+    releasePins();
+    expect(el.style.display, "teardown возвращает исходный display").toBe("none");
+  });
+
   test("повторный lift без пина — false; restore после перепина владельцем — не мешает", () => {
     expect(liftPins(), "пина нет — поднимать нечего").toBe(false);
     mountRole();

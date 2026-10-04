@@ -24,6 +24,8 @@ import { SITE } from "@core/selectors";
 export type PinTarget = "visible" | "hidden";
 
 interface RoleStyleSnapshot {
+  display: string;
+  displayPriority: string;
   visibility: string;
   visibilityPriority: string;
   opacity: string;
@@ -72,6 +74,8 @@ function restoreProp(el: HTMLElement, prop: string, value: string, priority: str
 function applyToElement(el: HTMLElement, target: PinTarget): void {
   if (!snapshots.has(el)) {
     snapshots.set(el, {
+      display: el.style.display,
+      displayPriority: el.style.getPropertyPriority("display"),
       visibility: el.style.visibility,
       visibilityPriority: el.style.getPropertyPriority("visibility"),
       opacity: el.style.opacity,
@@ -93,6 +97,11 @@ function applyToElement(el: HTMLElement, target: PinTarget): void {
     setImportant(el, "visibility", "visible");
     setImportant(el, "opacity", "1");
     el.style.pointerEvents = snap.pointerEvents === "none" ? "" : snap.pointerEvents;
+    // display:none под visible-пином — чужое скрытие (auto-start при входе в
+    // игру пишет display:none ДО пина; жалоба 04.10.2026): visibility:visible
+    // его не перебивает, и «показ» был no-op. Снимок хранит display — его
+    // честно вернёт releasePins.
+    if (el.style.display === "none") el.style.removeProperty("display");
   } else {
     setImportant(el, "visibility", "hidden");
     setImportant(el, "opacity", "0");
@@ -104,6 +113,7 @@ function applyToElement(el: HTMLElement, target: PinTarget): void {
 function stripFromElement(el: HTMLElement): void {
   const snap = snapshots.get(el);
   if (snap) {
+    restoreProp(el, "display", snap.display, snap.displayPriority);
     restoreProp(el, "visibility", snap.visibility, snap.visibilityPriority);
     restoreProp(el, "opacity", snap.opacity, snap.opacityPriority);
     restoreProp(el, "pointer-events", snap.pointerEvents, snap.pointerEventsPriority);
@@ -167,14 +177,26 @@ export function releasePins(): void {
  * (adversarial 29.08.2026, находка F): день обязан прятать роль, и «клавиша
  * победила фазу» была бы ошибкой в сторону эфира.
  *
- * Пин не трогает display — display:none под пином подъём НЕ снимет (F-7).
- * Сегодня display:none на роль никто, кроме stopPeek, не пишет (круг
- * замкнут), но любой будущий писатель display взведёт эту композицию —
- * помни при добавлении.
+ * Подъём — это ПОКАЗ (жалоба 04.10.2026, «V нажимаю — ничего»): снимок
+ * снимался при первом пине и нёс чужое скрытие — auto-start при входе в игру
+ * пишет display:none/hidden/0 ДО пина obs-панели. Восстановленный снимок
+ * возвращал этот hidden, и V не показывал ничего, а peek был уверен, что
+ * снял все слои (inline-слой auto-start запиненные узлы пропускает).
+ * Прежняя заметка F-7 «display:none никто, кроме stopPeek, не пишет» была
+ * неверна — её опроверг ровно этот путь. Поэтому после снятия пина
+ * скрывающие значения гасятся (идиома «показ не доверяет снимку прятать»,
+ * 4-е появление класса). Сам снимок НЕ трогаем: releasePins по-прежнему
+ * вернёт исходное, а restoreLiftedPins перепинит цель поверх.
  */
 export function liftPins(): boolean {
   if (pinTarget === null || lifted) return false;
-  for (const el of touched) stripFromElement(el);
+  for (const el of touched) {
+    stripFromElement(el);
+    if (el.style.display === "none") el.style.removeProperty("display");
+    if (el.style.visibility === "hidden") el.style.removeProperty("visibility");
+    if (el.style.opacity === "0") el.style.removeProperty("opacity");
+    if (el.style.pointerEvents === "none") el.style.removeProperty("pointer-events");
+  }
   lifted = true;
   return true;
 }
