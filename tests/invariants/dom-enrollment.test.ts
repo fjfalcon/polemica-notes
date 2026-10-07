@@ -37,7 +37,7 @@ function domSubscribers(): Map<string, number> {
       else if (name.endsWith(".ts")) {
         const code = stripComments(fs.readFileSync(p, "utf8"));
         const count = code.split("onDomChange(").length - 1;
-        if (count > 0) out.set(path.relative(ROOT, p), count);
+        if (count > 0) out.set(path.relative(ROOT, p).split(path.sep).join("/"), count);
       }
     }
   };
