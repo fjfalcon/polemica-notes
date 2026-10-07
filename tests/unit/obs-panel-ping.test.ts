@@ -67,6 +67,8 @@ import type { Settings } from "@shared/types";
 const ctx = {
   settings: {
     obs_floating_panel_enabled: false,
+    // Автосцены действуют только при включённой интеграции (жалоба 07.10.2026).
+    obs_enabled: true,
     obs_auto_mode_enabled: true,
     obs_day_scene: "день",
     obs_night_scene: "я",

@@ -1251,7 +1251,7 @@ async function autoSwitchScene(timeOfDay: TimeOfDay): Promise<void> {
     // проблеме узнали от зрителей. Ночью объясняем и последствие для роли.
     showToast(
       timeOfDay === "night"
-        ? "OBS: ночная сцена не переключена (нет подключения) — роль оставлена скрытой"
+        ? "OBS не подключён: ночная сцена не переключена, роль оставлена скрытой. Запустите OBS или выключите автосцены"
         : "OBS: сцена не переключена — проверьте подключение",
       { key: "obs-scene-switch-fail" },
     );
@@ -1496,9 +1496,23 @@ function handleOBSEvent(eventType: string, data: any): void {
 
 // ─────────────────────────── применение настроек авто-режима ───────────────────────────
 
+/**
+ * Действуют ли автосцены. Чистая функция — сторожится мутационно.
+ *
+ * Тумблер автосцен в попапе живёт ВНУТРИ блока OBS, который прячется при
+ * выключении интеграции, — и значение оставалось true невидимкой (жалоба
+ * 07.10.2026: OBS выключен, а автосцены продолжали вести роль по фазам; с
+ * гейтом ночной сцены 9.64.1 своя роль была скрыта ВСЮ ночь, а D не помогал —
+ * роль держал пин автосцен). Выключенный OBS = автосцен нет вовсе: ни смены
+ * сцен, ни пина роли; роль ведёт auto-start по своим настройкам.
+ */
+export function effectiveAutoMode(s: { obs_auto_mode_enabled?: unknown; obs_enabled?: unknown }): boolean {
+  return s.obs_auto_mode_enabled === true && s.obs_enabled === true;
+}
+
 function applyAutoSettings(ctx: FeatureContext): void {
   const s = ctx.settings;
-  const newAutoMode = s.obs_auto_mode_enabled === true;
+  const newAutoMode = effectiveAutoMode(s);
   const newDayScene = s.obs_day_scene || "";
   const newNightScene = s.obs_night_scene || "";
 

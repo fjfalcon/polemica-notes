@@ -21,7 +21,7 @@ vi.mock("@core/log", () => ({
 vi.mock("@core/messaging", () => ({ onMessage: vi.fn(), sendRuntime: vi.fn() }));
 vi.mock("@core/toast", () => ({ showToast: vi.fn(), clearToasts: vi.fn() }));
 
-import { nightRoleShowAllowed } from "@content/panels/obs-panel";
+import { effectiveAutoMode, nightRoleShowAllowed } from "@content/panels/obs-panel";
 
 describe("nightRoleShowAllowed", () => {
   test("эфир на ночной сцене — показ разрешён", () => {
@@ -39,5 +39,29 @@ describe("nightRoleShowAllowed", () => {
   test("ночная сцена не настроена — защищать нечего, прежнее поведение", () => {
     expect(nightRoleShowAllowed({ nightScene: "", currentScene: null })).toBe(true);
     expect(nightRoleShowAllowed({ nightScene: "", currentScene: "что угодно" })).toBe(true);
+  });
+});
+
+/**
+ * Жалоба 07.10.2026: OBS-интеграция выключена, а тумблер автосцен (он живёт
+ * ВНУТРИ скрытого блока OBS в попапе) остался true невидимкой. Автосцены
+ * продолжали вести роль по фазам, гейт ночной сцены не открывался никогда —
+ * своя роль скрыта всю ночь, D бессилен. Выключенный OBS = автосцен нет.
+ */
+describe("effectiveAutoMode", () => {
+  test("OBS выключен — автосцен нет, даже если их тумблер true", () => {
+    expect(effectiveAutoMode({ obs_auto_mode_enabled: true, obs_enabled: false })).toBe(false);
+  });
+
+  test("OBS включён и автосцены включены — работают", () => {
+    expect(effectiveAutoMode({ obs_auto_mode_enabled: true, obs_enabled: true })).toBe(true);
+  });
+
+  test("автосцены выключены — не работают независимо от OBS", () => {
+    expect(effectiveAutoMode({ obs_auto_mode_enabled: false, obs_enabled: true })).toBe(false);
+  });
+
+  test("мусор из хранилища — не true", () => {
+    expect(effectiveAutoMode({ obs_auto_mode_enabled: "true", obs_enabled: "true" })).toBe(false);
   });
 });

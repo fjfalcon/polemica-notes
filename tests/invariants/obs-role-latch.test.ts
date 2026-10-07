@@ -223,6 +223,19 @@ describe("смена сцены только по живому распозна�
  * auto-start — через шов nightSceneSafeForRoleShow. Сторожим по исходнику,
  * как и латч: ловушка на неосторожную правку.
  */
+describe("жалоба 07.10.2026: автосцены не живут без OBS", () => {
+  test("applyAutoSettings берёт режим через effectiveAutoMode, а не сырой тумблер", () => {
+    const body = source.slice(
+      source.indexOf("function applyAutoSettings"),
+      source.indexOf("autoModeEnabled = newAutoMode;"),
+    );
+    expect(body).toMatch(/const newAutoMode = effectiveAutoMode\(s\);/);
+    expect(body, "сырой тумблер — невидимка при выключенном OBS").not.toMatch(
+      /newAutoMode = s\.obs_auto_mode_enabled/,
+    );
+  });
+});
+
 describe("жалоба 01.10.2026: ночной показ роли ждёт ночную сцену", () => {
   const autoStart = fs.readFileSync(
     path.join(ROOT, "src/content/features/auto-start.ts"),
