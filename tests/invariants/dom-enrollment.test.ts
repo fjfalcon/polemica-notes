@@ -140,9 +140,18 @@ describe("зачисление DOM-подписчиков (§4, механика
     // покрытом файле проходила молча — сценарий харнеса гоняет только
     // первую, и новая жила бы без fixpoint-проверки.
     const COVERED_COUNTS: Record<string, number> = {
+      "src/content/features/auto-ready.ts": 1,
       "src/content/features/profile-crossover.ts": 1,
       "src/content/features/profile-mmr-chart.ts": 1,
+      "src/content/features/protocol-emoji.ts": 1,
     };
+    // Каждый покрытый файл обязан иметь пин (07.10.2026): auto-ready и
+    // protocol-emoji зачислили в харнес, но пин забыли — и вторая подписка
+    // в них прошла бы молча. Список пинов теперь сверяется с покрытием.
+    expect(
+      Object.keys(COVERED_COUNTS).sort(),
+      "покрытый харнесом файл без пина числа подписок — добавь его в COVERED_COUNTS",
+    ).toEqual([...coveredByFixpoint()].sort());
     const actual = domSubscribers();
     const drift = Object.entries(COVERED_COUNTS)
       .filter(([f, n]) => actual.get(f) !== n)
