@@ -66,16 +66,6 @@ const OBS_AUTO_RECORD_KEY = "obs_auto_record_started";
 const OBS_AUTO_RECORD_MANUAL_STOP_KEY = "obs_auto_record_manual_stop";
 const RESUME_AUTO_RECORD_AFTER_MANUAL_STOP = false;
 /**
- * Порядок событий записи и команд. Событие остановки разбирается в той же
- * очереди, что и команды, а его «поколение» снимается в момент прихода: старт,
- * выданный после события или ещё не завершённый к нему, делает событие
- * устаревшим для новой метки.
- */
-let recordStartSeq = 0;
-let recordStartInFlight = false;
-/** Наш StopRecord ждёт своего события остановки (оно может прийти до ответа или после). */
-let ownStop: { eventSeen: boolean; done: boolean } | null = null;
-/**
  * АДРЕС, ДЛЯ КОТОРОГО ВВЕДЁН ТЕКУЩИЙ ПАРОЛЬ (ревью 27.08.2026, финальная
  * модель). Прежние попытки ловили «чужой адрес» событиями и флагом-запретом
  * и оставляли дыры: гонку с top-level reconcile у спящего воркера, вечный
@@ -204,7 +194,7 @@ async function reconcileAutoRecord(): Promise<void> {
       return;
     }
     if ((await countRoomTabs()) > 0) return; // игра ещё идёт где-то
-    const path = await stopOwnRecord();
+    const path = await obs.stopRecord();
     await browser.storage.local.remove(OBS_AUTO_RECORD_KEY);
     log.info("background", "автозапись: осиротевшая запись остановлена", path ?? "");
   }).catch((e) => log.warn("background", "сверка автозаписи не удалась", e));
@@ -235,31 +225,12 @@ function ownsActiveRecording(mark: unknown): boolean {
   return m !== null && session != null && m.session === session;
 }
 
-/** StopRecord с ожиданием своего события остановки; провал снимает ожидание. */
-async function stopOwnRecord(): Promise<string | null> {
-  const pending = { eventSeen: false, done: false };
-  ownStop = pending;
-  try {
-    const path = await obs.stopRecord();
-    pending.done = true;
-    if (pending.eventSeen && ownStop === pending) ownStop = null;
-    return path;
-  } catch (e) {
-    if (ownStop === pending) ownStop = null;
-    throw e;
-  }
-}
-
+// The event is handled in the record queue, after every command queued before
+// it. record_stop removes the mark inside its own task, and a live output
+// means the event belongs to an earlier recording, so the mark stays.
 obs.onRecordStopped(() => {
-  if (ownStop && !ownStop.eventSeen) {
-    ownStop.eventSeen = true;
-    if (ownStop.done) ownStop = null;
-    return;
-  }
-  const seq = recordStartSeq;
-  const startPending = recordStartInFlight;
   void enqueueRecord(async () => {
-    if (startPending || seq !== recordStartSeq) return;
+    if (await obs.isRecording()) return;
     const st = (await browser.storage.local.get({ [OBS_AUTO_RECORD_KEY]: null })) as Record<
       string,
       unknown
@@ -698,18 +669,11 @@ async function handleObsQuery(
           // стример пишет сам) — не присваиваем и не трогаем.
           return { already: true };
         }
-        recordStartSeq += 1;
-        recordStartInFlight = true;
-        ownStop = null;
-        try {
-          await obs.startRecord();
-          const session = obs.getStatus().sessionId;
-          if (session) {
-            const mark: AutoRecordMark = { startedAt: Date.now(), session };
-            await browser.storage.local.set({ [OBS_AUTO_RECORD_KEY]: mark });
-          }
-        } finally {
-          recordStartInFlight = false;
+        await obs.startRecord();
+        const session = obs.getStatus().sessionId;
+        if (session) {
+          const mark: AutoRecordMark = { startedAt: Date.now(), session };
+          await browser.storage.local.set({ [OBS_AUTO_RECORD_KEY]: mark });
         }
         return { started: true };
       });
@@ -738,7 +702,7 @@ async function handleObsQuery(
         // пишется тем же файлом. Комнатность спрашиваем у самих вкладок
         // (§4.10), а не по url-паттерну.
         if ((await countRoomTabs(tabId)) > 0) return { ignored: "other_room_tabs" };
-        const path = await stopOwnRecord();
+        const path = await obs.stopRecord();
         // Флаг — ПОСЛЕ подтверждённой остановки: упавший stopRecord не должен
         // осиротить живую запись (adversarial 26.08.2026, OBS-1).
         await browser.storage.local.remove(OBS_AUTO_RECORD_KEY);

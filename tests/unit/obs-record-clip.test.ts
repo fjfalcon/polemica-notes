@@ -127,6 +127,8 @@ class FakeObs {
   stopEvent: "none" | "before" | "after" = "none";
   /** Позднее событие остановки ПРЕЖНЕЙ записи приходит во время следующего StartRecord. */
   staleStopOnNextStart = false;
+  /** The new output stops while StartRecord is still answering. */
+  stopDuringNextStart = false;
 
   constructor(public readonly url: string) {
     FakeObs.last = this;
@@ -160,6 +162,11 @@ class FakeObs {
           this.emitStopped();
         }
         this.recording = true;
+        if (this.stopDuringNextStart) {
+          this.stopDuringNextStart = false;
+          this.recording = false;
+          this.emitStopped();
+        }
         break;
       case "StopRecord":
         if (this.failNextStop) {
@@ -539,6 +546,73 @@ describe("свой StopRecord и его событие", () => {
     await flush();
     expect(store.data.obs_auto_record_started).toBeUndefined();
     expect(store.data.obs_auto_record_manual_stop).toBe(true);
+  });
+
+  test.each(["before", "after"] as const)(
+    "own stop event %s the reply, then a new start: the new mark survives",
+    async (when) => {
+      const obs = await bootConnected();
+      await command("record_start");
+      obs.stopEvent = when;
+      await command("record_stop");
+      const start = await command("record_start");
+      await new Promise((r) => setTimeout(r, 0));
+      await flush();
+      expect(start.data?.started).toBe(true);
+      expect(store.data.obs_auto_record_started).toEqual(OURS);
+      expect(store.data.obs_auto_record_manual_stop).toBeUndefined();
+      const stop = await command("record_stop");
+      await new Promise((r) => setTimeout(r, 0));
+      await flush();
+      expect(stop.data?.stopped).toBe(true);
+      expect(obs.recording).toBe(false);
+    },
+  );
+
+  test("output stopped during StartRecord: no mark, and a later manual recording survives", async () => {
+    const obs = await bootConnected();
+    obs.stopDuringNextStart = true;
+    await command("record_start");
+    await flush();
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+    expect(store.data.obs_auto_record_manual_stop).toBe(true);
+    obs.recording = true;
+    const stop = await command("record_stop");
+    expect(stop.data?.ignored).toBe("not_ours");
+    expect(obs.recording).toBe(true);
+    expect(obs.requests).not.toContain("StopRecord");
+  });
+});
+
+describe("manual-stop suppression policy", () => {
+  test("a normal start from another tab clears suppression and starts once", async () => {
+    const obs = await bootConnected();
+    await command("record_start", undefined, 5);
+    obs.recordStopped();
+    await flush();
+    const resumed = await command("record_start", { reconnect: true }, 5);
+    expect(resumed.data?.ignored).toBe("manual_stop");
+    const fresh = await command("record_start", undefined, 9);
+    expect(fresh.data?.started).toBe(true);
+    expect(store.data.obs_auto_record_manual_stop).toBeUndefined();
+    const again = await command("record_start", { reconnect: true }, 5);
+    expect(again.data?.already).toBe(true);
+    expect(obs.requests.filter((r) => r === "StartRecord")).toHaveLength(2);
+  });
+
+  test("a normal start during the streamer's own recording clears suppression and claims nothing", async () => {
+    const obs = await bootConnected();
+    await command("record_start");
+    obs.recordStopped();
+    await flush();
+    obs.recording = true;
+    const res = await command("record_start", undefined, 9);
+    expect(res.data?.already).toBe(true);
+    expect(store.data.obs_auto_record_manual_stop).toBeUndefined();
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+    const stop = await command("record_stop", undefined, 9);
+    expect(stop.data?.ignored).toBe("not_ours");
+    expect(obs.recording).toBe(true);
   });
 });
 
