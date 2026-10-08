@@ -79,6 +79,10 @@ import {
 } from "@core/polemica-api";
 import { releaseOwnHistory } from "@core/crossover";
 import type { Settings } from "@shared/types";
+import {
+  PlayerStatsStore,
+  type PlayerStatsEntry,
+} from "@content/features/player-notes/player-stats";
 
 const ctx = {
   settings: { statistics_enabled: true, nick_colors_enabled: true } as unknown as Settings,
@@ -961,5 +965,68 @@ describe("промах резолва id повторяется после па�
     } finally {
       localGet().mockImplementation(async () => ({}));
     }
+  });
+});
+
+describe("stale MMR in the stats tooltip", () => {
+  const entry = (extra: Partial<PlayerStatsEntry>): PlayerStatsEntry => ({
+    mmr: 1500,
+    totalGames: 10,
+    id: 55,
+    generalStats: { gamesCount: 10, winsCount: 5, firstKilledCount: 1, killpercent: 10, winrate: "50" },
+    roleStats: {
+      civilian: { winrate: "50" },
+      sheriff: { winrate: "50" },
+      mafia: { winrate: "50" },
+      godfather: { winrate: "50" },
+    },
+    ...extra,
+  });
+
+  async function tooltipFor(stats: PlayerStatsEntry, showMmr: boolean): Promise<string> {
+    vi.spyOn(PlayerStatsStore.prototype, "get").mockReturnValue(stats);
+    playerNotesFeature.disable();
+    seam.subs = [];
+    await playerNotesFeature.enable({
+      settings: { statistics_enabled: true, show_mmr: showMmr, show_id: true } as never,
+    });
+    document.body.innerHTML = `
+      <div class="players"><div class="player" id="p0">
+        <div class="player__info info"><span class="info__name">Gamma</span></div>
+      </div></div>`;
+    fire([rec({ target: document.body, added: [document.querySelector(".player") as Node] })]);
+    for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(1);
+    const tooltip = document.querySelector<HTMLElement>('[data-pn-stats="1"][data-username="Gamma"]');
+    if (!tooltip) throw new Error("no stats tooltip rendered");
+    return tooltip.innerHTML;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("a stale MMR keeps its number and gets the qualifier", async () => {
+    const html = await tooltipFor(entry({ mmrStale: true }), true);
+    expect(html).toContain("MMR: 1500 (устар.)");
+    expect(html).toContain("ID: 55");
+  });
+
+  test("a fresh MMR has no qualifier", async () => {
+    const html = await tooltipFor(entry({}), true);
+    expect(html).toContain("MMR: 1500<br>");
+    expect(html).not.toContain("устар.");
+  });
+
+  test("hidden MMR hides the qualifier too", async () => {
+    const html = await tooltipFor(entry({ mmrStale: true }), false);
+    expect(html).not.toContain("MMR:");
+    expect(html).not.toContain("устар.");
+    expect(html).toContain("ID: 55");
+  });
+
+  test("unavailable rating keeps its placeholder and invents no number", async () => {
+    const html = await tooltipFor(entry({ mmrStale: true, ratingUnavailable: true }), true);
+    expect(html).not.toContain("MMR:");
+    expect(html).not.toContain("устар.");
   });
 });

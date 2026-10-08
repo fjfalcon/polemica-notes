@@ -1176,7 +1176,7 @@ class PlayerNotesManager {
     html += `<div class="tooltip-text" style="font-size: 10px;">`;
 
     if (this.settings.show_mmr) {
-      html += `MMR: ${escapeHtml(String(stats.mmr))}<br>`;
+      html += `MMR: ${escapeHtml(String(stats.mmr))}${stats.mmrStale ? " (устар.)" : ""}<br>`;
     }
     if (this.settings.show_games) {
       html += `Игр: ${escapeHtml(String(stats.totalGames))}<br>`;
