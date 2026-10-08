@@ -202,6 +202,8 @@ export interface ObsCommandMsg {
     /** true — сцену переключает САМ пользователь (клик в панели): такая
      *  команда всегда проходит и забирает владение автосценой этой вкладке. */
     manual?: boolean;
+    /** record_start: повтор по obs_connected (OBS поднялся позже), а не вход в комнату. */
+    reconnect?: boolean;
   };
 }
 

@@ -88,6 +88,8 @@ export class ObsClient {
   private currentScene: string | null = null;
   private settings: ConnSettings | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Слушатель «запись в OBS остановлена» (событие RecordStateChanged). */
+  private recordStoppedListener: (() => void) | null = null;
   /**
    * Счётчик попыток переподключения. Живёт в памяти + в storage: при
    * выгрузке service worker он обнулялся, и лимит в 10 попыток фактически
@@ -495,6 +497,11 @@ export class ObsClient {
       case "SceneRemoved":
         void this.requestSceneList();
         break;
+      case "RecordStateChanged":
+        if (eventData.eventData?.outputState === "OBS_WEBSOCKET_OUTPUT_STOPPED") {
+          this.recordStoppedListener?.();
+        }
+        break;
       default:
         break;
     }
@@ -556,6 +563,10 @@ export class ObsClient {
   }
 
   // ── запись и буфер повторов (стримерский пакет 26.08.2026) ──
+
+  onRecordStopped(listener: () => void): void {
+    this.recordStoppedListener = listener;
+  }
 
   /** Идёт ли сейчас запись в OBS. */
   async isRecording(): Promise<boolean> {
