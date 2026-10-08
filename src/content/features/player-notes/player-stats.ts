@@ -228,7 +228,8 @@ export class PlayerStatsStore {
       let player: { id: number | string; mmr?: number | string } | null = null;
       for (const game of games as Array<{ players?: Array<Record<string, unknown>> }>) {
         const found = game.players?.find(
-          (p) => String(p.username ?? "").toLowerCase() === key,
+          (p) =>
+            String(p.username ?? "").toLowerCase() === key && validPlayerId(p.id) !== undefined,
         );
         if (found) {
           player = found as unknown as { id: number | string; mmr?: number | string };
@@ -249,9 +250,11 @@ export class PlayerStatsStore {
         if (fallbackFresh && Date.now() - fetchedAt < STATS_TTL_MS) return;
         log.debug("player-notes", `player ${username} not found in active games, using rating`);
         const ratingPlayer = await findRatingPlayer(username);
+        const ratingId = validPlayerId(ratingPlayer?.user_id);
         const knownId = this.knownIds.get(key);
-        if (ratingPlayer) {
-          userId = ratingPlayer.user_id;
+        if (ratingId !== undefined) {
+          userId = ratingId;
+          this.rememberId(key, ratingId);
         } else if (knownId !== undefined) {
           userId = knownId;
           mmr = this.lastMmr.get(key) ?? "—";

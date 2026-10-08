@@ -284,6 +284,22 @@ describe("известный id игрока вне игры и вне рейт�
     expect(store.get("Борис")?.mmrStale).toBe(true);
   });
 
+  test("id из рейтинга запоминается до профильных запросов", async () => {
+    h.profileFails = true;
+    const { store } = make();
+    await store.load("Аня");
+    expect(store.idOf("аня")).toBe(42);
+  });
+
+  test("негодный id из игры и рейтинга в профильные запросы не идёт", async () => {
+    h.games = [{ players: [{ username: "Вика", id: "unknown", mmr: 1500 }] }];
+    h.rating = [{ username: "Вика", user_id: "007" }];
+    const { store } = make();
+    await store.load("Вика");
+    expect(h.profileCalls).toBe(0);
+    expect(store.get("Вика")?.ratingUnavailable).toBe(true);
+  });
+
   test.each([[0], [-5], [1.5], ["0"], ["007"], ["unknown"], [""], [null]])(
     "негодный id %j не запоминается",
     (bad) => {
