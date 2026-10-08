@@ -65,8 +65,9 @@ export function decideSceneOwnership(input: {
   now: number;
   /**
    * Ответ вкладки-владельца или `null` — «не спрашивали» (решение принимается
-   * раньше). Именно null, а не заглушка «свободно»: с заглушкой любая
-   * перестановка проверок ниже молча раздала бы владение (ревью 02.08.2026).
+   * раньше) либо «не ответила вовремя»: тогда решает только TTL записи.
+   * Именно null, а не заглушка «свободно»: с заглушкой любая перестановка
+   * проверок ниже молча раздала бы владение (ревью 02.08.2026).
    */
   ownerTab: OwnerTabState | null;
 }): OwnershipDecision {
@@ -79,16 +80,18 @@ export function decideSceneOwnership(input: {
   }
   if (current.tabId === tabId) return { allow: true, claim: true, reason: "same-tab" };
 
-  const stale = typeof current.ts !== "number" || now - current.ts > OWNER_TTL_MS;
-  if (stale) return { allow: true, claim: true, reason: "owner-stale" };
-  // Владельца не спрашивали — значит решать по нему нечего: НЕ раздаём сцену.
-  if (!ownerTab) return { allow: false, claim: false, reason: "owner-alive" };
-  if (ownerTab.kind === "gone") return { allow: true, claim: true, reason: "owner-gone" };
+  if (ownerTab?.kind === "gone") return { allow: true, claim: true, reason: "owner-gone" };
   // Вкладка ответила «не веду»: ушла с игры, матч доигран, авто-режим выключен.
   // Держать за ней сцену нельзя — иначе автосмена в НАСТОЯЩЕЙ игровой вкладке
   // молчит до конца TTL (самый частый бытовой случай).
-  if (ownerTab.kind === "left-game") {
+  if (ownerTab?.kind === "left-game") {
     return { allow: true, claim: true, reason: "owner-left-game" };
   }
+  // Ответила «веду» — сцена её, какой бы старой ни была запись.
+  if (ownerTab) return { allow: false, claim: false, reason: "owner-alive" };
+
+  // Владельца не спрашивали или он не ответил вовремя — решает только TTL.
+  const stale = typeof current.ts !== "number" || now - current.ts > OWNER_TTL_MS;
+  if (stale) return { allow: true, claim: true, reason: "owner-stale" };
   return { allow: false, claim: false, reason: "owner-alive" };
 }

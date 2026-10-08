@@ -26,6 +26,7 @@ function decide(
 }
 
 const fresh: SceneOwnerRecord = { tabId: OWNER, ts: NOW - 1000 };
+const stale: SceneOwnerRecord = { tabId: OWNER, ts: NOW - OWNER_TTL_MS - 1 };
 
 describe("владение автосценой OBS", () => {
   test("владельца нет — первая же вкладка забирает сцену", () => {
@@ -78,18 +79,39 @@ describe("владение автосценой OBS", () => {
     });
   });
 
-  test("владелец молчит дольше TTL — вкладку даже не опрашиваем", () => {
-    const stale: SceneOwnerRecord = { tabId: OWNER, ts: NOW - OWNER_TTL_MS - 1 };
+  test("запись протухла, но владелец отвечает «веду» — сцена остаётся за ним", () => {
+    // Дневная фаза длится дольше TTL: запись стареет, а игра идёт.
     expect(decide(stale, { kind: "in-game" })).toEqual({
+      allow: false,
+      claim: false,
+      reason: "owner-alive",
+    });
+  });
+
+  test("запись протухла и владелец не ответил — владение переходит (owner-stale)", () => {
+    expect(decide(stale, null)).toEqual({ allow: true, claim: true, reason: "owner-stale" });
+  });
+
+  test("запись протухла, вкладки нет — owner-gone, а не owner-stale", () => {
+    expect(decide(stale, { kind: "gone" })).toEqual({
       allow: true,
       claim: true,
-      reason: "owner-stale",
+      reason: "owner-gone",
+    });
+  });
+
+  test("запись протухла, владелец ушёл с игры — owner-left-game", () => {
+    expect(decide(stale, { kind: "left-game" })).toEqual({
+      allow: true,
+      claim: true,
+      reason: "owner-left-game",
     });
   });
 
   test("на границе TTL владение ещё за прежней вкладкой", () => {
     const edge: SceneOwnerRecord = { tabId: OWNER, ts: NOW - OWNER_TTL_MS };
     expect(decide(edge, { kind: "in-game" }).allow).toBe(false);
+    expect(decide(edge, null).allow).toBe(false);
   });
 
   test.each([
@@ -97,7 +119,7 @@ describe("владение автосценой OBS", () => {
     ["запись без вкладки", { ts: NOW } as SceneOwnerRecord],
     ["мусор вместо записи", { tabId: "7" } as unknown as SceneOwnerRecord],
   ])("битое владение (%s) не блокирует автоматику", (_name, record) => {
-    expect(decide(record, { kind: "in-game" }).allow).toBe(true);
+    expect(decide(record, null).allow).toBe(true);
   });
 
   test("F5 в игровой вкладке не отнимает у неё владение", () => {
