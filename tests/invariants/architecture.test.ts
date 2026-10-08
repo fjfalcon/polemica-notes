@@ -146,7 +146,7 @@ describe("AGENTS §4 storage and data ownership", () => {
       return acc;
     }, {});
     const allowed = {
-      "src/background/notes-coordinator.ts": 2,
+      "src/background/notes-coordinator.ts": 3,
       // Reviewed compatibility fallback for a stale live content realm after update.
       // Данные заметок живут в модели (арх-ревью 28.08.2026) — фолбэк уехал с ними.
       "src/content/features/player-notes/notes-model.ts": 1,

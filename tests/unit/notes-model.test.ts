@@ -65,6 +65,7 @@ vi.mock("@core/notes-store", async (importOriginal) => {
 
 import { log } from "@core/log";
 import { showToast } from "@core/toast";
+import { mergeNickKeysIntoId, type NotesMap } from "@core/notes-store";
 import { NotesModel } from "@content/features/player-notes/notes-model";
 
 const signals = {
@@ -101,6 +102,18 @@ beforeEach(() => {
   // Координатор по умолчанию: применяет операции и возвращает свежую карту —
   // как настоящий в background.
   h.coordinator = (msg: unknown) => {
+    const m = msg as { type?: string; username?: string; userId?: number | string };
+    if (m.type === "notes_migrate_id") {
+      if (h.loadResult.loadFailed) return { ok: false, reason: "read_failed" };
+      // Координатор сливает на СВЕЖЕМ диске: прочитанное плюс записанное позже.
+      const disk = { ...h.loadResult.notes, ...h.saved } as NotesMap;
+      const merged = mergeNickKeysIntoId(disk, m.username as string, m.userId as number | string);
+      if (merged) {
+        h.saved[merged.key] = merged.record;
+        for (const nk of merged.nickKeys) delete h.saved[nk];
+      }
+      return { ok: true, truncated: 0, skipped: 0, notes: { ...h.saved } };
+    }
     const ops = (msg as { ops?: Array<{ key: string; record: unknown }> }).ops ?? [];
     for (const op of ops) {
       if (op.record === null) delete h.saved[op.key];
@@ -442,6 +455,69 @@ describe("миграция ник → id (единственный автома�
     await m.load();
     await m.migrateToId("Аня", 42);
     expect(h.saved).toEqual({});
+  });
+
+  test("правка другой вкладки в u:<id> между чтением и записью не затирается (баг 6)", async () => {
+    h.loadResult = { notes: { Аня: { text: "старая", timestamp: 100 } }, customTags: [], loadFailed: false };
+    const m = make({ аня: 42 });
+    await m.load();
+    h.saved["u:42"] = { text: "новая из другой вкладки", timestamp: 900 };
+    await m.migrateToId("Аня", 42);
+    expect((h.saved["u:42"] as { text: string }).text).toBe("новая из другой вкладки");
+    expect("Аня" in h.saved, "ник-ключ убран").toBe(false);
+  });
+
+  test("фон не ответил — фолбэк сливает на свежем чтении и пишет напрямую", async () => {
+    h.loadResult = { notes: { Аня: { text: "текст", timestamp: 100 } }, customTags: [], loadFailed: false };
+    const m = make({ аня: 42 });
+    await m.load();
+    h.coordinator = () => undefined;
+    await m.migrateToId("Аня", 42);
+    const written = h.savedMaps.at(-1) as Record<string, { text: string }>;
+    expect(written["u:42"].text).toBe("текст");
+    expect("Аня" in written).toBe(false);
+  });
+
+  test("фолбэк не мигрирует, пока хранилище не перенесено из sync", async () => {
+    h.loadResult = { notes: { Аня: { text: "текст", timestamp: 100 } }, customTags: [], loadFailed: false };
+    const m = make({ аня: 42 });
+    await m.load();
+    h.coordinator = () => undefined;
+    (h.loadResult as { migrated?: boolean }).migrated = false;
+    await m.migrateToId("Аня", 42);
+    expect(h.savedMaps).toEqual([]);
+  });
+
+  test("ответ координатора после выключения фичи не трогает память и UI", async () => {
+    h.loadResult = { notes: { Аня: { text: "текст", timestamp: 100 } }, customTags: [], loadFailed: false };
+    let active = true;
+    const ids: Record<string, number> = { аня: 42 };
+    const m = new NotesModel({
+      isActive: () => active,
+      onColorsChanged: () => signals.colors++,
+      onIndicatorsChanged: () => signals.indicators++,
+      onTagsChanged: () => signals.tags++,
+      onTooltipsChanged: () => signals.tooltips++,
+      onPlayerTooltips: () => undefined,
+      toast: (t) => signals.toasts.push(t),
+      lookupId: (lower) => ids[lower],
+    });
+    await m.load();
+    const real = h.coordinator;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    h.coordinator = async (msg: unknown) => {
+      await gate;
+      return real?.(msg);
+    };
+    const pending = m.migrateToId("Аня", 42);
+    await flushMicrotasks();
+    active = false;
+    release();
+    await pending;
+    expect("u:42" in h.saved, "миграция на диске состоялась").toBe(true);
+    expect(m.keys.nickKeys("Аня").length, "память не заменена").toBe(1);
+    expect(signals.indicators + signals.tags).toBe(0);
   });
 });
 
