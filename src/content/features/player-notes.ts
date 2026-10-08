@@ -1881,6 +1881,8 @@ class PlayerNotesManager {
     if (stats && !stats.ratingUnavailable && stats.id) return stats.id;
     const fromNote = this.noteUserId(username);
     if (fromNote !== undefined) return fromNote;
+    const known = validPlayerId(this.stats.idOf(key));
+    if (known !== undefined) return known;
     try {
       const player = await findRatingPlayer(username);
       if (!player) {
