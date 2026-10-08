@@ -50,6 +50,7 @@ import {
   MAX_IMPORT_ENTRIES,
 } from "@core/notes-store";
 import { classifyMergeResponse, runCoordinatorImport, runImportFallback } from "./import-fallback";
+import { collectBackup } from "./backup-export";
 import { sanitizeObsHost } from "@shared/safe-endpoint";
 
 /** Сколько игр с метками ролей принимаем из чужого файла (у фичи лимит 50). */
@@ -700,45 +701,12 @@ document.addEventListener("DOMContentLoaded", () => {
   if (exportBtn) {
     exportBtn.addEventListener("click", async () => {
       try {
-        const { notes, loadFailed } = await loadNotes();
-        if (loadFailed) {
+        const backup = await collectBackup();
+        if (!backup) {
           showPopupToast("Не удалось прочитать заметки — попробуйте позже", "error");
           return;
         }
-        const count = Object.keys(notes).length;
-        // Настройки выгружаем ВСЕГДА, даже без заметок: у пользователей
-        // storage обнуляется при каждом переезде расширения (см. AGENTS.md
-        // §2б — ID распакованного Chrome-расширения зависит от пути папки, а
-        // временное дополнение Firefox стирается при закрытии браузера), и
-        // бэкап «только заметок» их от перенастройки не спасал.
-        const settings = await getSettings();
-        // Пароль OBS в файл НЕ кладём: бэкап уезжает в облака и мессенджеры.
-        const { obs_password: _pw, ...safeSettings } = settings;
-        // Палитра своих цветов и локальные мьюты — тоже устойчивые данные
-        // пользователя; без них обещание «импорт вернёт всё как было» врало
-        // (аудит безопасности 01.08.2026, находка 7).
-        const extra = (await browser.storage.local.get({
-          [TAGS_KEY]: [],
-          pn_muted_players: [],
-          pn_hidden_players: [],
-          // Метки ролей — тоже устойчивый ввод пользователя (история до 50
-          // игр); без них обещание «импорт вернёт всё как было» врало
-          // (аудит lifecycle 01.08.2026, находка 17).
-          roleMarks: {},
-        })) as Record<string, unknown>;
-        const payload = {
-          app: "polemica-notes",
-          type: "notes-backup",
-          version: browser.runtime.getManifest().version,
-          exportedAt: new Date().toISOString(),
-          settings: safeSettings,
-          notes,
-          customTags: Array.isArray(extra[TAGS_KEY]) ? extra[TAGS_KEY] : [],
-          mutedPlayers: Array.isArray(extra.pn_muted_players) ? extra.pn_muted_players : [],
-          hiddenPlayers: Array.isArray(extra.pn_hidden_players) ? extra.pn_hidden_players : [],
-          roleMarks:
-            extra.roleMarks && typeof extra.roleMarks === "object" ? extra.roleMarks : {},
-        };
+        const { payload, count } = backup;
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
