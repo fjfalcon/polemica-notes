@@ -467,25 +467,14 @@ describe("миграция ник → id (единственный автома�
     expect("Аня" in h.saved, "ник-ключ убран").toBe(false);
   });
 
-  test("фон не ответил — фолбэк сливает на свежем чтении и пишет напрямую", async () => {
+  test("фон не ответил: миграция откладывается, вкладка не пишет напрямую", async () => {
     h.loadResult = { notes: { Аня: { text: "текст", timestamp: 100 } }, customTags: [], loadFailed: false };
     const m = make({ аня: 42 });
     await m.load();
     h.coordinator = () => undefined;
-    await m.migrateToId("Аня", 42);
-    const written = h.savedMaps.at(-1) as Record<string, { text: string }>;
-    expect(written["u:42"].text).toBe("текст");
-    expect("Аня" in written).toBe(false);
-  });
-
-  test("фолбэк не мигрирует, пока хранилище не перенесено из sync", async () => {
-    h.loadResult = { notes: { Аня: { text: "текст", timestamp: 100 } }, customTags: [], loadFailed: false };
-    const m = make({ аня: 42 });
-    await m.load();
-    h.coordinator = () => undefined;
-    (h.loadResult as { migrated?: boolean }).migrated = false;
     await m.migrateToId("Аня", 42);
     expect(h.savedMaps).toEqual([]);
+    expect(m.notes["Аня"]).toBeDefined();
   });
 
   test("ответ координатора после выключения фичи не трогает память и UI", async () => {

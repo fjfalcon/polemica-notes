@@ -28,7 +28,6 @@ import {
   NOTES_VERSION,
   saveCustomTags as saveCustomTagsToStore,
   saveNotes as saveNotesToStore,
-  mergeNickKeysIntoId,
   withNickHistory,
   type NoteRecord,
   type NotesMap,
@@ -445,44 +444,18 @@ export class NotesModel {
 
   private async doMigrateToId(username: string, userId: number | string): Promise<void> {
     if (!this.ctx.isActive()) return;
-    // Сливать можно только внутри очереди координатора, на свежем чтении;
-    // фолбэк ниже такой гарантии не даёт.
+    // Сливать можно только внутри очереди координатора, на свежем чтении.
+    // Фон не ответил: миграцию откладываем, заметка остаётся под ником.
     let res: NotesResultMsg | undefined;
     try {
       res = await sendRuntime<NotesResultMsg>({ type: "notes_migrate_id", username, userId });
     } catch (e) {
       log.debug("player-notes", "notes coordinator unavailable", e);
     }
-    if (res && typeof res.ok === "boolean") {
-      if (!res.ok || !this.ctx.isActive()) return;
-      if (res.notes) this.map = res.notes as NotesMap;
-      this.warnOnLossyWrite(res);
-      this.afterMigration(username);
-      return;
-    }
-
-    // Фолбэк осиротевшей вкладки: фон не ответил. Миграция — АВТОМАТИЧЕСКИЙ
-    // писатель всей карты (срабатывает без действий пользователя). Работаем
-    // со СВЕЖЕЙ картой с диска, а не со снапшотом памяти: иначе вкладка со
-    // старой памятью затирала бы заметку, только что сохранённую в другой
-    // вкладке (окно RMW сжимается с «минут» до мс).
-    const { notes: fresh, loadFailed, migrated } = await loadNotesFromStore();
-    if (loadFailed || migrated === false || !this.ctx.isActive()) return;
-    const merged = mergeNickKeysIntoId(fresh, username, userId);
-    if (!merged) return;
-
-    fresh[merged.key] = merged.record;
-    for (const nk of merged.nickKeys) delete fresh[nk];
-
-    const migrationOps: NoteOp[] = [
-      { key: merged.key, record: fresh[merged.key] as unknown },
-      ...merged.nickKeys.map((nk) => ({ key: nk, record: null })),
-    ];
-    // fresh как карта фолбэка: она собрана из СВЕЖЕГО чтения диска, в
-    // отличие от this.notes. Память обновит сам commitNoteOps — картой от
-    // координатора или fresh (при фолбэке).
-    if (await this.commitOps(migrationOps, fresh)) this.afterMigration(username);
-    // При неудаче записи память не трогаем вовсе — this.notes как была.
+    if (!res || typeof res.ok !== "boolean" || !res.ok || !this.ctx.isActive()) return;
+    if (res.notes) this.map = res.notes as NotesMap;
+    this.warnOnLossyWrite(res);
+    this.afterMigration(username);
   }
 
   private afterMigration(username: string): void {
