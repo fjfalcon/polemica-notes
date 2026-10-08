@@ -26,6 +26,8 @@ export interface RoleWinrate {
 export interface PlayerStatsEntry {
   ratingUnavailable?: boolean;
   fromRating?: boolean;
+  /** MMR последний известный, не свежий: игрока нет ни в /api/games, ни в рейтинге. */
+  mmrStale?: boolean;
   mmr: number | string;
   totalGames: number | string;
   id: number | string;
@@ -136,6 +138,13 @@ export function buildStatsEntry(
   };
 }
 
+/** id игрока, если он положительное целое (число или строка цифр без ведущих нулей). */
+export function validPlayerId(id: unknown): number | string | undefined {
+  if (typeof id === "number") return Number.isInteger(id) && id > 0 ? id : undefined;
+  if (typeof id === "string" && /^[1-9]\d*$/.test(id)) return id;
+  return undefined;
+}
+
 export interface PlayerStatsContext {
   /** Фича ещё жива: поздний ответ мёртвой фичи не пишет в кэш и не красит DOM. */
   isActive(): boolean;
@@ -155,6 +164,10 @@ export class PlayerStatsStore {
   private readonly errorAt = new Map<string, number>();
   /** Когда последний раз проверяли «игрок сейчас в активной игре». */
   private readonly activeCheckedAt = new Map<string, number>();
+  /** Известные id ников: переживают TTL статистики, чистятся только reset(). */
+  private readonly knownIds = new Map<string, number | string>();
+  /** Последний числовой MMR ника — показывается, пока свежего нет. */
+  private readonly lastMmr = new Map<string, number>();
 
   constructor(private readonly ctx: PlayerStatsContext) {}
 
@@ -164,7 +177,15 @@ export class PlayerStatsStore {
 
   /** id игрока по нику — вход в резолв ключа заметки. */
   idOf(lowerNick: string): number | string | undefined {
-    return this.byNick.get(lowerNick)?.id;
+    return this.knownIds.get(lowerNick) ?? this.byNick.get(lowerNick)?.id;
+  }
+
+  /** Запомнить id (и MMR) ника; негодный id не запоминается. */
+  rememberId(lowerNick: string, id: unknown, mmr?: unknown): void {
+    const valid = validPlayerId(id);
+    if (valid === undefined) return;
+    this.knownIds.set(lowerNick, valid);
+    if (typeof mmr === "number" && Number.isFinite(mmr)) this.lastMmr.set(lowerNick, mmr);
   }
 
   reset(): void {
@@ -173,6 +194,8 @@ export class PlayerStatsStore {
     this.inFlight.clear();
     this.errorAt.clear();
     this.activeCheckedAt.clear();
+    this.knownIds.clear();
+    this.lastMmr.clear();
   }
 
   /** Сбросить только бэкофф ошибок (например, сеть вернулась). */
@@ -187,7 +210,7 @@ export class PlayerStatsStore {
     const cached = this.byNick.get(key);
     const now = Date.now();
     const needsActiveRecheck =
-      cached?.fromRating === true &&
+      (cached?.fromRating === true || cached?.mmrStale === true) &&
       now - (this.activeCheckedAt.get(key) ?? 0) >= ACTIVE_GAMES_TTL_MS;
     if (cached && now - fetchedAt < STATS_TTL_MS && !needsActiveRecheck) return;
     if (this.inFlight.has(key)) return; // запрос уже в полёте
@@ -215,22 +238,31 @@ export class PlayerStatsStore {
 
       let userId: number | string;
       let mmr: number | string = "—";
+      let mmrStale = false;
       if (player) {
         userId = player.id;
         mmr = player.mmr ?? "—";
+        this.rememberId(key, player.id, player.mmr);
       } else {
         this.activeCheckedAt.set(key, Date.now());
-        if (cached?.fromRating && Date.now() - fetchedAt < STATS_TTL_MS) return;
+        const fallbackFresh = cached?.fromRating || cached?.mmrStale;
+        if (fallbackFresh && Date.now() - fetchedAt < STATS_TTL_MS) return;
         log.debug("player-notes", `player ${username} not found in active games, using rating`);
         const ratingPlayer = await findRatingPlayer(username);
-        if (!ratingPlayer) {
+        const knownId = this.knownIds.get(key);
+        if (ratingPlayer) {
+          userId = ratingPlayer.user_id;
+        } else if (knownId !== undefined) {
+          userId = knownId;
+          mmr = this.lastMmr.get(key) ?? "—";
+          mmrStale = true;
+        } else {
           if (!this.ctx.isActive()) return;
-          this.byNick.set(key, unavailablePlayerStats());
+          if (!cached) this.byNick.set(key, unavailablePlayerStats());
           this.fetchedAt.set(key, Date.now());
           this.ctx.onLoaded(username);
           return;
         }
-        userId = ratingPlayer.user_id;
       }
 
       // ok-чек и таймаут: раньше не-2xx молча парсился, а зависший запрос
@@ -240,23 +272,27 @@ export class PlayerStatsStore {
           if (!r.ok) throw new Error(`stats API ${r.status}`);
           return r.json();
         });
+      const uid = encodeURIComponent(String(userId));
       const [general, roles, killcount] = (await Promise.all([
         getJson(
-          `https://polemicagame.com/profile/default/get-role-statistic?user_id=${userId}&role=&game_type=league&scoring_type=scoring_2%2Cscoring_3`,
+          `https://polemicagame.com/profile/default/get-role-statistic?user_id=${uid}&role=&game_type=league&scoring_type=scoring_2%2Cscoring_3`,
         ),
         getJson(
-          `https://polemicagame.com/profile/default/get-statistic?user_id=${userId}&game_type=league&scoring_type=scoring_2%2Cscoring_3`,
+          `https://polemicagame.com/profile/default/get-statistic?user_id=${uid}&game_type=league&scoring_type=scoring_2%2Cscoring_3`,
         ),
         getJson(
-          `https://polemicagame.com/profile/default/get-role-statistic?user_id=${userId}&role=civilian%2Csheriff&game_type=league&scoring_type=scoring_2%2Cscoring_3`,
+          `https://polemicagame.com/profile/default/get-role-statistic?user_id=${uid}&role=civilian%2Csheriff&game_type=league&scoring_type=scoring_2%2Cscoring_3`,
         ),
       ])) as [StatsApiPayload["general"], StatsApiPayload["roles"], StatsApiPayload["killcount"]];
 
       if (!this.ctx.isActive()) return;
-      this.byNick.set(
-        key,
-        buildStatsEntry({ general, roles, killcount }, { userId, mmr, fromRating: !player }),
+      const entry = buildStatsEntry(
+        { general, roles, killcount },
+        { userId, mmr, fromRating: !player && !mmrStale },
       );
+      if (mmrStale) entry.mmrStale = true;
+      this.byNick.set(key, entry);
+      this.rememberId(key, userId, mmr);
       this.fetchedAt.set(key, Date.now());
       if (player) this.activeCheckedAt.delete(key);
       this.ctx.onLoaded(username);

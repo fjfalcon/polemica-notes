@@ -872,3 +872,94 @@ describe("сворачивание ряда: ВСЕ кнопки, а не пар
     ).not.toBeNull();
   });
 });
+
+describe("промах резолва id повторяется после паузы", () => {
+  const site = { games: [] as unknown[] };
+  const localGet = () => browserMock.storage.local.get as ReturnType<typeof vi.fn>;
+
+  async function start(): Promise<() => Promise<void>> {
+    site.games = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("/api/games")) return { ok: true, json: async () => site.games };
+        if (url.includes("/ratings/default/get-list")) return { ok: true, json: async () => [] };
+        return { ok: false, status: 404 };
+      }) as unknown as typeof fetch,
+    );
+    localGet().mockImplementation(async (q: unknown) => {
+      if (q && typeof q === "object" && "playerNotes" in (q as object)) {
+        return {
+          playerNotes: { "u:55": { text: "держит линию" } },
+          tagCustomColors: [],
+          pn_notes_migrated_v1: true,
+        };
+      }
+      return {};
+    });
+    await restart();
+    document.body.className = "";
+    document.body.innerHTML = `
+      <div class="players"><div class="player" id="p0">
+        <div class="player__info info"><span class="info__name">Gamma</span></div>
+      </div></div>`;
+    return async () => {
+      fire([rec({ target: document.body, added: [document.querySelector(".player") as Node] })]);
+      for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(1);
+    };
+  }
+
+  async function restart(): Promise<void> {
+    playerNotesFeature.disable();
+    seam.subs = [];
+    resetRatingCacheForTest();
+    resetActiveGamesCacheForTest();
+    await playerNotesFeature.enable({
+      settings: {
+        statistics_enabled: true,
+        btn_note_enabled: true,
+        note_indicator_enabled: true,
+      } as never,
+    });
+  }
+
+  const seated = [{ players: [{ username: "Gamma", id: 55, mmr: 1500 }] }];
+
+  test("id, появившийся после паузы, показывает заметку без перезагрузки", async () => {
+    try {
+      const pass = await start();
+      await pass();
+      expect(document.querySelector(".pn-note-dot"), "id ещё неизвестен").toBeNull();
+
+      site.games = seated;
+      await vi.advanceTimersByTimeAsync(20_000);
+      resetActiveGamesCacheForTest();
+      await pass();
+      expect(document.querySelector(".pn-note-dot"), "внутри паузы повтора нет").toBeNull();
+
+      await vi.advanceTimersByTimeAsync(41_000);
+      await pass();
+      expect(
+        document.querySelector(".pn-note-dot"),
+        "после паузы резолв повторён, заметка видна",
+      ).not.toBeNull();
+    } finally {
+      localGet().mockImplementation(async () => ({}));
+    }
+  });
+
+  test("disable/enable сбрасывает паузу после промаха", async () => {
+    try {
+      const pass = await start();
+      await pass();
+      expect(document.querySelector(".pn-note-dot")).toBeNull();
+
+      site.games = seated;
+      await restart();
+      await pass();
+      expect(document.querySelector(".pn-note-dot"), "после перезапуска резолв сразу").not.toBeNull();
+    } finally {
+      localGet().mockImplementation(async () => ({}));
+    }
+  });
+});
