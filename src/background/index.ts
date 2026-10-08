@@ -229,6 +229,7 @@ function ownsActiveRecording(mark: unknown): boolean {
 // it. record_stop removes the mark inside its own task, and a live output
 // means the event belongs to an earlier recording, so the mark stays.
 obs.onRecordStopped(() => {
+  const session = obs.getStatus().sessionId;
   void enqueueRecord(async () => {
     if (await obs.isRecording()) return;
     const st = (await browser.storage.local.get({ [OBS_AUTO_RECORD_KEY]: null })) as Record<
@@ -238,7 +239,7 @@ obs.onRecordStopped(() => {
     const mark = st[OBS_AUTO_RECORD_KEY];
     if (mark == null) return;
     await browser.storage.local.remove(OBS_AUTO_RECORD_KEY);
-    if (!ownsActiveRecording(mark)) return;
+    if (session == null || parseAutoRecordMark(mark)?.session !== session) return;
     await browser.storage.local.set({ [OBS_AUTO_RECORD_MANUAL_STOP_KEY]: true });
     log.info("background", "автозапись: нашу запись остановили не мы — флаг снят");
   }).catch((e) => log.warn("background", "событие остановки записи не обработано", e));
