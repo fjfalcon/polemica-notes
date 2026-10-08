@@ -50,7 +50,7 @@ async function obsCommand(
 async function setupBuffer(seconds: number): Promise<void> {
   const gen = generation;
   const res = await obsCommand("replay_setup", { seconds });
-  if (gen !== generation) return;
+  if (gen !== generation || seconds !== wantedSeconds) return;
   if (res?.success) {
     configuredSeconds = seconds;
     setupFailedWarned = false;

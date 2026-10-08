@@ -81,4 +81,23 @@ describe("OBS поднялся позже вкладки", () => {
     await flush();
     expect(showToast).not.toHaveBeenCalled();
   });
+
+  test("запоздавший ответ прежней длины не считается настроенным", async () => {
+    sent.setups.length = 0;
+    let answer: (v: unknown) => void = () => undefined;
+    vi.mocked(sendRuntime).mockImplementationOnce(
+      () => new Promise((r) => (answer = r)) as ReturnType<typeof sendRuntime>,
+    );
+    const two = { settings: { obs_clip_hotkey_code: "F9", obs_clip_minutes: 2 } } as unknown as FeatureContext;
+    const three = { settings: { obs_clip_hotkey_code: "F9", obs_clip_minutes: 3 } } as unknown as FeatureContext;
+    obsClipFeature.enable(two);
+    obsClipFeature.update?.(three);
+    await flush();
+    answer({ success: true });
+    await flush();
+    obsClipFeature.update?.(two);
+    await flush();
+    expect(sent.setups.at(-1)).toBe(120);
+    obsClipFeature.disable();
+  });
 });
