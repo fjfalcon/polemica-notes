@@ -23,7 +23,7 @@ import type { Feature, FeatureContext } from "@core/feature";
 const SCOPE = "mic-sync";
 const POS_KEY = "pn-mic-pill-pos";
 /** Сколько ждём, пока сайт отразит клик по своей кнопке микрофона. */
-const GAME_VERIFY_MS = 1500;
+const GAME_VERIFY_MS = 3000;
 
 export interface GameMic {
   button: HTMLElement;
@@ -115,8 +115,32 @@ async function refreshObs(): Promise<void> {
   render();
 }
 
-/** Привести микрофон игры к нужному состоянию; true — подтверждено. */
+/**
+ * Выравнивание микрофона игры — ОДНО на вкладку (adversarial 09.10.2026):
+ * эхо InputMuteStateChanged от нашего же SetInputMute приходит РАНЬШЕ ответа
+ * на запрос, и два выравнивателя (переключатель и обработчик события) видели
+ * старый DOM — кнопка сайта меняет класс только после ответа своего сервера.
+ * Второй клик возвращал микрофон игры обратно. Теперь вызов с той же целью
+ * ждёт идущий; с другой — дожидается его и только потом идёт сам.
+ */
+let alignInFlight: { muted: boolean; promise: Promise<boolean> } | null = null;
+
 async function alignGameMic(muted: boolean): Promise<boolean> {
+  while (alignInFlight) {
+    const running = alignInFlight;
+    if (running.muted === muted) return running.promise;
+    await running.promise.catch(() => false);
+  }
+  const promise = alignGameMicOnce(muted);
+  alignInFlight = { muted, promise };
+  try {
+    return await promise;
+  } finally {
+    if (alignInFlight?.promise === promise) alignInFlight = null;
+  }
+}
+
+async function alignGameMicOnce(muted: boolean): Promise<boolean> {
   const mic = readGameMic();
   if (!mic) return false;
   if (mic.muted === muted) return true;
@@ -325,6 +349,7 @@ function start(ctx: FeatureContext): void {
 
 function stop(): void {
   active = false;
+  alignInFlight = null;
   offDom?.();
   offDom = null;
   offMsg?.();

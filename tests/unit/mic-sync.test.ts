@@ -8,13 +8,34 @@
 import { beforeEach, afterEach, describe, expect, test, vi } from "vitest";
 
 const sent: Array<{ command: string; muted?: boolean }> = [];
-const obsReply = vi.hoisted(() => ({ fail: null as string | null, muted: false }));
+const obsReply = vi.hoisted(() => ({
+  fail: null as string | null,
+  muted: false,
+  /** Эхо InputMuteStateChanged ДО ответа на SetInputMute (как в живом OBS). */
+  echoBeforeReply: false,
+  handler: null as ((msg: unknown) => unknown) | null,
+}));
 vi.mock("@core/messaging", () => ({
-  onMessage: vi.fn(() => () => undefined),
+  onMessage: vi.fn((fn: (msg: unknown) => unknown) => {
+    obsReply.handler = fn;
+    return () => {
+      obsReply.handler = null;
+    };
+  }),
   sendRuntime: vi.fn(async (msg: { command: string; data?: { muted?: boolean } }) => {
     sent.push({ command: msg.command, muted: msg.data?.muted });
     if (obsReply.fail) return { success: false, error: obsReply.fail };
-    if (msg.command === "set_input_mute") obsReply.muted = msg.data?.muted === true;
+    if (msg.command === "set_input_mute") {
+      obsReply.muted = msg.data?.muted === true;
+      if (obsReply.echoBeforeReply) {
+        obsReply.handler?.({
+          type: "obs_event",
+          eventType: "obs_input_mute_changed",
+          data: { inputName: "Mic/Aux", inputMuted: obsReply.muted },
+        });
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    }
     return { success: true, data: { muted: obsReply.muted } };
   }),
 }));
@@ -69,6 +90,7 @@ beforeEach(() => {
   toasts.length = 0;
   obsReply.fail = null;
   obsReply.muted = false;
+  obsReply.echoBeforeReply = false;
 });
 
 afterEach(() => micSyncFeature.disable());
@@ -137,6 +159,34 @@ describe("toggleMic", () => {
     obsReply.fail = "OBS не подключён";
     await toggleMic();
     expect(toasts.join(" ")).toContain("НЕ выключен");
+  });
+
+  test("эхо OBS посреди запроса + медленный сайт: игра кликается РОВНО раз (adversarial)", async () => {
+    // Кнопка сайта меняет класс только после ответа своего сервера (~300 мс):
+    // два выравнивателя видели старый DOM, и второй клик возвращал мьют обратно.
+    const btn = document.createElement("div");
+    btn.className = "button preset-1 small desktop-version";
+    const img = document.createElement("img");
+    img.className = "button__icon";
+    img.setAttribute("src", ON);
+    btn.appendChild(img);
+    let clicks = 0;
+    btn.addEventListener("click", () => {
+      clicks++;
+      setTimeout(() => {
+        const nowMuted = !btn.classList.contains("off");
+        btn.classList.toggle("off", nowMuted);
+        img.setAttribute("src", nowMuted ? OFF : ON);
+      }, 300);
+    });
+    document.body.appendChild(btn);
+    void micSyncFeature.enable(ctx());
+    await vi.waitFor(() => expect(sent.some((s) => s.command === "get_input_mute")).toBe(true));
+    obsReply.echoBeforeReply = true;
+    await toggleMic();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(clicks, "второй клик вернул бы микрофон игры обратно").toBe(1);
+    expect(btn.classList.contains("off")).toBe(true);
   });
 
   test("при выключенной интеграции OBS фича ничего не делает", async () => {
