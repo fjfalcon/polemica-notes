@@ -27,7 +27,15 @@ vi.mock("@core/polemica-api", () => ({
   findRatingPlayer: vi.fn(async (username: string) =>
     h.rating.find((p) => p.username?.toLowerCase() === username.toLowerCase()),
   ),
+  // get-statistic ушёл в общий кэш @core/polemica-api (09.10.2026): считаем
+  // его тем же счётчиком — «три профильных запроса на игрока» остаются правдой.
+  fetchRoleBreakdown: vi.fn(async () => {
+    h.profileCalls++;
+    if (h.profileFails) throw new Error("stats API 500");
+    return {};
+  }),
 }));
+vi.mock("@core/seen-players", () => ({ rememberSeenPlayers: vi.fn() }));
 
 import { PlayerStatsStore, STATS_ERROR_BACKOFF_MS, STATS_TTL_MS } from "@content/features/player-notes/player-stats";
 

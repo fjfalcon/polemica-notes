@@ -29,6 +29,7 @@ import {
 import { formatKeyCode, isModifierCode } from "@core/keyboard";
 // Список углов — общий с content-скриптом (см. shared/nick-plate).
 import { PLATE_POSITIONS } from "@shared/nick-plate";
+import { setupPlayerSearch } from "./player-search";
 import {
   DEFAULT_PROTOCOL_EMOJI,
   PROTOCOL_EMOJI_PALETTE,
@@ -131,6 +132,7 @@ const SCOPE = "popup";
 
 document.addEventListener("DOMContentLoaded", () => {
   installErrorCapture("popup");
+  setupPlayerSearch();
 
   // Онбординг: попап открыт — настройки найдены. Снимаем точку с иконки и
   // больше никогда не навязываем страницу-приветствие (см. background,
@@ -1304,6 +1306,30 @@ document.addEventListener("DOMContentLoaded", () => {
     );
   }
 
+  // ───────────────────────── Клавиша микрофона (mic-sync) ─────────────────────────
+  let micHotkeyCode = "";
+  const micCaptureBtn = $<HTMLButtonElement>("mic_sync_hotkey_capture");
+  function renderMicKey(): void {
+    if (micCaptureBtn) micCaptureBtn.textContent = formatKeyCode(micHotkeyCode);
+  }
+  if (micCaptureBtn) {
+    // Пустая клавиша не занимает слот: иначе «—» совпадало бы с другими пустыми.
+    hotkeyGetters.push(() => micHotkeyCode || "\u0000mic");
+    micCaptureBtn.addEventListener("click", () =>
+      beginKeyCapture(
+        micCaptureBtn,
+        () => micHotkeyCode,
+        (code) => (micHotkeyCode = code),
+        renderMicKey,
+      ),
+    );
+  }
+  $("mic_sync_hotkey_clear")?.addEventListener("click", () => {
+    micHotkeyCode = "";
+    renderMicKey();
+    saveSettings();
+  });
+
   // ───────────────────────── Захват клавиш ролей (F/E/D) ─────────────────────────
   let roleFakeCode = "KeyF";
   let roleResetCode = "KeyE";
@@ -1462,6 +1488,14 @@ document.addEventListener("DOMContentLoaded", () => {
     set("pause_hotkey_enabled", items.pause_hotkey_enabled);
     set("statistics_enabled", items.statistics_enabled);
     set("session_stats_enabled", items.session_stats_enabled);
+    set("table_summary_enabled", items.table_summary_enabled);
+    set("mic_sync_enabled", items.mic_sync_enabled);
+    {
+      const mi = $<HTMLInputElement>("mic_sync_input");
+      if (mi) mi.value = typeof items.mic_sync_input === "string" ? items.mic_sync_input : "Mic/Aux";
+    }
+    micHotkeyCode = typeof items.mic_sync_hotkey === "string" ? items.mic_sync_hotkey : "";
+    renderMicKey();
     set("match_page_stats_enabled", items.match_page_stats_enabled);
 
     const sbt = $<HTMLSelectElement>("stats_button_theme");
@@ -1685,6 +1719,10 @@ document.addEventListener("DOMContentLoaded", () => {
       hotkey_hints_enabled: cb("hotkey_hints_enabled", true),
       statistics_enabled: cb("statistics_enabled", true),
       session_stats_enabled: cb("session_stats_enabled", false),
+      table_summary_enabled: cb("table_summary_enabled", false),
+      mic_sync_enabled: cb("mic_sync_enabled", false),
+      mic_sync_input: ($<HTMLInputElement>("mic_sync_input")?.value ?? "").trim() || "Mic/Aux",
+      mic_sync_hotkey: micHotkeyCode,
       profile_mmr_chart_enabled: cb("profile_mmr_chart_enabled", true),
       match_page_stats_enabled: cb("match_page_stats_enabled", true),
       match_stats_view: $<HTMLSelectElement>("match_stats_view")?.value || "hints",
@@ -1810,6 +1848,9 @@ document.addEventListener("DOMContentLoaded", () => {
     "pause_hotkey_enabled",
     "statistics_enabled",
     "session_stats_enabled",
+    "table_summary_enabled",
+    "mic_sync_enabled",
+    "mic_sync_input",
     "profile_mmr_chart_enabled",
     "obs_auto_record_enabled",
     "obs_clip_enabled",

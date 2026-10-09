@@ -53,6 +53,7 @@ const NO_CONTROL = new Set([
   "obs_night_scene",
   "twitch_channel",
   "pause_hotkey_code",
+  "mic_sync_hotkey",
   "hotkey_role_fake",
   "hotkey_role_reset",
   "hotkey_role_hide",

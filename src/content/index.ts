@@ -43,6 +43,8 @@ import { wsLogFeature } from "./features/ws-log";
 import { controlsSafetyFeature } from "./features/controls-safety";
 import { obsPanelFeature, syncObsRoomRoute } from "./panels/obs-panel";
 import { sessionStatsFeature } from "./panels/session-stats-panel";
+import { tableSummaryFeature } from "./panels/table-summary-panel";
+import { micSyncFeature } from "./features/mic-sync";
 import { profileCrossoverFeature, profileIdFromPath, syncProfileCrossoverRoute } from "./features/profile-crossover";
 import { profileMmrChartFeature, syncProfileMmrRoute } from "./features/profile-mmr-chart";
 import { obsRecordFeature, syncObsRecordRoute } from "./features/obs-record";
@@ -79,6 +81,8 @@ const manager = new FeatureManager().register(
   obsPanelFeature,
   twitchPanelFeature,
   sessionStatsFeature,
+  tableSummaryFeature,
+  micSyncFeature,
   profileCrossoverFeature,
   profileMmrChartFeature,
   obsRecordFeature,
