@@ -15,7 +15,7 @@ vi.mock("@core/env", () => ({
 }));
 
 import { NoteKeys } from "@content/features/player-notes/note-keys";
-import type { NotesMap } from "@core/notes-store";
+import { canonicalUserId, type NotesMap } from "@core/notes-store";
 
 function keys(notes: NotesMap, ids: Record<string, number | string> = {}): NoteKeys {
   return new NoteKeys({ notes: () => notes, lookupId: (lower) => ids[lower] });
@@ -32,10 +32,31 @@ describe("id игрока для ключа: белый список, а не ч
     [-5, undefined],
     [3.5, undefined],
     [NaN, undefined],
+    ["007", undefined],
+    ["00", undefined],
+    [Number.MAX_SAFE_INTEGER + 1, undefined],
+    ["9007199254740993", undefined],
     [42, 42],
     ["42", "42"],
+    [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
   ])("id %p → %p", (raw, expected) => {
     expect(keys({}, { аня: raw as number | string }).userId("Аня")).toBe(expected);
+  });
+
+  test("id, который вкладка приняла, координатор принимает тоже: валидатор один", () => {
+    // До ревью апстрима 09.10.2026: "007" проходил сюда и давал ключ u:007,
+    // а canonicalUserId в координаторе отвечал bad_request, так что запись под
+    // ником не сливалась никогда, и заметка расходилась по двум ключам.
+    for (const raw of ["007", "00", "42", 42, Number.MAX_SAFE_INTEGER + 1, "9007199254740993"]) {
+      const accepted = keys({}, { аня: raw }).userId("Аня");
+      expect(accepted !== undefined, `id ${String(raw)}`).toBe(canonicalUserId(raw) !== undefined);
+    }
+  });
+
+  test("ведущие нули: ключом остаётся ник, а не u:007", () => {
+    const k = keys({ Аня: { text: "старая", timestamp: 1, version: "4" } }, { аня: "007" });
+    expect(k.keyFor("Аня")).toBe("Аня");
+    expect(keys({}, { аня: "007" }).keyFor("Аня")).toBe("Аня");
   });
 
   test("плейсхолдеры НЕ сливают разных игроков в один ключ (блокер 8.1.29)", () => {
