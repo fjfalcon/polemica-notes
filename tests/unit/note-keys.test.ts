@@ -32,10 +32,23 @@ describe("id игрока для ключа: белый список, а не ч
     [-5, undefined],
     [3.5, undefined],
     [NaN, undefined],
+    ["007", undefined],
+    ["00", undefined],
+    [Number.MAX_SAFE_INTEGER + 1, undefined],
+    ["9007199254740993", undefined],
     [42, 42],
     ["42", "42"],
+    [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
   ])("id %p → %p", (raw, expected) => {
     expect(keys({}, { аня: raw as number | string }).userId("Аня")).toBe(expected);
+  });
+
+  test("ведущие нули: ключом остаётся ник, а не u:007", () => {
+    // До ревью апстрима 09.10.2026 ключи заметок принимали "007", а статистика и
+    // координатор нет: игрок получал ключ u:007, который никто больше не признавал.
+    const k = keys({ Аня: { text: "старая", timestamp: 1, version: "4" } }, { аня: "007" });
+    expect(k.keyFor("Аня")).toBe("Аня");
+    expect(keys({}, { аня: "007" }).keyFor("Аня")).toBe("Аня");
   });
 
   test("плейсхолдеры НЕ сливают разных игроков в один ключ (блокер 8.1.29)", () => {

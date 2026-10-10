@@ -70,8 +70,10 @@ import {
   PlayerStatsStore,
   STATS_TTL_MS,
   unavailablePlayerStats,
+  validPlayerId,
   type PlayerStatsEntry,
 } from "./player-notes/player-stats";
+import { pendingIdLookups } from "./player-notes/id-lookups";
 import {
   BUTTON_CIRCLE_CSS,
   BUTTON_PLAIN_CSS,
@@ -121,31 +123,7 @@ const HOVER_INTENT_MS = 350;
 
 /** sessionStorage: ники (lowercase) с перевёрнутой камерой в текущей игре. */
 
-/**
- * Кому из игроков за столом ещё нужен резолв id.
- *
- * Отдельной чистой функцией, потому что это ГЕЙТ ЧАСТОТЫ: проход по плиткам
- * идёт раз в две секунды, и без него резолв превратился бы в фоновый поток
- * запросов. Проверить это внутри класса на три тысячи строк нечем.
- */
-export function pendingIdLookups(
-  usernames: string[],
-  ctx: { attempted: Set<string>; isKnown: (username: string) => boolean },
-): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of usernames) {
-    const username = raw.trim();
-    if (!username) continue;
-    const lower = username.toLowerCase();
-    if (seen.has(lower)) continue;
-    seen.add(lower);
-    if (ctx.attempted.has(lower)) continue;
-    if (ctx.isKnown(username)) continue;
-    out.push(username);
-  }
-  return out;
-}
+export { pendingIdLookups } from "./player-notes/id-lookups";
 
 /**
  * Сеть и её кэши переехали в @core/polemica-api (арх-ревью 28.08.2026).
@@ -325,7 +303,8 @@ class PlayerNotesManager {
     onTooltipsChanged: () => this.active && this.updateAllTooltips(),
     onPlayerTooltips: (username) => this.active && this.updatePlayerTooltips(username),
     toast: (message, warn) => this.toast(message, warn),
-    lookupId: (lower) => this.stats.idOf(lower) ?? this.profileIdByNick.get(lower),
+    // Заглушка id недоступной статистики (не число) не должна заслонять id со страницы профиля.
+    lookupId: (lower) => validPlayerId(this.stats.idOf(lower)) ?? this.profileIdByNick.get(lower),
   });
 
   /** Палитра пользовательских цветов — только для чтения. */
@@ -339,10 +318,12 @@ class PlayerNotesManager {
    */
   private profileIdByNick = new Map<string, string>();
   /**
-   * Ники, для которых id уже пытались резолвить: без этого проход по плиткам
-   * (раз в 2 секунды) дёргал бы резолв заново на каждом тике.
+   * Ники, чей id уже определён: без этого проход по плиткам (раз в 2 секунды)
+   * дёргал бы резолв заново на каждом тике.
    */
   private idResolveAttempted = new Set<string>();
+  /** Ники, для которых оба источника id не знали, и когда: повтор после паузы. */
+  private idResolveMissAt = new Map<string, number>();
   private idResolveInFlight: Promise<void> | null = null;
   /** Когда резолв последний раз упал — чтобы не долбить сеть после отказа. */
   private idResolveFailedAt = 0;
@@ -612,6 +593,7 @@ class PlayerNotesManager {
     this.tileMedia.clearUnmutedHere();
     this.profileIdByNick.clear();
     this.idResolveAttempted.clear();
+    this.idResolveMissAt.clear();
     this.idResolveFailedAt = 0;
     this.model.keys.reset();
     this.colorIndexCache = null;
@@ -1023,9 +1005,13 @@ class PlayerNotesManager {
   private ensurePlayerIdsResolved(usernames: string[]): void {
     if (this.idResolveInFlight) return;
     if (Date.now() - this.idResolveFailedAt < PlayerNotesManager.ID_RESOLVE_COOLDOWN_MS) return;
+    const now = Date.now();
     const pending = pendingIdLookups(usernames, {
       attempted: this.idResolveAttempted,
-      isKnown: (u) => this.noteUserId(u) !== undefined,
+      isKnown: (u) =>
+        this.noteUserId(u) !== undefined ||
+        now - (this.idResolveMissAt.get(u.toLowerCase()) ?? 0) <
+          PlayerNotesManager.ID_RESOLVE_COOLDOWN_MS,
     });
     if (!pending.length) return;
 
@@ -1043,31 +1029,36 @@ class PlayerNotesManager {
         }
         if (!this.active) return;
 
-        const idByNick = new Map<string, string>();
+        const seenInGames = new Map<string, { id: string; mmr: unknown }>();
         for (const game of games) {
           for (const p of game.players ?? []) {
             const nick = typeof p?.username === "string" ? p.username.toLowerCase() : "";
-            if (nick && p.id !== undefined && p.id !== null) idByNick.set(nick, String(p.id));
+            const pid = validPlayerId(p?.id);
+            if (nick && pid !== undefined) seenInGames.set(nick, { id: String(pid), mmr: p.mmr });
           }
         }
 
         let resolved = 0;
         for (const username of pending) {
           const lower = username.toLowerCase();
-          let id = idByNick.get(lower);
+          const seen = seenInGames.get(lower);
+          let id = seen?.id;
           if (id === undefined) {
             const player = await findRatingPlayer(username);
             if (!this.active) return;
-            const ratingId = player?.user_id;
-            if (ratingId !== undefined && ratingId !== null) id = String(ratingId);
+            const ratingId = validPlayerId(player?.user_id);
+            if (ratingId !== undefined) id = String(ratingId);
           }
-          // Помечаем ТОЛЬКО когда оба источника ответили: иначе один сетевой
-          // сбой навсегда лишал бы игрока оформления.
+          // Помечаем ТОЛЬКО успех: промах обоих источников повторяем после паузы.
+          if (id === undefined) {
+            this.idResolveMissAt.set(lower, Date.now());
+            continue;
+          }
           this.idResolveAttempted.add(lower);
-          if (id !== undefined) {
-            this.profileIdByNick.set(lower, id);
-            resolved++;
-          }
+          this.idResolveMissAt.delete(lower);
+          this.profileIdByNick.set(lower, id);
+          this.stats.rememberId(lower, id, seen?.mmr);
+          resolved++;
         }
 
         if (!this.active) return;
@@ -1186,7 +1177,7 @@ class PlayerNotesManager {
     html += `<div class="tooltip-text" style="font-size: 10px;">`;
 
     if (this.settings.show_mmr) {
-      html += `MMR: ${escapeHtml(String(stats.mmr))}<br>`;
+      html += `MMR: ${escapeHtml(String(stats.mmr))}${stats.mmrStale ? " (устар.)" : ""}<br>`;
     }
     if (this.settings.show_games) {
       html += `Игр: ${escapeHtml(String(stats.totalGames))}<br>`;
