@@ -568,6 +568,20 @@ export const GUESS_PICKER_IMG = {
   vice: 'img[src$="f8eb2b2335b96664affa.svg"]',
 } as const;
 
+/**
+ * Кнопка микрофона игры в контролах комнаты («Микрофон: OBS и игра»,
+ * 09.10.2026). Узнаём по ИМЕНИ ФАЙЛА иконки (webpack contenthash модулей
+ * mic.svg / mic-off.svg — сверено по room/bundle 09.10.2026) внутри
+ * SITE.webcamButton, а состояние — по классу SITE.webcamButtonOffClass;
+ * иконка и класс обязаны согласоваться. Хэш меняется, только если сайт
+ * перерисует иконку, — тогда кнопка молча перестанет находиться (фича
+ * скажет «микрофон игры не найден»), и хэши надо сверить заново.
+ */
+export const GAME_MIC_ICON = {
+  on: "652f9184e845e10a12e5.svg",
+  off: "3a2b1603137ca0fb3eeb.svg",
+} as const;
+
 /** CSS-классы/идентификаторы, создаваемые САМИМ расширением (наши, не сайта). */
 export const OWN = {
   statsButton: "stats-button",
@@ -592,6 +606,8 @@ export const OWN = {
   tooltip: "pn-tooltip",
   /** <style> с правилами страницы матча, создаётся фичей. */
   matchPageStyle: "polemica-match-page-style",
+  /** Плашка «Микрофон: OBS и игра» (mic-sync). Префикс обязателен. */
+  micPill: "pn-mic-pill",
   /** Скрытый <svg> с эмодзи-символами меток протокола (protocol-emoji). */
   protocolEmojiSprite: "pn-protocol-emoji-sprite",
 } as const;

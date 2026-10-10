@@ -16,8 +16,10 @@ import { redactNick } from "@shared/redact";
 import {
   ACTIVE_GAMES_TTL_MS,
   fetchActiveGames,
+  fetchRoleBreakdown,
   findRatingPlayer,
 } from "@core/polemica-api";
+import { rememberSeenPlayers } from "@core/seen-players";
 
 export interface RoleWinrate {
   winrate: string;
@@ -267,6 +269,9 @@ export class PlayerStatsStore {
           return;
         }
       }
+      // Справочник «кого встречал» для «Поиска игрока» в попапе: игрок за
+      // столом и его id известны — запоминаем (склейка записей внутри).
+      rememberSeenPlayers([{ nick: username, id: String(userId) }]);
 
       // ok-чек и таймаут: раньше не-2xx молча парсился, а зависший запрос
       // висел вечно (аудит 01.08.2026, находка 4).
@@ -280,9 +285,9 @@ export class PlayerStatsStore {
         getJson(
           `https://polemicagame.com/profile/default/get-role-statistic?user_id=${uid}&role=&game_type=league&scoring_type=scoring_2%2Cscoring_3`,
         ),
-        getJson(
-          `https://polemicagame.com/profile/default/get-statistic?user_id=${uid}&game_type=league&scoring_type=scoring_2%2Cscoring_3`,
-        ),
+        // Через общий кэш @core/polemica-api: тот же ответ нужен «Сводке
+        // стола» — без общего слоя один игрок запрашивался бы дважды.
+        fetchRoleBreakdown(userId),
         getJson(
           `https://polemicagame.com/profile/default/get-role-statistic?user_id=${uid}&role=civilian%2Csheriff&game_type=league&scoring_type=scoring_2%2Cscoring_3`,
         ),
