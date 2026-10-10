@@ -303,7 +303,8 @@ class PlayerNotesManager {
     onTooltipsChanged: () => this.active && this.updateAllTooltips(),
     onPlayerTooltips: (username) => this.active && this.updatePlayerTooltips(username),
     toast: (message, warn) => this.toast(message, warn),
-    lookupId: (lower) => this.stats.idOf(lower) ?? this.profileIdByNick.get(lower),
+    // Заглушка id недоступной статистики (не число) не должна заслонять id со страницы профиля.
+    lookupId: (lower) => validPlayerId(this.stats.idOf(lower)) ?? this.profileIdByNick.get(lower),
   });
 
   /** Палитра пользовательских цветов — только для чтения. */

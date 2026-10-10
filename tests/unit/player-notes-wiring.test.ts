@@ -76,11 +76,13 @@ import { resetMatchBriefCache } from "@core/match-brief";
 import {
   resetActiveGamesCacheForTest,
   resetRatingCacheForTest,
+  resetRoleBreakdownCacheForTest,
 } from "@core/polemica-api";
 import { releaseOwnHistory } from "@core/crossover";
 import type { Settings } from "@shared/types";
 import {
   PlayerStatsStore,
+  STATS_TTL_MS,
   type PlayerStatsEntry,
 } from "@content/features/player-notes/player-stats";
 
@@ -923,6 +925,8 @@ describe("промах резолва id повторяется после па�
         statistics_enabled: true,
         btn_note_enabled: true,
         note_indicator_enabled: true,
+        show_mmr: true,
+        show_id: true,
       } as never,
     });
   }
@@ -952,16 +956,49 @@ describe("промах резолва id повторяется после па�
     }
   });
 
-  test("disable/enable сбрасывает паузу после промаха", async () => {
+  test("игрок вне топ-1000 ушёл из игры: после TTL наведение держит статистику и точку заметки", async () => {
+    // Головной сценарий фикса: id взят проходом по плиткам из /api/games, игрока нет
+    // в рейтинге; после вылета и TTL наведение обязано показать статистику с устаревшим
+    // MMR, а точка заметки u:55 остаться. Без rememberId в ensurePlayerIdsResolved
+    // заглушка "рейтинг недоступен" затирает и то, и другое.
     try {
       const pass = await start();
-      await pass();
-      expect(document.querySelector(".pn-note-dot")).toBeNull();
-
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (url.includes("/api/games")) return { ok: true, json: async () => site.games };
+          if (url.includes("/ratings/default/get-list")) return { ok: true, json: async () => [] };
+          if (url.includes("/profile/default/get-role-statistic")) {
+            return {
+              ok: true,
+              json: async () => [{ games_count: 10, wins_count: 5, first_killed_count: 1 }],
+            };
+          }
+          if (url.includes("/profile/default/get-statistic")) return { ok: true, json: async () => ({}) };
+          return { ok: false, status: 404 };
+        }) as unknown as typeof fetch,
+      );
       site.games = seated;
-      await restart();
       await pass();
-      expect(document.querySelector(".pn-note-dot"), "после перезапуска резолв сразу").not.toBeNull();
+      expect(document.querySelector(".pn-note-dot"), "id взят из активных игр").not.toBeNull();
+
+      site.games = [];
+      resetActiveGamesCacheForTest();
+      resetRoleBreakdownCacheForTest();
+      await vi.advanceTimersByTimeAsync(STATS_TTL_MS + 1000);
+      await pass();
+
+      const statsButton = document.querySelector<HTMLElement>(".stats-button");
+      expect(statsButton, "кнопка статистики есть").not.toBeNull();
+      statsButton?.dispatchEvent(new Event("mouseenter"));
+      for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(1);
+
+      const tooltip = document.querySelector<HTMLElement>(
+        '[data-pn-stats="1"][data-username="Gamma"]',
+      );
+      expect(tooltip?.innerHTML).toContain("MMR: 1500 (устар.)");
+      expect(tooltip?.innerHTML).toContain("ID: 55");
+      expect(document.querySelector(".pn-note-dot"), "точка заметки u:55 осталась").not.toBeNull();
     } finally {
       localGet().mockImplementation(async () => ({}));
     }

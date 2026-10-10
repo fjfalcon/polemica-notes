@@ -20,6 +20,7 @@ import {
   findRatingPlayer,
 } from "@core/polemica-api";
 import { rememberSeenPlayers } from "@core/seen-players";
+import { validPlayerId } from "@shared/player-id";
 
 export interface RoleWinrate {
   winrate: string;
@@ -140,12 +141,7 @@ export function buildStatsEntry(
   };
 }
 
-/** id игрока, если он положительное целое (число или строка цифр без ведущих нулей). */
-export function validPlayerId(id: unknown): number | string | undefined {
-  if (typeof id === "number") return Number.isInteger(id) && id > 0 ? id : undefined;
-  if (typeof id === "string" && /^[1-9]\d*$/.test(id)) return id;
-  return undefined;
-}
+export { validPlayerId };
 
 export interface PlayerStatsContext {
   /** Фича ещё жива: поздний ответ мёртвой фичи не пишет в кэш и не красит DOM. */

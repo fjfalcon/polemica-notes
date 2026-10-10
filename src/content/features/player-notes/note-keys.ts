@@ -12,6 +12,7 @@
  * модуль не знает ни про настройки, ни про DOM, ни про сеть.
  */
 import { idKey, isIdKey, type NoteRecord, type NotesMap } from "@core/notes-store";
+import { validPlayerId } from "@shared/player-id";
 
 export interface NoteKeyContext {
   /** Актуальная карта заметок (менеджер владеет ею и меняет её). */
@@ -45,12 +46,13 @@ export class NoteKeys {
    * из недоступной статистики чуть не отправил заметки ВСЕХ недоступных
    * игроков в один общий ключ `u:—` (чужая заметка в тултипе соседа +
    * взаимная перезапись). Блокер ревью 8.1.29.
+   *
+   * Валидатор тот же, что у статистики (validPlayerId): свой принимал "007" и
+   * небезопасные целые, и игрок получал ключ u:007, который больше никто не
+   * признавал (ревью апстрима 09.10.2026).
    */
   userId(username: string): number | string | undefined {
-    const id = this.ctx.lookupId(username.toLowerCase());
-    if (typeof id === "number") return Number.isInteger(id) && id > 0 ? id : undefined;
-    if (typeof id === "string" && /^\d+$/.test(id) && id !== "0") return id;
-    return undefined;
+    return validPlayerId(this.ctx.lookupId(username.toLowerCase()));
   }
 
   /**
