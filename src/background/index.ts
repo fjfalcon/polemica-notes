@@ -15,6 +15,7 @@ import {
   applyTagOps,
   mergeNotesViaCoordinator,
   migrateViaCoordinator,
+  migrateNickToIdViaCoordinator,
 } from "./notes-coordinator";
 import { sanitizeObsHost } from "@shared/safe-endpoint";
 import {
@@ -770,6 +771,9 @@ onMessage((msg: ExtMessage, sender) => {
   }
   if ("type" in msg && msg.type === "notes_migrate") {
     return migrateViaCoordinator();
+  }
+  if ("type" in msg && msg.type === "notes_migrate_id") {
+    return migrateNickToIdViaCoordinator(msg.username, msg.userId);
   }
   if ("type" in msg && msg.type === "notes_merge") {
     return mergeNotesViaCoordinator(msg.incoming, msg.approvedReplaced);

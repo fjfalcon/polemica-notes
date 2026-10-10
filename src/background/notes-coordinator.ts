@@ -28,6 +28,8 @@ import {
   mergeNotes,
   normalizeNoteRecord,
   MAX_OWN_NOTE_TEXT,
+  mergeNickKeysIntoId,
+  canonicalUserId,
 } from "@core/notes-store";
 import { browser } from "@core/env";
 import type { NotesMap, NoteRecord } from "@core/notes-store";
@@ -235,6 +237,40 @@ export function mergeNotesViaCoordinator(
     return ok
       ? { ok, notes: merged as Record<string, unknown>, added, replaced, truncated, skipped }
       : { ok: false, added, replaced, truncated, skipped };
+  });
+}
+
+/**
+ * Ленивая миграция ник -> id интентом. Сливать можно только здесь, в очереди
+ * на свежем чтении: готовая запись из вкладки затирала бы новую правку.
+ */
+export function migrateNickToIdViaCoordinator(
+  username: unknown,
+  userId: unknown,
+): Promise<NotesResultMsg> {
+  const id = canonicalUserId(userId);
+  if (typeof username !== "string" || !username || id === undefined) {
+    return Promise.resolve({ ok: false, reason: "bad_request" });
+  }
+  return enqueue(async () => {
+    const { notes, loadFailed } = await loadNotes({ persistMigration: true });
+    if (loadFailed) {
+      log.warn("notes-coordinator", "read failed, id migration refused");
+      return { ok: false, reason: "read_failed" };
+    }
+    const merged = mergeNickKeysIntoId(notes, username, id);
+    if (!merged) return { ok: true, notes: notes as Record<string, unknown>, truncated: 0, skipped: 0 };
+    const rec = normalizeNoteRecord(merged.record, MAX_OWN_NOTE_TEXT);
+    if (!isSafeNoteKey(merged.key) || !rec) return { ok: false, reason: "bad_request" };
+    const next: NotesMap = { ...notes, [merged.key]: rec };
+    for (const nk of merged.nickKeys) {
+      if (nk !== "__proto__") delete next[nk];
+    }
+    const truncated = merged.record.text.length > rec.text.length ? 1 : 0;
+    const ok = await saveNotes(next);
+    return ok
+      ? { ok, notes: next as Record<string, unknown>, truncated, skipped: 0 }
+      : { ok, truncated, skipped: 0 };
   });
 }
 

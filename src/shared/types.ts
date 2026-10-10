@@ -426,6 +426,13 @@ export interface NotesMigrateMsg {
   type: "notes_migrate";
 }
 
+/** Слить ник-записи игрока в `u:<id>`. Ответ — NotesResultMsg. */
+export interface NotesMigrateIdMsg {
+  type: "notes_migrate_id";
+  username: string;
+  userId: number | string;
+}
+
 /** Попап собирается выгружать лог: вкладки дописывают хвост на диск. */
 export interface WsLogFlushMsg {
   type: "ws_log_flush";
@@ -460,6 +467,7 @@ export type ExtMessage =
   | NotesApplyOpsMsg
   | NotesTagOpsMsg
   | NotesMergeMsg
+  | NotesMigrateIdMsg
   | StartSearchMsg
   | StopSearchMsg
   | QueueGuardMsg
