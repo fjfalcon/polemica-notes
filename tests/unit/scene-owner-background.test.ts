@@ -95,7 +95,7 @@ vi.mock("../../src/background/notes-coordinator", () => ({
   mergeNotesViaCoordinator: vi.fn(async () => undefined),
 }));
 
-import { OWNER_TTL_MS } from "../../src/background/scene-owner";
+import { OWNER_HARD_CAP_MS, OWNER_TTL_MS } from "../../src/background/scene-owner";
 
 const OWNER_KEY = "obs_scene_owner";
 const OWNER = 7;
@@ -251,15 +251,29 @@ describe("set_scene: background спрашивает владельца", () => 
     expect((store.data[OWNER_KEY] as { tabId: number }).tabId).toBe(ASKER);
   });
 
-  test("ответ без булева owning — как молчание: свежая запись держит сцену", async () => {
+  test("ответ без булева owning — как молчание: протухшая запись переходит по TTL", async () => {
+    // Без проверки типа строка "yes" сошла бы за «веду» и держала сцену.
     const obs = await bootConnected();
-    store.data[OWNER_KEY] = fresh();
+    store.data[OWNER_KEY] = stale();
     wiring.pingAnswer.set(OWNER, { owning: "yes" });
 
-    const res = await setScene(ASKER);
+    await setScene(ASKER);
 
-    expect(res.data).toEqual({ ignored: "not_owner" });
-    expect(obs.scenes).toEqual([]);
+    expect(wiring.pings).toEqual([OWNER]);
+    expect(obs.scenes).toEqual(["Ночь"]);
+    expect((store.data[OWNER_KEY] as { tabId: number }).tabId).toBe(ASKER);
+  });
+
+  test("«веду» при записи старше потолка — сцена переходит", async () => {
+    const obs = await bootConnected();
+    store.data[OWNER_KEY] = { tabId: OWNER, ts: Date.now() - OWNER_HARD_CAP_MS - 1 };
+    wiring.pingAnswer.set(OWNER, { owning: true });
+
+    await setScene(ASKER);
+
+    expect(wiring.pings).toEqual([OWNER]);
+    expect(obs.scenes).toEqual(["Ночь"]);
+    expect((store.data[OWNER_KEY] as { tabId: number }).tabId).toBe(ASKER);
   });
 });
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  OWNER_HARD_CAP_MS,
   OWNER_TTL_MS,
   decideSceneOwnership,
   type OwnerTabState,
@@ -88,6 +89,21 @@ describe("владение автосценой OBS", () => {
     });
   });
 
+  test("«веду» старше потолка — ответу не верим, владение переходит (owner-stale)", () => {
+    // Ложное «веду» без потолка держало бы сцену до закрытия вкладки.
+    const capped: SceneOwnerRecord = { tabId: OWNER, ts: NOW - OWNER_HARD_CAP_MS - 1 };
+    expect(decide(capped, { kind: "in-game" })).toEqual({
+      allow: true,
+      claim: true,
+      reason: "owner-stale",
+    });
+  });
+
+  test("на границе потолка «веду» ещё держит сцену", () => {
+    const edge: SceneOwnerRecord = { tabId: OWNER, ts: NOW - OWNER_HARD_CAP_MS };
+    expect(decide(edge, { kind: "in-game" }).allow).toBe(false);
+  });
+
   test("запись протухла и владелец не ответил — владение переходит (owner-stale)", () => {
     expect(decide(stale, null)).toEqual({ allow: true, claim: true, reason: "owner-stale" });
   });
@@ -120,6 +136,8 @@ describe("владение автосценой OBS", () => {
     ["мусор вместо записи", { tabId: "7" } as unknown as SceneOwnerRecord],
   ])("битое владение (%s) не блокирует автоматику", (_name, record) => {
     expect(decide(record, null).allow).toBe(true);
+    // Без времени записи потолок не измерить — и «веду» сцену не держит.
+    expect(decide(record, { kind: "in-game" }).allow).toBe(true);
   });
 
   test("F5 в игровой вкладке не отнимает у неё владение", () => {

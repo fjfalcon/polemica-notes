@@ -432,9 +432,11 @@ async function handleObsCommand(cmd: ObsCommandMsg["command"], data: ObsCommandM
  * (например, чужая игра, открытая посмотреть) перебивала сцену активной
  * трансляции (аудит lifecycle 01.08.2026, находка 6). Владение хранится в
  * storage.local, поэтому переживает выгрузку service worker; отдаётся
- * первой вкладке, попросившей сцену, и переходит к другой, если владелец
- * умолк дольше OWNER_TTL_MS (закрыл вкладку, ушёл со страницы) или его
- * вкладки больше не существует.
+ * первой вкладке, попросившей сцену, и переходит к другой, если вкладки
+ * владельца больше нет или она ответила «не веду». Молчащий владелец (пинг
+ * не успел) держит сцену, пока записи меньше OWNER_TTL_MS; ответ «веду»
+ * держит её дольше TTL, но не дольше OWNER_HARD_CAP_MS от записи
+ * (scene-owner.ts).
  */
 const OBS_SCENE_OWNER_KEY = "obs_scene_owner";
 
@@ -526,7 +528,9 @@ async function decideAndClaim(tabId: number, manual: boolean): Promise<boolean> 
       log.info(
         "background",
         "владение автосценой перешло к этой вкладке:",
-        decision.reason === "owner-left-game" ? "прежний владелец ушёл с игры" : "прежний умолк",
+        decision.reason === "owner-left-game"
+          ? "прежний владелец ушёл с игры"
+          : "запись прежнего протухла",
         tabId,
       );
     }
