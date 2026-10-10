@@ -255,8 +255,11 @@ export class PlayerStatsStore {
           this.rememberId(key, ratingId);
         } else if (knownId !== undefined) {
           userId = knownId;
-          mmr = this.lastMmr.get(key) ?? "—";
-          mmrStale = true;
+          const last = this.lastMmr.get(key);
+          if (last !== undefined) {
+            mmr = last;
+            mmrStale = true;
+          }
         } else {
           if (!this.ctx.isActive()) return;
           if (!cached) this.byNick.set(key, unavailablePlayerStats());

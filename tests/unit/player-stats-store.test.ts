@@ -225,6 +225,18 @@ describe("известный id игрока вне игры и вне рейт�
     expect(entry?.mmrStale).toBe(true);
   });
 
+  test("id известен без MMR: прочерк без пометки «устар.», перепроверка игры остаётся", async () => {
+    h.rating = [];
+    const { store } = make();
+    store.rememberId("вера", "31");
+    await store.load("Вера");
+    const entry = store.get("Вера");
+    expect(entry?.id).toBe("31");
+    expect(entry?.mmr).toBe("—");
+    expect(entry?.mmrStale).toBeUndefined();
+    expect(entry?.fromRating).toBe(true);
+  });
+
   test("ник сначала неизвестен, потом сел в игру — заглушка больше не возвращается", async () => {
     h.rating = [];
     const { store } = make();
