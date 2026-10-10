@@ -489,6 +489,15 @@ export class ObsClient {
         void this.saveConnectionState(true);
         break;
       }
+      case "InputMuteStateChanged": {
+        // «Микрофон: OBS и игра» (09.10.2026): мьют в OBS (его горячая
+        // клавиша, микшер) должен догнать микрофон игры — рассылаем вкладкам.
+        const d = eventData.eventData ?? {};
+        if (typeof d.inputName === "string" && typeof d.inputMuted === "boolean") {
+          this.notifyAll("obs_input_mute_changed", { inputName: d.inputName, inputMuted: d.inputMuted });
+        }
+        break;
+      }
       case "SceneListChanged":
       case "SceneNameChanged":
       case "SceneCreated":
@@ -553,6 +562,19 @@ export class ObsClient {
       void this.saveConnectionState(true);
     }
     return true;
+  }
+
+  // ── микрофон (09.10.2026) ──
+
+  /** Заглушён ли источник звука OBS. Нет такого источника — OBS отвечает ошибкой. */
+  async getInputMute(inputName: string): Promise<boolean> {
+    const res = await this.request<{ inputMuted?: boolean }>("GetInputMute", { inputName });
+    return res?.inputMuted === true;
+  }
+
+  /** Заглушить/включить источник звука OBS. Громкость не трогаем. */
+  async setInputMute(inputName: string, inputMuted: boolean): Promise<void> {
+    await this.request("SetInputMute", { inputName, inputMuted });
   }
 
   // ── запись и буфер повторов (стримерский пакет 26.08.2026) ──

@@ -63,6 +63,19 @@ vi.mock("@core/crossover", async (importOriginal) => {
   };
 });
 
+// Сеть «Сводки стола»: харнес не имеет права ходить на живой сайт.
+vi.mock("@core/polemica-api", () => ({
+  ACTIVE_GAMES_TTL_MS: 15_000,
+  fetchActiveGames: vi.fn(async () => [
+    { players: [{ username: "Альфа", id: 11, mmr: 2500 }, { username: "Бета", id: 22, mmr: 1900 }] },
+  ]),
+  findRatingPlayer: vi.fn(async () => undefined),
+  fetchRoleBreakdown: vi.fn(async () => ({
+    civilian: { games_count: 30, wins_count: 18 },
+    mafia: { games_count: 12, wins_count: 6 },
+  })),
+}));
+
 // ВАЖНО: @core/dom НЕ мокается — конвейер настоящий.
 import { domObserver, onDomChange } from "@core/dom";
 import { log } from "@core/log";
@@ -71,6 +84,8 @@ import { profileCrossoverFeature, syncProfileCrossoverRoute } from "@content/fea
 import { profileMmrChartFeature, syncProfileMmrRoute } from "@content/features/profile-mmr-chart";
 import { protocolEmojiFeature, symbolId } from "@content/features/protocol-emoji";
 import { autoReadyFeature } from "@content/features/auto-ready";
+import { tableSummaryFeature } from "@content/panels/table-summary-panel";
+import { micSyncFeature } from "@content/features/mic-sync";
 import type { FeatureContext } from "@core/feature";
 
 const ROUND_MS = 600;
@@ -132,6 +147,8 @@ afterEach(() => {
   profileMmrChartFeature.disable();
   protocolEmojiFeature.disable();
   autoReadyFeature.disable();
+  tableSummaryFeature.disable();
+  micSyncFeature.disable();
   syncProfileCrossoverRoute(null);
   syncProfileMmrRoute(null);
   vi.useRealTimers();
@@ -244,6 +261,46 @@ describe("§4 fixpoint: автонажатие «Готов»", () => {
     expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
     // Клик реально ушёл (фича не просто промолчала всю выдержку).
     expect(vi.mocked(log.info).mock.calls.join(" ")).toContain("автоклик «Готов» отправлен");
+  });
+});
+
+describe("§4 fixpoint: «Сводка стола»", () => {
+  test("стол из двух игроков: окно собирается, статистика приходит, DOM затихает", async () => {
+    window.history.replaceState(null, "", "/game");
+    const tile = (seat0: number, nick: string) =>
+      `<div class="player desktop-version"><div class="player__botleftmenu"><div class="player__info">` +
+      `<div class="player-number player-${seat0}">${seat0 + 1}</div>` +
+      `<div class="info__name">${nick}</div></div></div></div>`;
+    document.body.innerHTML = tile(0, "Альфа") + tile(1, "Бета");
+    const before = domObserver.subscriberCount();
+    void tableSummaryFeature.enable({ settings: {} } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    // Окно и асинхронная загрузка пишут в DOM — всё в СВОЁМ контейнере;
+    // фикспоинт доказывает, что подписчик не зацикливается на собственных записях.
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    const panelText = document.querySelector(".pn-table-summary-panel")?.textContent ?? "";
+    expect(panelText).toContain("Альфа");
+    expect(panelText).toContain("2500");
+    expect(panelText, "винрейт за красных 18/30").toContain("60%");
+  });
+});
+
+describe("§4 fixpoint: «Микрофон: OBS и игра»", () => {
+  test("комната с кнопкой микрофона: плашка рисуется один раз и DOM затихает", async () => {
+    window.history.replaceState(null, "", "/game");
+    document.body.innerHTML =
+      '<div class="controls"><div class="button preset-1 small desktop-version">' +
+      '<img class="button__icon" src="/room/bundle/652f9184e845e10a12e5.svg"></div></div>';
+    const before = domObserver.subscriberCount();
+    void micSyncFeature.enable({
+      settings: { mic_sync_enabled: true, obs_enabled: true, mic_sync_input: "Mic/Aux", mic_sync_hotkey: "" },
+    } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    // sendRuntime харнеса отвечает success без данных → OBS «вкл», игра «вкл».
+    expect(document.querySelector(".pn-mic-pill")?.textContent).toContain("OBS + игра");
   });
 });
 

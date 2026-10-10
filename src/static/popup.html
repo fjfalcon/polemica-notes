@@ -150,6 +150,11 @@
         .emoji-palette button:hover { background: rgba(255,255,255,.12); }
 
         .status { font-size: 11px; text-align: center; color: var(--muted); margin: 8px 0; }
+        /* Поиск игрока: строки-ссылки на профиль */
+        .search-hit { text-decoration: none; color: var(--text); border-radius: 8px; padding: 6px 8px; }
+        .search-hit:hover { background: rgba(255,255,255,.06); }
+        .search-hit .hint { display: block; }
+        .search-mmr { font-size: 11px; color: var(--muted); white-space: nowrap; }
         #scenes_list {
             max-height: 110px; overflow-y: auto; border: 1px solid var(--border);
             border-radius: 8px; background: var(--bg); font-size: 12px;
@@ -409,11 +414,23 @@
 
         <!-- ── Статистика ── -->
         <div class="panel" data-panel="stats">
+            <div class="field">
+                <label>Поиск игрока по нику или id</label>
+                <div class="btn-row">
+                    <input type="text" id="player_search_input" class="inp" placeholder="ник или id" autocomplete="off" spellcheck="false">
+                    <button id="player_search_btn" class="btn btn-primary" style="flex:0 0 auto">Найти</button>
+                </div>
+                <div id="player_search_status" class="status" style="text-align:left;margin:6px 0 2px"></div>
+                <div id="player_search_results"></div>
+            </div>
             <div class="row"><span>Статистика игроков</span>
                 <label class="switch"><input type="checkbox" id="statistics_enabled" checked><span class="slider"></span></label>
             </div>
             <div class="row"><span>Окно «Мой вечер» (игры сессии, ±MMR)</span>
                 <label class="switch"><input type="checkbox" id="session_stats_enabled"><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>Окно «Сводка стола»<span class="hint">в игре: место, MMR, игры и винрейт каждого за красных и за чёрных; цвет — тройка самых высоких и тройка самых низких MMR. Сортировка кнопкой в шапке: по месту, «сильные чёрные», «сильные красные»</span></span>
+                <label class="switch"><input type="checkbox" id="table_summary_enabled"><span class="slider"></span></label>
             </div>
             <div class="row"><span>График «Путь MMR» на своём профиле</span>
                 <label class="switch"><input type="checkbox" id="profile_mmr_chart_enabled" checked><span class="slider"></span></label>
@@ -507,6 +524,16 @@
                 <div id="obs_scenes" class="field">
                     <label>Сцены OBS</label>
                     <div id="scenes_list"></div>
+                </div>
+                <div class="row"><span>Микрофон: OBS и игра вместе<span class="hint">клик по плашке в игре или клавиша выключают/включают микрофон и в OBS, и в игре. Мьют в самом OBS догоняет игру; выключенный в игре микрофон OBS не трогает — со зрителями можно говорить</span></span>
+                    <label class="switch"><input type="checkbox" id="mic_sync_enabled"><span class="slider"></span></label>
+                </div>
+                <div class="field">
+                    <label>Источник микрофона в OBS (имя в микшере)</label>
+                    <input type="text" id="mic_sync_input" class="inp" placeholder="Mic/Aux" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="row"><span>Клавиша микрофона<span class="hint">пусто — только клик по плашке</span></span>
+                    <span style="display:flex;gap:4px"><button id="mic_sync_hotkey_capture" class="btn-key" title="Нажми, затем нужную клавишу">—</button><button id="mic_sync_hotkey_clear" class="btn-key" title="Убрать клавишу">×</button></span>
                 </div>
                 <div class="row"><span>Плавающая панель на странице</span>
                     <label class="switch"><input type="checkbox" id="obs_floating_panel_enabled"><span class="slider"></span></label>

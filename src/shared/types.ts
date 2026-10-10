@@ -76,6 +76,14 @@ export interface Settings {
   ctl_pos_finish: string;
   ctl_pos_outcry: string;
   ctl_pos_guess: string;
+  /** Микрофон: один клик/клавиша переключает OBS-источник и микрофон игры. */
+  mic_sync_enabled: boolean;
+  /** Имя источника микрофона в микшере OBS. */
+  mic_sync_input: string;
+  /** Клавиша переключения (KeyboardEvent.code); "" — только клик по плашке. */
+  mic_sync_hotkey: string;
+  /** Окно «Сводка стола» в игровой комнате (статистика игроков за столом). */
+  table_summary_enabled: boolean;
   /** Автоматически нажимать «Готов» после захода в лобби. */
   auto_ready_enabled: boolean;
   /** Возвращать F5 нормальное обновление страницы (сайт перехватывает его под настройки). */
@@ -192,7 +200,9 @@ export interface ObsCommandMsg {
     | "record_stop"
     | "replay_save"
     | "replay_setup"
-    | "room_entered";
+    | "room_entered"
+    | "get_input_mute"
+    | "set_input_mute";
   data?: {
     url?: string;
     password?: string;
@@ -202,6 +212,10 @@ export interface ObsCommandMsg {
     /** true — сцену переключает САМ пользователь (клик в панели): такая
      *  команда всегда проходит и забирает владение автосценой этой вкладке. */
     manual?: boolean;
+    /** get/set_input_mute: имя источника звука в микшере OBS. */
+    inputName?: string;
+    /** set_input_mute: заглушить (true) или включить (false). */
+    muted?: boolean;
   };
 }
 

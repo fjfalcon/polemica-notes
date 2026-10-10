@@ -588,6 +588,16 @@ async function handleObsQuery(
     }
     case "get_scenes":
       return obs.requestSceneList();
+    // «Микрофон: OBS и игра» — лёгкие операции, мимо очереди connect/probe.
+    case "get_input_mute":
+    case "set_input_mute": {
+      if (!obs.getStatus().connected) throw new Error("OBS не подключён");
+      const inputName = String(data?.inputName ?? "").trim();
+      if (!inputName) throw new Error("не задан источник микрофона");
+      if (cmd === "get_input_mute") return { muted: await obs.getInputMute(inputName) };
+      await obs.setInputMute(inputName, data?.muted === true);
+      return { muted: data?.muted === true };
+    }
     // ── запись и клипы (стримерский пакет 26.08.2026). Свой конвейер
     // enqueueRecord: сериализует record/replay между собой (гонки stop/start
     // на смене маршрута), но не ждёт длинные connect/probe из enqueueObs.
