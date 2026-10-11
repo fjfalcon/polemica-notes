@@ -592,8 +592,22 @@ export class ObsClient {
 
   /** Идёт ли сейчас запись в OBS. */
   async isRecording(): Promise<boolean> {
-    const res = await this.request<{ outputActive?: boolean }>("GetRecordStatus");
-    return res?.outputActive === true;
+    return (await this.getRecordStatus()).active;
+  }
+
+  /** Состояние записи: идёт ли, на паузе ли и сколько уже пишется (мс). */
+  async getRecordStatus(): Promise<{ active: boolean; paused: boolean; durationMs: number | null }> {
+    const res = await this.request<{
+      outputActive?: boolean;
+      outputPaused?: boolean;
+      outputDuration?: number;
+    }>("GetRecordStatus");
+    const d = res?.outputDuration;
+    return {
+      active: res?.outputActive === true,
+      paused: res?.outputPaused === true,
+      durationMs: typeof d === "number" && Number.isFinite(d) ? d : null,
+    };
   }
 
   async startRecord(): Promise<void> {

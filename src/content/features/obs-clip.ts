@@ -37,8 +37,6 @@ let configuredSeconds = 0;
 let setupFailedWarned = false;
 let wantedSeconds = 0;
 let offConnected: (() => void) | null = null;
-/** Поколение включения: ответ replay_setup, пришедший после disable(), состояние не трогает. */
-let generation = 0;
 
 async function obsCommand(
   command: "replay_save" | "replay_setup",
@@ -48,9 +46,9 @@ async function obsCommand(
 }
 
 async function setupBuffer(seconds: number): Promise<void> {
-  const gen = generation;
   const res = await obsCommand("replay_setup", { seconds });
-  if (gen !== generation || seconds !== wantedSeconds) return;
+  // Ответ после disable() (wantedSeconds = 0) или на устаревшую длину состояние не трогает.
+  if (seconds !== wantedSeconds) return;
   if (res?.success) {
     configuredSeconds = seconds;
     setupFailedWarned = false;
@@ -112,7 +110,6 @@ export const obsClipFeature: Feature = {
   },
 
   disable() {
-    generation += 1;
     off?.();
     off = null;
     offConnected?.();
