@@ -906,6 +906,14 @@ describe("§4.7 lifecycle heuristic", () => {
         "+1 таймер (9.23.1) — шаги лесенки ставят setTimeout трижды при одном clearTimeout-поле verdictTimer, " +
         "каждый прежний таймер снимается перед новым и в disable()",
     },
+    "src/content/features/mic-sync.ts": {
+      listeners: 3,
+      timers: 1,
+      reason:
+        "pointerdown/move/up живут на плашке .pn-mic-pill и умирают вместе с её узлом в stop(); " +
+        "+1 таймер — await-слип 100 мс в цикле проверки кнопки игры: промис резолвится сам, " +
+        "после него гейт active (09.10.2026)",
+    },
     "src/content/features/contract-watch.ts": {
       listeners: 0,
       timers: 1,

@@ -22,6 +22,13 @@ export const DEFAULT_SETTINGS: Settings = {
   show_roles: true,
   statistics_enabled: true,
   session_stats_enabled: false,
+  // Микрофон через OBS (09.10.2026): действие над эфиром — включает сам
+  // стример. «Mic/Aux» — стандартное имя микрофона в свежем OBS.
+  mic_sync_enabled: false,
+  mic_sync_input: "Mic/Aux",
+  mic_sync_hotkey: "",
+  // Окно поверх стола — дело вкуса: выключено, как «Мой вечер» (09.10.2026).
+  table_summary_enabled: false,
   profile_mmr_chart_enabled: true,
   obs_auto_record_enabled: false,
   obs_clip_enabled: false,
