@@ -6,6 +6,7 @@ const state = vi.hoisted(() => ({
   tags: [] as string[],
   readFailed: false,
   saves: 0,
+  noteSaveOk: true,
   tagSaves: 0,
   tagSaveOk: true,
   /** Сколько задач координатора выполняется ПРЯМО СЕЙЧАС. */
@@ -56,6 +57,7 @@ vi.mock("@core/notes-store", async (importOriginal) => {
     }),
     saveNotes: vi.fn(async (notes: Record<string, unknown>) => {
       await Promise.resolve();
+      if (!state.noteSaveOk) return false;
       state.notes = notes;
       state.saves++;
       return true;
@@ -66,13 +68,20 @@ vi.mock("@core/log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { applyNoteOps, applyTagOps, mergeNotesViaCoordinator } from "../../src/background/notes-coordinator";
+import {
+  applyNoteOps,
+  applyTagOps,
+  mergeNotesViaCoordinator,
+  migrateNickToIdViaCoordinator,
+} from "../../src/background/notes-coordinator";
+import { MAX_OWN_NOTE_TEXT } from "@core/notes-store";
 
 beforeEach(() => {
   state.notes = {};
   state.tags = [];
   state.readFailed = false;
   state.saves = 0;
+  state.noteSaveOk = true;
   state.tagSaves = 0;
   state.tagSaveOk = true;
   state.inFlight = 0;
@@ -271,5 +280,127 @@ describe("очередь: сериализация важнее отзывчив
     await Promise.all([slow, next]);
     expect(order).toEqual(["медленная", "следующая"]);
     expect(state.overlapped, "и они не пересеклись во времени").toBe(false);
+  });
+});
+
+describe("миграция ник → id интентом", () => {
+  test("правка другой вкладки в u:<id>, пришедшая раньше интента, выживает", async () => {
+    state.notes = {
+      Аня: { text: "старая", timestamp: 100 },
+      "u:42": { text: "совсем старая", timestamp: 50 },
+    };
+    const [, res] = await Promise.all([
+      applyNoteOps([{ key: "u:42", record: { text: "новая из другой вкладки", timestamp: 900 } }]),
+      migrateNickToIdViaCoordinator("Аня", 42),
+    ]);
+    expect(res.ok).toBe(true);
+    const rec = state.notes["u:42"] as { text: string; nick?: string };
+    expect(rec.text).toBe("новая из другой вкладки");
+    expect(rec.nick).toBe("Аня");
+    expect("Аня" in state.notes, "ник-ключ убран").toBe(false);
+  });
+
+  test("сбой чтения — отказ без записи", async () => {
+    state.readFailed = true;
+    const res = await migrateNickToIdViaCoordinator("Аня", 42);
+    expect(res).toEqual({ ok: false, reason: "read_failed" });
+    expect(state.saves).toBe(0);
+  });
+
+  test("нечего сливать — успех без записи", async () => {
+    state.notes = { "u:42": { text: "уже на месте", timestamp: 1 } };
+    const res = await migrateNickToIdViaCoordinator("Аня", 42);
+    expect(res.ok).toBe(true);
+    expect(state.saves).toBe(0);
+  });
+
+  test("правка ник-записи, поставленная в очередь раньше, сливается свежей", async () => {
+    state.notes = { Аня: { text: "старая", timestamp: 100 } };
+    await Promise.all([
+      applyNoteOps([{ key: "Аня", record: { text: "правка", timestamp: 200 } }]),
+      migrateNickToIdViaCoordinator("Аня", 42),
+    ]);
+    expect((state.notes["u:42"] as { text: string }).text).toBe("правка");
+    expect("Аня" in state.notes).toBe(false);
+  });
+
+  test("повторная миграция безопасна", async () => {
+    state.notes = { Аня: { text: "текст", timestamp: 100 } };
+    await migrateNickToIdViaCoordinator("Аня", 42);
+    const after = { ...state.notes };
+    const res = await migrateNickToIdViaCoordinator("Аня", 42);
+    expect(res.ok).toBe(true);
+    expect(state.saves).toBe(1);
+    expect(state.notes).toEqual(after);
+  });
+
+  test("сбой записи — источник цел, отказ виден, очередь жива", async () => {
+    state.notes = { Аня: { text: "текст", timestamp: 100 } };
+    state.noteSaveOk = false;
+    const failed = migrateNickToIdViaCoordinator("Аня", 42);
+    const after = failed.then(() => {
+      state.noteSaveOk = true;
+      return applyNoteOps([{ key: "u:7", record: { text: "другой", timestamp: 1 } }]);
+    });
+    const res = await failed;
+    expect(res.ok).toBe(false);
+    expect(state.notes).toEqual({ Аня: { text: "текст", timestamp: 100 } });
+    expect((await after).ok).toBe(true);
+    expect(state.notes["Аня"]).toEqual({ text: "текст", timestamp: 100 });
+    expect(state.notes["u:7"]).toBeDefined();
+  });
+
+  test("ничья, легаси-строка, метка, цвет и история ников — через координатор", async () => {
+    state.notes = {
+      "u:42": "легаси",
+      Аня: { text: "первая", timestamp: 5, tag: "#aa0000", nick: "Старая" },
+      аня: { text: "вторая", timestamp: 5, nickColor: "#123456" },
+    };
+    const res = await migrateNickToIdViaCoordinator("Аня", 42);
+    expect(res.ok).toBe(true);
+    const rec = state.notes["u:42"] as { text: string; tag?: string; nickColor?: string; nick?: string; nicks?: string[] };
+    expect(rec.text).toContain("легаси");
+    expect(rec.text).toContain("первая");
+    expect(rec.text).toContain("вторая");
+    expect(rec.tag).toBe("#aa0000");
+    expect(rec.nickColor).toBe("#123456");
+    expect(rec.nick).toBe("Аня");
+    expect(rec.nicks).toContain("Старая");
+    expect(Object.keys(state.notes)).toEqual(["u:42"]);
+  });
+
+  test("слитый текст длиннее потолка обрезается и об этом сообщается", async () => {
+    state.notes = { Аня: { text: "x".repeat(MAX_OWN_NOTE_TEXT + 1), timestamp: 1 } };
+    const res = await migrateNickToIdViaCoordinator("Аня", 42);
+    expect(res.ok).toBe(true);
+    expect(res.truncated).toBe(1);
+    expect((state.notes["u:42"] as { text: string }).text.length).toBe(MAX_OWN_NOTE_TEXT);
+  });
+
+  test.each([
+    ["", 42],
+    ["Аня", ""],
+    ["Аня", Number.NaN],
+    ["Аня", 0],
+    ["Аня", -5],
+    ["Аня", 1.5],
+    ["Аня", "unknown"],
+    ["Аня", "0"],
+    ["Аня", "007"],
+    ["Аня", "-5"],
+    [42, 42],
+  ])("битый запрос (%p, %p) — bad_request без чтения и записи", async (username, userId) => {
+    state.notes = { Аня: { text: "текст", timestamp: 1 } };
+    const res = await migrateNickToIdViaCoordinator(username, userId);
+    expect(res).toEqual({ ok: false, reason: "bad_request" });
+    expect(state.saves).toBe(0);
+    expect("Аня" in state.notes, "источник не удалён").toBe(true);
+  });
+
+  test("строковый id без ведущих нулей принимается как есть", async () => {
+    state.notes = { Аня: { text: "текст", timestamp: 1 } };
+    const res = await migrateNickToIdViaCoordinator("Аня", "42");
+    expect(res.ok).toBe(true);
+    expect(Object.keys(state.notes)).toEqual(["u:42"]);
   });
 });

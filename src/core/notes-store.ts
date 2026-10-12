@@ -53,6 +53,17 @@ export function isIdKey(key: string): boolean {
   return key.startsWith(ID_KEY_PREFIX);
 }
 
+/** id для ключа `u:<id>`: положительное целое без ведущих нулей, иначе undefined. */
+export function canonicalUserId(userId: unknown): string | undefined {
+  if (typeof userId === "number") {
+    return Number.isSafeInteger(userId) && userId > 0 ? String(userId) : undefined;
+  }
+  if (typeof userId === "string" && /^[1-9]\d*$/.test(userId) && Number.isSafeInteger(Number(userId))) {
+    return userId;
+  }
+  return undefined;
+}
+
 export const NOTES_KEY = "playerNotes";
 export const TAGS_KEY = "tagCustomColors";
 
@@ -299,6 +310,64 @@ export function withNickHistory(
   const carried = previous ? [previous, ...(rec.nicks ?? [])] : (rec.nicks ?? []);
   const nicks = mergeNickLists(carried, undefined, nick);
   return nicks.length > 0 ? { nick, nicks } : { nick };
+}
+
+/**
+ * Слияние ник-записей игрока в `u:<id>`: побеждает более свежая, ник сохраняется
+ * в записи. null — сливать нечего.
+ */
+export function mergeNickKeysIntoId(
+  notes: NotesMap,
+  username: string,
+  userId: number | string,
+): { key: string; nickKeys: string[]; record: NoteRecord } | null {
+  const key = idKey(userId);
+  const lower = username.toLowerCase();
+  const nickKeys = Object.keys(notes).filter((k) => !isIdKey(k) && k.toLowerCase() === lower);
+  if (nickKeys.length === 0) return null;
+
+  const ts = (n: NoteRecord | string | undefined) =>
+    n && typeof n !== "string" && typeof n.timestamp === "number" ? n.timestamp : 0;
+  const toRecord = (n: NoteRecord | string): NoteRecord =>
+    typeof n === "string" ? { text: n, timestamp: 0 } : n;
+
+  // Легаси-строка под u:-ключом — тоже запись, её текст нельзя терять.
+  let best: NoteRecord | undefined = notes[key] !== undefined ? toRecord(notes[key]) : undefined;
+  // Текст легаси-СТРОКИ под id-ключом: у неё ts=0, поэтому любая ник-запись
+  // с настоящим временем побеждает её по времени. Такой текст нельзя терять
+  // молча — ниже он дописывается в победителя наравне с ничьёй.
+  const idLegacyText = typeof notes[key] === "string" ? (notes[key] as string) : "";
+  const losers: NoteRecord[] = [];
+  for (const nk of nickKeys) {
+    const record = toRecord(notes[nk]);
+    if (!best) {
+      best = record;
+    } else if (ts(record) > ts(best)) {
+      losers.push(best);
+      best = record;
+    } else {
+      losers.push(record);
+    }
+  }
+  if (!best) return null;
+
+  // Ничья по времени (обе легаси, ts=0) с РАЗНЫМ текстом — не уничтожаем
+  // проигравший текст молча, а дописываем его в запись.
+  const winner: NoteRecord = { ...best };
+  for (const loser of losers) {
+    if (
+      loser.text &&
+      loser.text !== winner.text &&
+      (ts(loser) === ts(winner) || loser.text === idLegacyText)
+    ) {
+      winner.text = winner.text ? `${winner.text}\n[слито: ${loser.text}]` : loser.text;
+    }
+    // Цвет и метка наследуются безусловно: непустое побеждает пустое.
+    if (!winner.tag && loser.tag) winner.tag = loser.tag;
+    if (!winner.nickColor && loser.nickColor) winner.nickColor = loser.nickColor;
+  }
+
+  return { key, nickKeys, record: { ...winner, ...withNickHistory(winner, username) } };
 }
 
 function combineNotes(a: NoteRecord | string, b: NoteRecord | string): NoteRecord {
