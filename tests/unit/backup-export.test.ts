@@ -70,6 +70,20 @@ describe("бэкап: палитра до переноса из sync", () => {
     expect(await collectBackup()).toBeNull();
   });
 
+  test("облако до переноса не прочиталось — бэкапа нет, повтор выгружает оба хранилища", async () => {
+    givenStorage(
+      { playerNotes: { alice: { text: "а", ts: 1 } }, tagCustomColors: ["#111111"], [MIGRATED_KEY]: false },
+      { playerNotes: { bob: { text: "б", ts: 2 } }, tagCustomColors: ["#222222", "#111111"] },
+    );
+    sync.get.mockRejectedValueOnce(new Error("sync read failed"));
+    expect(await collectBackup()).toBeNull();
+
+    const backup = await collectBackup();
+    expect(backup?.count).toBe(2);
+    expect(Object.keys(backup?.payload.notes as object).sort()).toEqual(["alice", "bob"]);
+    expect(backup?.payload.customTags).toEqual(["#111111", "#222222"]);
+  });
+
   test("все сохраняемые поля попадают в файл", async () => {
     const notes = { "u:1": { text: "а", ts: 1 }, alice: { text: "б", ts: 2 } };
     const roleMarks = { g1: { 3: "sheriff" } };
