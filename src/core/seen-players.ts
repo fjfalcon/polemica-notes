@@ -59,23 +59,28 @@ export function mergeSeen(
   return out;
 }
 
+/** Строгое чтение: битое содержимое — пустой справочник, отказ хранилища — исключение. */
+async function loadSeenPlayers(): Promise<SeenMap> {
+  const res = (await browser.storage.local.get({ [SEEN_PLAYERS_KEY]: {} })) as Record<
+    string,
+    unknown
+  >;
+  const raw = res[SEEN_PLAYERS_KEY];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: SeenMap = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const e = v as Partial<SeenPlayer> | null;
+    if (e && typeof e.nick === "string" && typeof e.id === "string" && typeof e.at === "number") {
+      out[k] = { nick: e.nick, id: e.id, at: e.at };
+    }
+  }
+  return out;
+}
+
 /** Прочитать справочник. Битое содержимое — пустой справочник, не исключение. */
 export async function readSeenPlayers(): Promise<SeenMap> {
   try {
-    const res = (await browser.storage.local.get({ [SEEN_PLAYERS_KEY]: {} })) as Record<
-      string,
-      unknown
-    >;
-    const raw = res[SEEN_PLAYERS_KEY];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-    const out: SeenMap = {};
-    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-      const e = v as Partial<SeenPlayer> | null;
-      if (e && typeof e.nick === "string" && typeof e.id === "string" && typeof e.at === "number") {
-        out[k] = { nick: e.nick, id: e.id, at: e.at };
-      }
-    }
-    return out;
+    return await loadSeenPlayers();
   } catch (e) {
     log.warn("seen-players", "справочник не прочитан", e);
     return {};
@@ -84,17 +89,29 @@ export async function readSeenPlayers(): Promise<SeenMap> {
 
 let pending: Array<{ nick: string; id: string }> = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let flushChain: Promise<void> = Promise.resolve();
 
-async function flush(): Promise<void> {
+function scheduleFlush(): void {
+  if (!flushTimer) flushTimer = setTimeout(() => void flush(), FLUSH_DELAY_MS);
+}
+
+function flush(): Promise<void> {
   flushTimer = null;
+  flushChain = flushChain.then(writeBatch, writeBatch);
+  return flushChain;
+}
+
+async function writeBatch(): Promise<void> {
   const batch = pending;
   pending = [];
   if (batch.length === 0) return;
   try {
     // Чтение прямо перед записью: другая вкладка могла дописать своё.
-    const merged = mergeSeen(await readSeenPlayers(), batch, Date.now());
+    const merged = mergeSeen(await loadSeenPlayers(), batch, Date.now());
     await browser.storage.local.set({ [SEEN_PLAYERS_KEY]: merged });
   } catch (e) {
+    pending = batch.concat(pending);
+    scheduleFlush();
     log.warn("seen-players", "справочник не сохранён", e);
   }
 }
@@ -103,7 +120,7 @@ async function flush(): Promise<void> {
 export function rememberSeenPlayers(entries: ReadonlyArray<{ nick: string; id: string }>): void {
   if (entries.length === 0) return;
   pending.push(...entries);
-  if (!flushTimer) flushTimer = setTimeout(() => void flush(), FLUSH_DELAY_MS);
+  scheduleFlush();
 }
 
 /** Тестовый шов: немедленно записать накопленное. */
