@@ -328,7 +328,14 @@ function tick(): void {
   }
   const players = readTable();
   const sig = tableSignature(players);
-  if (players.length === 0) return; // стол ещё не отрисован — ждём
+  if (players.length === 0) {
+    if (lastSignature === "") return; // стол ещё не отрисован — ждём
+    lastSignature = "";
+    generation++;
+    rows = [];
+    rerender();
+    return;
+  }
   if (!panel) panel = new TableSummaryPanel();
   if (!panel.isMounted) panel.mount();
   if (sig === lastSignature) return;

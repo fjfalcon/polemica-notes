@@ -80,6 +80,7 @@ vi.mock("@core/polemica-api", () => ({
 import { domObserver, onDomChange } from "@core/dom";
 import { log } from "@core/log";
 import { getOwnUserId } from "@core/own-user";
+import { fetchRoleBreakdown } from "@core/polemica-api";
 import { profileCrossoverFeature, syncProfileCrossoverRoute } from "@content/features/profile-crossover";
 import { profileMmrChartFeature, syncProfileMmrRoute } from "@content/features/profile-mmr-chart";
 import { protocolEmojiFeature, symbolId } from "@content/features/protocol-emoji";
@@ -265,13 +266,18 @@ describe("§4 fixpoint: автонажатие «Готов»", () => {
 });
 
 describe("§4 fixpoint: «Сводка стола»", () => {
+  const summaryTile = (seat0: number, nick: string) =>
+    `<div class="player desktop-version"><div class="player__botleftmenu"><div class="player__info">` +
+    `<div class="player-number player-${seat0}">${seat0 + 1}</div>` +
+    `<div class="info__name">${nick}</div></div></div></div>`;
+  const summaryText = () => document.querySelector(".pn-table-summary-panel")?.textContent ?? "";
+  const clearTable = () => {
+    for (const el of Array.from(document.querySelectorAll(".player.desktop-version"))) el.remove();
+  };
+
   test("стол из двух игроков: окно собирается, статистика приходит, DOM затихает", async () => {
     window.history.replaceState(null, "", "/game");
-    const tile = (seat0: number, nick: string) =>
-      `<div class="player desktop-version"><div class="player__botleftmenu"><div class="player__info">` +
-      `<div class="player-number player-${seat0}">${seat0 + 1}</div>` +
-      `<div class="info__name">${nick}</div></div></div></div>`;
-    document.body.innerHTML = tile(0, "Альфа") + tile(1, "Бета");
+    document.body.innerHTML = summaryTile(0, "Альфа") + summaryTile(1, "Бета");
     const before = domObserver.subscriberCount();
     void tableSummaryFeature.enable({ settings: {} } as unknown as FeatureContext);
     expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
@@ -283,6 +289,58 @@ describe("§4 fixpoint: «Сводка стола»", () => {
     expect(panelText).toContain("Альфа");
     expect(panelText).toContain("2500");
     expect(panelText, "винрейт за красных 18/30").toContain("60%");
+  });
+
+  test("стол опустел в комнате: окно показывает пустой стол, а не старый состав", async () => {
+    window.history.replaceState(null, "", "/game");
+    document.body.innerHTML = summaryTile(0, "Альфа") + summaryTile(1, "Бета");
+    void tableSummaryFeature.enable({ settings: {} } as unknown as FeatureContext);
+    await driveToFixpoint();
+    expect(summaryText()).toContain("Альфа");
+    clearTable();
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    expect(summaryText(), "пустой стол").toContain("За столом пока никого");
+    expect(summaryText(), "старый состав ушёл").not.toContain("Альфа");
+  });
+
+  test("поздний ответ статистики не возвращает строки опустевшего стола", async () => {
+    const api = vi.mocked(fetchRoleBreakdown);
+    const original = api.getMockImplementation();
+    let release: (v: unknown) => void = () => undefined;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    api.mockImplementation(() => held as ReturnType<typeof fetchRoleBreakdown>);
+    try {
+      window.history.replaceState(null, "", "/game");
+      document.body.innerHTML = summaryTile(0, "Альфа") + summaryTile(1, "Бета");
+      void tableSummaryFeature.enable({ settings: {} } as unknown as FeatureContext);
+      await driveToFixpoint();
+      expect(summaryText(), "статистика ещё грузится").toContain("…");
+      clearTable();
+      await driveToFixpoint();
+      release({
+        civilian: { games_count: 30, wins_count: 18 },
+        mafia: { games_count: 12, wins_count: 6 },
+      });
+      const r = await driveToFixpoint();
+      expect(r.settled, `DOM не затих за ${r.rounds} раундов`).toBe(true);
+      expect(summaryText(), "старый состав не вернулся").not.toContain("Альфа");
+      expect(summaryText(), "поздний винрейт не нарисован").not.toContain("60%");
+      expect(summaryText()).toContain("За столом пока никого");
+    } finally {
+      if (original) api.mockImplementation(original);
+    }
+  });
+
+  test("стол ещё не отрисован: окно не появляется", async () => {
+    window.history.replaceState(null, "", "/game");
+    void tableSummaryFeature.enable({ settings: {} } as unknown as FeatureContext);
+    document.body.appendChild(document.createElement("i"));
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов`).toBe(true);
+    expect(document.querySelector(".pn-table-summary-panel")).toBeNull();
   });
 });
 
