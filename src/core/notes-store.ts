@@ -579,6 +579,8 @@ export async function loadNotes(opts?: {
    * миграция мимо единственного писателя (SEC26-5, внешний аудит 28.08.2026).
    */
   migrated?: boolean;
+  /** true = до переноса облако не прочиталось: вид без заметок и палитры из sync, выгружать его как полный бэкап нельзя. */
+  syncUnread?: boolean;
 }> {
   try {
     const local = (await browser.storage.local.get({
@@ -612,7 +614,7 @@ export async function loadNotes(opts?: {
 async function migratedView(
   localNotes: NotesMap,
   localTags: string[],
-): Promise<{ notes: NotesMap; customTags: string[] }> {
+): Promise<{ notes: NotesMap; customTags: string[]; syncUnread?: boolean }> {
   try {
     const sync = (await browser.storage.sync.get({
       [NOTES_KEY]: {},
@@ -647,7 +649,7 @@ async function migratedView(
     }
     return { notes: merged, customTags: [...new Set([...localTags, ...syncTags])] };
   } catch {
-    return { notes: localNotes, customTags: localTags };
+    return { notes: localNotes, customTags: localTags, syncUnread: true };
   }
 }
 
