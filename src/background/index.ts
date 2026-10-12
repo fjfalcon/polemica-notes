@@ -543,7 +543,7 @@ async function decideAndClaim(tabId: number, manual: boolean): Promise<boolean> 
 // Владелец закрыл вкладку — освобождаем владение сразу, не дожидаясь TTL:
 // иначе сцена не обновится до следующей смены фазы в другой вкладке.
 browser.tabs.onRemoved.addListener((closedId) => {
-  void (async () => {
+  void enqueueOwner(async () => {
     try {
       const st = (await browser.storage.local.get({ [OBS_SCENE_OWNER_KEY]: null })) as Record<
         string,
@@ -557,7 +557,7 @@ browser.tabs.onRemoved.addListener((closedId) => {
     } catch {
       /* не критично: владение протухнет по TTL */
     }
-  })();
+  });
 });
 
 async function handleObsQuery(
