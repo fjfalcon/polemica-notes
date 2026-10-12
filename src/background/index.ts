@@ -666,14 +666,15 @@ async function handleObsQuery(
           const mode = await obs.getProfileParameter("Output", "Mode");
           const category = mode === "Advanced" ? "AdvOut" : "SimpleOutput";
           await obs.setProfileParameter(category, "RecRBTime", String(seconds));
-          await browser.storage.local.set({ [OBS_CLIP_RB_SET_KEY]: seconds });
         }
         const active = await obs.isReplayBufferActive();
         if (active && changed) {
           // Новая длина применяется только перезапуском буфера.
           await obs.stopReplayBuffer();
           await obs.startReplayBuffer();
+          await browser.storage.local.set({ [OBS_CLIP_RB_SET_KEY]: seconds });
         } else if (!active) {
+          if (changed) await browser.storage.local.set({ [OBS_CLIP_RB_SET_KEY]: seconds });
           // Буфер выключен в настройках OBS — StartReplayBuffer скажет об этом.
           await obs.startReplayBuffer();
         }
