@@ -24,7 +24,6 @@ import {
   ObsClient,
 } from "./obs-client";
 import {
-  OWNER_TTL_MS,
   decideSceneOwnership,
   type OwnerTabState,
   type SceneOwnerRecord,
@@ -433,9 +432,11 @@ async function handleObsCommand(cmd: ObsCommandMsg["command"], data: ObsCommandM
  * (например, чужая игра, открытая посмотреть) перебивала сцену активной
  * трансляции (аудит lifecycle 01.08.2026, находка 6). Владение хранится в
  * storage.local, поэтому переживает выгрузку service worker; отдаётся
- * первой вкладке, попросившей сцену, и переходит к другой, если владелец
- * умолк дольше OWNER_TTL_MS (закрыл вкладку, ушёл со страницы) или его
- * вкладки больше не существует.
+ * первой вкладке, попросившей сцену, и переходит к другой, если вкладки
+ * владельца больше нет или она ответила «не веду». Молчащий владелец (пинг
+ * не успел) держит сцену, пока записи меньше OWNER_TTL_MS; ответ «веду»
+ * держит её дольше TTL, но не дольше OWNER_HARD_CAP_MS от записи
+ * (scene-owner.ts).
  */
 const OBS_SCENE_OWNER_KEY = "obs_scene_owner";
 
@@ -449,20 +450,24 @@ const OBS_SCENE_OWNER_KEY = "obs_scene_owner";
  * вкладки, и для вкладки, чей content-скрипт осиротел после обновления
  * расширения. Опрос самой вкладки закрывает всё это разом (§4.10).
  */
-/** Сколько ждём ответа владельца. Молчание = «владения нет». */
+/** Сколько ждём ответа владельца. */
 const OWNER_PING_TIMEOUT_MS = 1500;
+const OWNER_PING_TIMED_OUT = Symbol("owner-ping-timed-out");
 
-async function inspectOwnerTab(ownerTabId: number): Promise<OwnerTabState> {
-  // С таймаутом: sendToTab ловит отказ, но не ЗАВИСАНИЕ. Живая, но занятая
-  // вкладка иначе подвесила бы set_scene просящей вкладки навсегда — тихая
-  // заморозка автосмены (ревью 02.08.2026). «Нет ответа» здесь безопасно:
-  // настоящий владелец переспросит на следующей смене фазы.
+async function inspectOwnerTab(ownerTabId: number): Promise<OwnerTabState | null> {
+  // Таймаут — «не ответила вовремя» (null, решает TTL записи); отказ канала
+  // (sendToTab вернул undefined): «вкладки нет».
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const answer = await Promise.race([
-    sendToTab<{ owning?: boolean }>(ownerTabId, { type: "obs_scene_owner_ping" }),
-    new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), OWNER_PING_TIMEOUT_MS)),
+    sendToTab<{ owning?: unknown }>(ownerTabId, { type: "obs_scene_owner_ping" }),
+    new Promise<typeof OWNER_PING_TIMED_OUT>((resolve) => {
+      timer = setTimeout(() => resolve(OWNER_PING_TIMED_OUT), OWNER_PING_TIMEOUT_MS);
+    }),
   ]);
-  // Ответа нет — вкладки нет, она выгружена или её скрипт мёртв.
+  clearTimeout(timer);
+  if (answer === OWNER_PING_TIMED_OUT) return null;
   if (!answer) return { kind: "gone" };
+  if (typeof answer.owning !== "boolean") return null;
   return answer.owning ? { kind: "in-game" } : { kind: "left-game" };
 }
 
@@ -502,10 +507,8 @@ async function decideAndClaim(tabId: number, manual: boolean): Promise<boolean> 
     const cur = st[OBS_SCENE_OWNER_KEY] as SceneOwnerRecord | null;
     const now = Date.now();
     // Опрашиваем владельца ТОЛЬКО когда от его ответа что-то зависит: чужая
-    // живая запись и не ручной клик. Иначе передаём null — «не спрашивали».
-    const stale = !cur || typeof cur.ts !== "number" || now - cur.ts > OWNER_TTL_MS;
-    const needTab =
-      !manual && !stale && cur && typeof cur.tabId === "number" && cur.tabId !== tabId;
+    // запись, свежая или нет, и не ручной клик. Иначе передаём null: «не спрашивали».
+    const needTab = !manual && cur && typeof cur.tabId === "number" && cur.tabId !== tabId;
     const ownerTab: OwnerTabState | null = needTab
       ? await inspectOwnerTab(cur.tabId as number)
       : null;
@@ -525,7 +528,9 @@ async function decideAndClaim(tabId: number, manual: boolean): Promise<boolean> 
       log.info(
         "background",
         "владение автосценой перешло к этой вкладке:",
-        decision.reason === "owner-left-game" ? "прежний владелец ушёл с игры" : "прежний умолк",
+        decision.reason === "owner-left-game"
+          ? "прежний владелец ушёл с игры"
+          : "запись прежнего протухла",
         tabId,
       );
     }
