@@ -11,7 +11,8 @@
  * Состояние — только кэш ник-индекса. Записи и резолв id приходят снаружи:
  * модуль не знает ни про настройки, ни про DOM, ни про сеть.
  */
-import { canonicalUserId, idKey, isIdKey, type NoteRecord, type NotesMap } from "@core/notes-store";
+import { idKey, isIdKey, type NoteRecord, type NotesMap } from "@core/notes-store";
+import { validPlayerId } from "@shared/player-id";
 
 export interface NoteKeyContext {
   /** Актуальная карта заметок (менеджер владеет ею и меняет её). */
@@ -46,16 +47,14 @@ export class NoteKeys {
    * игроков в один общий ключ `u:—` (чужая заметка в тултипе соседа +
    * взаимная перезапись). Блокер ревью 8.1.29.
    *
-   * Валидатор ОДИН на вкладку и координатор (canonicalUserId): ключ `u:007`
-   * или `u:<unsafe>` вкладка принимала, а миграцию под него координатор
-   * отвергал: запись под ником не сливалась никогда (ревью апстрима
+   * Валидатор ОДИН на вкладку, статистику и координатор (validPlayerId; canonicalUserId
+   * координатора — его обёртка): свой принимал "007" и небезопасные целые, и игрок
+   * получал ключ u:007, который статистика не признавала, а миграцию под него
+   * координатор отвергал: запись под ником не сливалась никогда (ревью апстрима
    * 09.10.2026).
    */
   userId(username: string): number | string | undefined {
-    const id = this.ctx.lookupId(username.toLowerCase());
-    const canonical = canonicalUserId(id);
-    if (canonical === undefined) return undefined;
-    return typeof id === "number" ? id : canonical;
+    return validPlayerId(this.ctx.lookupId(username.toLowerCase()));
   }
 
   /**
