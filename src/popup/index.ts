@@ -1382,6 +1382,10 @@ document.addEventListener("DOMContentLoaded", () => {
       pauseHotkeyCode = patch.pause_hotkey_code;
       renderPauseKey();
     }
+    if (typeof patch.mic_sync_hotkey === "string") {
+      micHotkeyCode = patch.mic_sync_hotkey;
+      renderMicKey();
+    }
     if (typeof patch.hotkey_role_fake === "string") roleFakeCode = patch.hotkey_role_fake;
     if (typeof patch.hotkey_role_reset === "string") roleResetCode = patch.hotkey_role_reset;
     if (typeof patch.hotkey_role_hide === "string") roleHideCode = patch.hotkey_role_hide;
