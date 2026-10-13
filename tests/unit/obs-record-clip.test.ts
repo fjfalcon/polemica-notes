@@ -135,6 +135,8 @@ class FakeObs {
   staleStopOnNextStart = false;
   /** The new output stops while StartRecord is still answering. */
   stopDuringNextStart = false;
+  /** Соединение рвётся сразу после ответа на следующий StartRecord. */
+  closeAfterNextStart = false;
 
   constructor(public readonly url: string) {
     FakeObs.last = this;
@@ -228,6 +230,10 @@ class FakeObs {
         },
       }),
     });
+    if (type === "StartRecord" && this.closeAfterNextStart) {
+      this.closeAfterNextStart = false;
+      this.close(1006);
+    }
   }
 
   close(code = 1000, reason = ""): void {
@@ -741,6 +747,125 @@ describe("владение после смены соединения", () => {
     const stop = await command("record_stop");
     expect(stop.data?.ignored).toBe("unconfirmed");
     expect(obs.recording).toBe(true);
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+  });
+});
+
+describe("сверка длительности всегда, и в том же соединении (ревью раунд 2)", () => {
+  type Mark = { startedAt: number; session: string };
+
+  test("стример остановил нашу и сразу начал свою, пока событие остановки ждёт очереди: её не трогаем", async () => {
+    const obs = await bootConnected();
+    await command("record_start");
+    const mark = store.data.obs_auto_record_started as Mark;
+    store.data.obs_auto_record_started = { ...mark, startedAt: mark.startedAt - 60_000 }; // наша шла минуту
+    obs.recordStopped();
+    obs.recording = true; // своя запись стримера, только что начата
+    obs.recordStartedAt = Date.now();
+    const stop = await command("record_stop");
+    expect(stop.data?.ignored).toBe("unconfirmed");
+    expect(obs.requests, "запись стримера не остановлена").not.toContain("StopRecord");
+    expect(obs.recording).toBe(true);
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+  });
+
+  test("`already` после реконнекта: метка переходит в новое соединение, остановка стримером ставит подавление", async () => {
+    const first = await bootConnected();
+    await command("record_start");
+    const before = store.data.obs_auto_record_started as Mark;
+    const obs = await reconnect(first);
+    const res = await command("record_start", { reconnect: true });
+    expect(res.data?.already).toBe(true);
+    const after = store.data.obs_auto_record_started as Mark;
+    expect(after.startedAt).toBe(before.startedAt);
+    expect(after.session).not.toBe(before.session);
+    obs.recordStopped();
+    await flush();
+    expect(store.data.obs_auto_record_manual_stop).toBe(true);
+    const again = await command("record_start", { reconnect: true });
+    expect(again.data?.ignored).toBe("manual_stop");
+    expect(obs.requests, "запись не возобновлена против воли стримера").not.toContain("StartRecord");
+  });
+
+  test("`already` после реконнекта на чужой записи: метка снята, выход её не останавливает", async () => {
+    const first = await bootConnected();
+    await command("record_start");
+    const obs = await reconnect(first);
+    obs.durationShiftMs = -60_000; // идёт другая, более новая запись
+    const res = await command("record_start", { reconnect: true });
+    expect(res.data?.already).toBe(true);
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+    const stop = await command("record_stop");
+    expect(stop.data?.ignored).toBe("not_ours");
+    expect(obs.recording).toBe(true);
+    expect(obs.requests).not.toContain("StopRecord");
+  });
+
+  test.each([
+    ["-4 с", -4_000, true],
+    ["+4 с", 4_000, true],
+    ["-6 с", -6_000, false],
+    ["+6 с", 6_000, false],
+  ])("граница допуска 5 с: расхождение %s", async (_name, shift, confirmed) => {
+    const first = await bootConnected();
+    await command("record_start");
+    const obs = await reconnect(first);
+    obs.durationShiftMs = shift;
+    const stop = await command("record_stop");
+    if (confirmed) {
+      expect(stop.data?.stopped).toBe(true);
+      expect(obs.recording).toBe(false);
+    } else {
+      expect(stop.data?.ignored).toBe("unconfirmed");
+      expect(obs.recording).toBe(true);
+      expect(obs.requests).not.toContain("StopRecord");
+    }
+  });
+
+  test.each([
+    ["60 с на двухчасовой записи (в пределах 1%)", -60_000, true],
+    ["90 с на двухчасовой записи (больше 1%)", -90_000, false],
+  ])("допуск растёт с длиной записи: %s", async (_name, shift, confirmed) => {
+    const first = await bootConnected();
+    await command("record_start");
+    const twoHours = 7_200_000;
+    const mark = store.data.obs_auto_record_started as Mark;
+    store.data.obs_auto_record_started = { ...mark, startedAt: mark.startedAt - twoHours };
+    first.recordStartedAt = (first.recordStartedAt ?? Date.now()) - twoHours;
+    const obs = await reconnect(first);
+    obs.durationShiftMs = shift;
+    const stop = await command("record_stop");
+    if (confirmed) {
+      expect(stop.data?.stopped).toBe(true);
+      expect(obs.recording).toBe(false);
+    } else {
+      expect(stop.data?.ignored).toBe("unconfirmed");
+      expect(obs.recording).toBe(true);
+    }
+  });
+
+  test("соединение оборвалось сразу после StartRecord: запись помечена и останавливается после реконнекта", async () => {
+    const first = await bootConnected();
+    first.closeAfterNextStart = true;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let start: Awaited<ReturnType<typeof command>>;
+    try {
+      start = await command("record_start");
+      for (let i = 0; i < 120 && FakeObs.last === first; i++) await vi.advanceTimersByTimeAsync(1_000);
+    } finally {
+      vi.useRealTimers();
+    }
+    const obs = FakeObs.last;
+    if (!obs || obs === first) throw new Error("background не переподключился");
+    obs.recording = first.recording;
+    obs.recordStartedAt = first.recordStartedAt;
+    obs.hello();
+    await flush();
+    expect(start.data?.started).toBe(true);
+    const stop = await command("record_stop");
+    expect(obs.requests, "наша запись не осиротела").toContain("StopRecord");
+    expect(stop.data?.stopped).toBe(true);
+    expect(obs.recording).toBe(false);
     expect(store.data.obs_auto_record_started).toBeUndefined();
   });
 });
