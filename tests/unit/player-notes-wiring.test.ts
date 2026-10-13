@@ -1003,6 +1003,33 @@ describe("промах резолва id повторяется после па�
       localGet().mockImplementation(async () => ({}));
     }
   });
+
+  test("страница профиля: заглушка статистики не заслоняет id из URL", async () => {
+    // lookupId берёт id статистики только годный: «—» заглушки «рейтинг недоступен» иначе
+    // перекрыл бы id из URL профиля, и заметка u:55 на кнопке «Заметка» не нашлась бы.
+    try {
+      const pass = await start();
+      await pass();
+      // Наведение за столом: ни игр, ни рейтинга — в кэше статистики встаёт заглушка с id «—».
+      const statsButton = document.querySelector<HTMLElement>(".stats-button");
+      expect(statsButton, "кнопка статистики есть").not.toBeNull();
+      statsButton?.dispatchEvent(new Event("mouseenter"));
+      await vi.advanceTimersByTimeAsync(1_000);
+      const tooltip = document.querySelector<HTMLElement>('[data-pn-stats="1"][data-username="Gamma"]');
+      expect(tooltip?.innerHTML, "заглушка в кэше").toContain("Нет данных рейтинга");
+
+      window.history.replaceState(null, "", "/profile/55");
+      document.body.innerHTML = `<div class="profileinfo"><span class="profileinfo__main-info-username">Gamma</span></div>`;
+      // Плиток нет, мутации профиля фильтр не пропускает: страницу добирает страховочный проход раз в 2 с.
+      await vi.advanceTimersByTimeAsync(2_100);
+      const btn = document.querySelector<HTMLElement>(".pn-profile-note-btn");
+      expect(btn, "кнопка «Заметка» на профиле").not.toBeNull();
+      expect(btn?.querySelector(".pn-note-dot"), "заметка u:55 найдена по id профиля").not.toBeNull();
+    } finally {
+      window.history.replaceState(null, "", "/game");
+      localGet().mockImplementation(async () => ({}));
+    }
+  });
 });
 
 describe("stale MMR in the stats tooltip", () => {

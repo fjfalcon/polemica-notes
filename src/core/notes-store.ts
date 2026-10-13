@@ -11,6 +11,7 @@
  * Старые заметки из sync (включая ключ `notes` совсем древних версий)
  * переносятся один раз при первой загрузке и в sync больше не пишутся.
  */
+import { validPlayerId } from "@shared/player-id";
 import { browser } from "./env";
 import { log } from "./log";
 import { sendRuntime } from "./messaging";
@@ -53,15 +54,13 @@ export function isIdKey(key: string): boolean {
   return key.startsWith(ID_KEY_PREFIX);
 }
 
-/** id для ключа `u:<id>`: положительное целое без ведущих нулей, иначе undefined. */
+/**
+ * id для ключа `u:<id>` строкой, иначе undefined. Обёртка над validPlayerId: валидатор
+ * один у статистики, ключей заметок и координатора, иначе вкладка и фон расходятся на "007".
+ */
 export function canonicalUserId(userId: unknown): string | undefined {
-  if (typeof userId === "number") {
-    return Number.isSafeInteger(userId) && userId > 0 ? String(userId) : undefined;
-  }
-  if (typeof userId === "string" && /^[1-9]\d*$/.test(userId) && Number.isSafeInteger(Number(userId))) {
-    return userId;
-  }
-  return undefined;
+  const v = validPlayerId(userId);
+  return v === undefined ? undefined : String(v);
 }
 
 export const NOTES_KEY = "playerNotes";
