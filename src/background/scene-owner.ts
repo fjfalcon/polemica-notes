@@ -25,7 +25,7 @@ export interface SceneOwnerRecord {
  * после обновления расширения, и не отдаёт url без разрешения `tabs`.
  */
 export type OwnerTabState =
-  /** Не ответила: вкладки нет, она выгружена или её скрипт мёртв. */
+  /** Вкладки нет: канал отказал, она выгружена или её скрипт мёртв. */
   | { kind: "gone" }
   /** Ответила «да, автосцену веду я». */
   | { kind: "in-game" }
@@ -53,9 +53,19 @@ export interface OwnershipDecision {
  * фазы, а дневная фаза со всеми речами длится минуты — короткий TTL отдавал бы
  * владение соседней вкладке в середине игры и возвращал пинг-понг сцен (ревью
  * пакета D). Главный признак владения — ЖИВОСТЬ вкладки; таймаут нужен лишь
- * на случай, когда вкладку проверить не удалось.
+ * на случай, когда вкладку проверить не удалось или она не ответила вовремя.
  */
 export const OWNER_TTL_MS = 20 * 60_000;
+
+/**
+ * Потолок для ответа «веду»: дольше этого срока с момента записи ответу
+ * владельца не верим и решает TTL. Ложные «веду» в проде уже были (владелец
+ * держал сцену чужой фазой, логи 04.08 и 05.08.2026 в obs-panel.ts), а без
+ * потолка такая вкладка держала бы сцену до своего закрытия. Запись
+ * обновляется при каждой смене сцены владельцем, так что живой владелец до
+ * потолка не доходит.
+ */
+export const OWNER_HARD_CAP_MS = 60 * 60_000;
 
 export function decideSceneOwnership(input: {
   current: SceneOwnerRecord | null;
@@ -65,8 +75,9 @@ export function decideSceneOwnership(input: {
   now: number;
   /**
    * Ответ вкладки-владельца или `null` — «не спрашивали» (решение принимается
-   * раньше). Именно null, а не заглушка «свободно»: с заглушкой любая
-   * перестановка проверок ниже молча раздала бы владение (ревью 02.08.2026).
+   * раньше) либо «не ответила вовремя»: тогда решает только TTL записи.
+   * Именно null, а не заглушка «свободно»: с заглушкой любая перестановка
+   * проверок ниже молча раздала бы владение (ревью 02.08.2026).
    */
   ownerTab: OwnerTabState | null;
 }): OwnershipDecision {
@@ -79,16 +90,22 @@ export function decideSceneOwnership(input: {
   }
   if (current.tabId === tabId) return { allow: true, claim: true, reason: "same-tab" };
 
-  const stale = typeof current.ts !== "number" || now - current.ts > OWNER_TTL_MS;
-  if (stale) return { allow: true, claim: true, reason: "owner-stale" };
-  // Владельца не спрашивали — значит решать по нему нечего: НЕ раздаём сцену.
-  if (!ownerTab) return { allow: false, claim: false, reason: "owner-alive" };
-  if (ownerTab.kind === "gone") return { allow: true, claim: true, reason: "owner-gone" };
+  if (ownerTab?.kind === "gone") return { allow: true, claim: true, reason: "owner-gone" };
   // Вкладка ответила «не веду»: ушла с игры, матч доигран, авто-режим выключен.
   // Держать за ней сцену нельзя — иначе автосмена в НАСТОЯЩЕЙ игровой вкладке
   // молчит до конца TTL (самый частый бытовой случай).
-  if (ownerTab.kind === "left-game") {
+  if (ownerTab?.kind === "left-game") {
     return { allow: true, claim: true, reason: "owner-left-game" };
   }
+  // Ответила «веду» — сцена её, пока запись моложе OWNER_HARD_CAP_MS.
+  if (ownerTab) {
+    const capped = typeof current.ts !== "number" || now - current.ts > OWNER_HARD_CAP_MS;
+    if (!capped) return { allow: false, claim: false, reason: "owner-alive" };
+    return { allow: true, claim: true, reason: "owner-stale" };
+  }
+
+  // Владельца не спрашивали или он не ответил вовремя — решает только TTL.
+  const stale = typeof current.ts !== "number" || now - current.ts > OWNER_TTL_MS;
+  if (stale) return { allow: true, claim: true, reason: "owner-stale" };
   return { allow: false, claim: false, reason: "owner-alive" };
 }

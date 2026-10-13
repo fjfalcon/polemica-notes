@@ -18,7 +18,6 @@ import { sendRuntime } from "@core/messaging";
 import { showToast } from "@core/toast";
 import {
   ID_KEY_PREFIX,
-  idKey,
   isSafeTag,
   MAX_CUSTOM_TAGS,
   isIdKey,
@@ -327,12 +326,12 @@ export class NotesModel {
   /**
    * Отправка операций координатору с честным фолбэком.
    *
-   * fallbackMap обязателен там, где результат собран НЕ в this.map, а в
-   * отдельной карте (ленивая миграция читает свежую карту с диска): без него
-   * фолбэк записал бы устаревший снимок памяти — то есть ровно ту потерю
-   * чужих правок, от которой защищались (ревью пакета B, находка 1).
+   * Фолбэк пишет только поверх СВЕЖЕГО чтения диска, и только если оно
+   * прочиталось и хранилище уже мигрировано. Готовую карту снаружи он не
+   * принимает: такой вход обходил бы обе проверки (ревью апстрима 09.10.2026).
+   * Ленивая миграция ник -> id идёт через координатор, см. doMigrateToId.
    */
-  async commitOps(ops: NoteOp[], fallbackMap?: NotesMap): Promise<boolean> {
+  async commitOps(ops: NoteOp[]): Promise<boolean> {
     if (!ops.length) return true;
     try {
       const res = await sendRuntime<NotesResultMsg>({ type: "notes_apply_ops", ops });
@@ -367,44 +366,40 @@ export class NotesModel {
     // затирали правки друг друга снимками (внешний аудит 28.08.2026).
     // Если свежее состояние не читается — НЕ ПИШЕМ вовсе: перетереть чужое
     // хуже, чем потерять одно действие.
-    let base = fallbackMap;
-    if (!base) {
-      const fresh = await loadNotesFromStore();
-      if (fresh.loadFailed) {
-        log.warn("player-notes", "фолбэк отменён: свежая карта не прочиталась");
-        return false;
-      }
-      if (fresh.migrated === false) {
-        // Перед нами ОБЪЕДИНЁННЫЙ ВИД (local + sync-мост), а не факт с диска.
-        // Записать его отсюда — значит выполнить миграцию из вкладки, мимо
-        // единственного писателя, и вдобавок без флага завершения: следующий
-        // запуск мигрировал бы снова поверх (SEC26-5, внешний аудит
-        // 28.08.2026). Пусть правка потеряется — она одна, а миграция
-        // одноразовая и необратимая.
-        log.warn("player-notes", "фолбэк отменён: хранилище ещё не мигрировано");
-        return false;
-      }
-      // Форма с диска не гарантирована: под ключом может лежать что угодно.
-      // Без проверки присваивание в примитив бросало TypeError МИМО отката —
-      // заметка оставалась на экране и не попадала на диск.
-      base =
-        fresh.notes && typeof fresh.notes === "object" && !Array.isArray(fresh.notes)
-          ? fresh.notes
-          : {};
-      // Свою правку доносим поверх свежей карты — иначе фолбэк запишет диск
-      // без того, ради чего вызывался. Проверки ключа — ТЕ ЖЕ, что у
-      // координатора: удаление по мягкому правилу, запись по строгому
-      // (adversarial 28.08.2026: фолбэк не имел ни одной).
-      for (const op of ops) {
-        if (op.record === null) {
-          if (op.key !== "__proto__") delete base[op.key];
-          continue;
-        }
-        if (!isSafeNoteKey(op.key)) continue;
-        base[op.key] = op.record as NoteRecord;
-      }
+    const fresh = await loadNotesFromStore();
+    if (fresh.loadFailed) {
+      log.warn("player-notes", "фолбэк отменён: свежая карта не прочиталась");
+      return false;
     }
-    const raw = base;
+    if (fresh.migrated === false) {
+      // Перед нами ОБЪЕДИНЁННЫЙ ВИД (local + sync-мост), а не факт с диска.
+      // Записать его отсюда — значит выполнить миграцию из вкладки, мимо
+      // единственного писателя, и вдобавок без флага завершения: следующий
+      // запуск мигрировал бы снова поверх (SEC26-5, внешний аудит
+      // 28.08.2026). Пусть правка потеряется — она одна, а миграция
+      // одноразовая и необратимая.
+      log.warn("player-notes", "фолбэк отменён: хранилище ещё не мигрировано");
+      return false;
+    }
+    // Форма с диска не гарантирована: под ключом может лежать что угодно.
+    // Без проверки присваивание в примитив бросало TypeError МИМО отката —
+    // заметка оставалась на экране и не попадала на диск.
+    const raw: NotesMap =
+      fresh.notes && typeof fresh.notes === "object" && !Array.isArray(fresh.notes)
+        ? fresh.notes
+        : {};
+    // Свою правку доносим поверх свежей карты — иначе фолбэк запишет диск
+    // без того, ради чего вызывался. Проверки ключа — ТЕ ЖЕ, что у
+    // координатора: удаление по мягкому правилу, запись по строгому
+    // (adversarial 28.08.2026: фолбэк не имел ни одной).
+    for (const op of ops) {
+      if (op.record === null) {
+        if (op.key !== "__proto__") delete raw[op.key];
+        continue;
+      }
+      if (!isSafeNoteKey(op.key)) continue;
+      raw[op.key] = op.record as NoteRecord;
+    }
     // Нормализуем ТОЛЬКО затронутые записи (ревью 27.08.2026): полная
     // нормализация карты резала ЧУЖУЮ давнюю длинную заметку при сохранении
     // совсем другой — правка одного игрока портила данные другого.
@@ -444,88 +439,26 @@ export class NotesModel {
   }
 
   private async doMigrateToId(username: string, userId: number | string): Promise<void> {
-    const key = idKey(userId);
-
-    // Миграция — АВТОМАТИЧЕСКИЙ писатель всей карты (срабатывает без действий
-    // пользователя). Работаем со СВЕЖЕЙ картой с диска, а не со снапшотом
-    // памяти: иначе вкладка со старой памятью затирала бы заметку, только что
-    // сохранённую в другой вкладке (окно RMW сжимается с «минут» до мс).
-    const { notes: fresh, loadFailed } = await loadNotesFromStore();
-    if (loadFailed || !this.ctx.isActive()) return;
-
-    const lower = username.toLowerCase();
-    const freshNickKeys = Object.keys(fresh).filter(
-      (k) => !isIdKey(k) && k.toLowerCase() === lower,
-    );
-    if (freshNickKeys.length === 0) return;
-
-    const ts = (n: NoteRecord | string | undefined) =>
-      n && typeof n !== "string" && typeof n.timestamp === "number" ? n.timestamp : 0;
-    const toRecord = (n: NoteRecord | string): NoteRecord =>
-      typeof n === "string" ? { text: n, timestamp: 0 } : n;
-
-    // toRecord, а не typeof-проверка: строковая (легаси) запись под u:-ключом
-    // игнорировалась, ник-запись побеждала «по умолчанию» и затирала её текст
-    // без участия пользователя. Такие записи есть у реальных пользователей —
-    // прежние версии миграции клали строку под id-ключ (аудит безопасности
-    // 01.08.2026, находка 12; поймано ревью применения).
-    let best: NoteRecord | undefined =
-      fresh[key] !== undefined ? toRecord(fresh[key]) : undefined;
-    // Текст легаси-СТРОКИ под id-ключом: у неё ts=0, поэтому любая ник-запись
-    // с настоящим временем побеждает её по времени. Такой текст нельзя терять
-    // молча — ниже он дописывается в победителя наравне с ничьёй.
-    const idLegacyText = typeof fresh[key] === "string" ? (fresh[key] as string) : "";
-    const losers: NoteRecord[] = [];
-    for (const nk of freshNickKeys) {
-      const record = toRecord(fresh[nk]);
-      if (!best) {
-        best = record;
-      } else if (ts(record) > ts(best)) {
-        losers.push(best);
-        best = record;
-      } else {
-        losers.push(record);
-      }
+    if (!this.ctx.isActive()) return;
+    // Сливать можно только внутри очереди координатора, на свежем чтении.
+    // Фон не ответил: миграцию откладываем, заметка остаётся под ником.
+    let res: NotesResultMsg | undefined;
+    try {
+      res = await sendRuntime<NotesResultMsg>({ type: "notes_migrate_id", username, userId });
+    } catch (e) {
+      log.debug("player-notes", "notes coordinator unavailable", e);
     }
-    if (!best) return;
+    if (!res || typeof res.ok !== "boolean" || !res.ok || !this.ctx.isActive()) return;
+    if (res.notes) this.map = res.notes as NotesMap;
+    this.warnOnLossyWrite(res);
+    this.afterMigration(username);
+  }
 
-    // Ничья по времени (обе легаси, ts=0) с РАЗНЫМ текстом — не уничтожаем
-    // проигравший текст молча, а дописываем его в запись.
-    const winner: NoteRecord = { ...best };
-    for (const loser of losers) {
-      if (
-        loser.text &&
-        loser.text !== winner.text &&
-        (ts(loser) === ts(winner) || loser.text === idLegacyText)
-      ) {
-        winner.text = winner.text ? `${winner.text}\n[слито: ${loser.text}]` : loser.text;
-      }
-      // Цвет и метка наследуются БЕЗУСЛОВНО (непустое побеждает пустое):
-      // свежая запись без цвета почти всегда означает «заметку сохранили,
-      // пока цвет жил в другой записи этого же игрока», а не «цвет сняли».
-      // Раньше слияние молча теряло цвет навсегда (жалоба 31.07.2026:
-      // «~50 из 200 раскрашенных ников стали белыми»).
-      if (!winner.tag && loser.tag) winner.tag = loser.tag;
-      if (!winner.nickColor && loser.nickColor) winner.nickColor = loser.nickColor;
-    }
-
-    fresh[key] = { ...winner, ...withNickHistory(winner, username) };
-    for (const nk of freshNickKeys) delete fresh[nk];
-
-    const migrationOps: NoteOp[] = [
-      { key, record: fresh[key] as unknown },
-      ...freshNickKeys.map((nk) => ({ key: nk, record: null })),
-    ];
-    // fresh как карта фолбэка: она собрана из СВЕЖЕГО чтения диска, в
-    // отличие от this.notes. Память обновит сам commitNoteOps — картой от
-    // координатора или fresh (при фолбэке).
-    if (await this.commitOps(migrationOps, fresh)) {
-      log.debug("player-notes", "note migrated to id key", username, key);
-      this.ctx.onIndicatorsChanged();
-      this.ctx.onTagsChanged();
-      this.ctx.onPlayerTooltips(username);
-    }
-    // При неудаче записи память не трогаем вовсе — this.notes как была.
+  private afterMigration(username: string): void {
+    log.debug("player-notes", "note migrated to id key", username);
+    this.ctx.onIndicatorsChanged();
+    this.ctx.onTagsChanged();
+    this.ctx.onPlayerTooltips(username);
   }
 
   /**

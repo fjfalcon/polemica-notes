@@ -358,8 +358,10 @@ export interface GetContentVersionMsg {
  *
  * Спрашиваем саму вкладку, а не браузер: `tabs.get` успешен и для выгруженной
  * вкладки, и для той, чей content-скрипт осиротел после обновления расширения,
- * а `tab.url` без разрешения `tabs` приходит только для страниц сайта. Молчание
- * в ответ = владение свободно (ревью 02.08.2026).
+ * а `tab.url` без разрешения `tabs` приходит только для страниц сайта (ревью
+ * 02.08.2026). Отказ канала = вкладки нет, владение свободно; молчание до таймаута или
+ * ответ без булева `owning` = ответа нет, решает TTL записи владения
+ * (scene-owner.ts).
  */
 export interface ObsSceneOwnerPingMsg {
   type: "obs_scene_owner_ping";
@@ -426,6 +428,13 @@ export interface NotesMigrateMsg {
   type: "notes_migrate";
 }
 
+/** Слить ник-записи игрока в `u:<id>`. Ответ — NotesResultMsg. */
+export interface NotesMigrateIdMsg {
+  type: "notes_migrate_id";
+  username: string;
+  userId: number | string;
+}
+
 /** Попап собирается выгружать лог: вкладки дописывают хвост на диск. */
 export interface WsLogFlushMsg {
   type: "ws_log_flush";
@@ -460,6 +469,7 @@ export type ExtMessage =
   | NotesApplyOpsMsg
   | NotesTagOpsMsg
   | NotesMergeMsg
+  | NotesMigrateIdMsg
   | StartSearchMsg
   | StopSearchMsg
   | QueueGuardMsg
