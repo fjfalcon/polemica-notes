@@ -211,7 +211,7 @@ describe("автоскролл чата", () => {
     const geo = fakeGeometry(el);
     for (let i = 0; i < 8; i++) ws.onmessage?.({ data: privmsg(`m${i}`) });
     vi.advanceTimersByTime(50);
-    el.dispatchEvent(new Event("wheel"));
+    el.dispatchEvent(new WheelEvent("wheel", { deltaY: -120 }));
     geo.setTop(0);
     el.dispatchEvent(new Event("scroll"));
     ws.onmessage?.({ data: privmsg("новое") });
@@ -219,5 +219,63 @@ describe("автоскролл чата", () => {
     vi.advanceTimersByTime(50);
     expect(el.scrollTop, "история не уехала из-под глаз").toBe(0);
     expect(newBadge()).toContain("2 нов.");
+  });
+
+  /** Общий сценарий «длинное сообщение сдвигает прокрутку» после действия. */
+  function longMessageShift(ws: ReturnType<typeof enableFeature>, el: HTMLElement, geo: { setTop(v: number): void }) {
+    ws.onmessage?.({ data: privmsg("длинное сообщение на три строки") });
+    geo.setTop(el.scrollHeight - 200 - 60);
+    el.dispatchEvent(new Event("scroll"));
+    vi.advanceTimersByTime(50);
+  }
+
+  test("adversarial: рефлекторное колесо ВНИЗ у дна не отключает автоскролл", () => {
+    const ws = enableFeature();
+    ws.emitOpen();
+    ws.emitJoined();
+    const el = document.querySelector<HTMLElement>(".twitch-chat-messages")!;
+    const geo = fakeGeometry(el);
+    for (let i = 0; i < 8; i++) ws.onmessage?.({ data: privmsg(`m${i}`) });
+    vi.advanceTimersByTime(50);
+    el.scrollTop = el.scrollHeight;
+    el.dispatchEvent(new WheelEvent("wheel", { deltaY: 120 }));
+    longMessageShift(ws, el, geo);
+    expect(el.scrollTop).toBe(el.scrollHeight - 200);
+    expect(newBadge()).toBe("");
+  });
+
+  test("adversarial: pointerup не пришёл (полоса за окном) — флаг протухает, баг не возвращается", () => {
+    const ws = enableFeature();
+    ws.emitOpen();
+    ws.emitJoined();
+    const el = document.querySelector<HTMLElement>(".twitch-chat-messages")!;
+    const geo = fakeGeometry(el);
+    for (let i = 0; i < 8; i++) ws.onmessage?.({ data: privmsg(`m${i}`) });
+    vi.advanceTimersByTime(50);
+    el.scrollTop = el.scrollHeight;
+    el.dispatchEvent(new Event("pointerdown")); // pointerup так и не придёт
+    vi.advanceTimersByTime(11_000);
+    longMessageShift(ws, el, geo);
+    expect(el.scrollTop).toBe(el.scrollHeight - 200);
+    expect(newBadge()).toBe("");
+  });
+
+  test("adversarial: движение мыши без кнопок снимает залипшую «кнопку» сразу", () => {
+    const ws = enableFeature();
+    ws.emitOpen();
+    ws.emitJoined();
+    const el = document.querySelector<HTMLElement>(".twitch-chat-messages")!;
+    const geo = fakeGeometry(el);
+    for (let i = 0; i < 8; i++) ws.onmessage?.({ data: privmsg(`m${i}`) });
+    vi.advanceTimersByTime(50);
+    el.scrollTop = el.scrollHeight;
+    el.dispatchEvent(new Event("pointerdown"));
+    vi.advanceTimersByTime(1000); // намерение от нажатия уже истекло
+    const move = new Event("pointermove");
+    Object.defineProperty(move, "buttons", { value: 0 });
+    el.dispatchEvent(move);
+    longMessageShift(ws, el, geo);
+    expect(el.scrollTop).toBe(el.scrollHeight - 200);
+    expect(newBadge()).toBe("");
   });
 });

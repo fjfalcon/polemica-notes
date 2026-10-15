@@ -367,8 +367,15 @@ export function decideAtBottom(input: {
   return input.userIntent ? false : input.current;
 }
 
-/** Сколько живёт «намерение» после колеса/касания/клавиши (плавная прокрутка). */
+/** Сколько живёт «намерение» после колеса/касания (плавная прокрутка). */
 const SCROLL_INTENT_MS = 700;
+/**
+ * Потолок «кнопка зажата» (adversarial 15.10.2026): Chrome при перетаскивании
+ * НАТИВНОЙ полосы прокрутки может не прислать pointerup вовсе — особенно если
+ * отпустить мышь за окном браузера (OBS на втором мониторе). Залипший флаг
+ * навсегда вернул бы исходный баг.
+ */
+const POINTER_HOLD_MAX_MS = 10_000;
 
 class TwitchChatPanel extends FloatingPanel {
   private messagesEl: HTMLElement | null = null;
@@ -382,6 +389,8 @@ class TwitchChatPanel extends FloatingPanel {
   private userScrollIntentUntil = 0;
   /** Зажата кнопка мыши в ленте (перетаскивание полосы прокрутки). */
   private pointerHeld = false;
+  /** Когда кнопку зажали: залипший флаг протухает (POINTER_HOLD_MAX_MS). */
+  private pointerDownAt = 0;
   /** Вставка застала чат у дна — следующий кадр обязан докрутить. */
   private stickPending = false;
   private newBtn: HTMLElement | null = null;
@@ -490,7 +499,7 @@ class TwitchChatPanel extends FloatingPanel {
         messagesEl.scrollTop + messagesEl.clientHeight >= messagesEl.scrollHeight - 24;
       const next = decideAtBottom({
         nearBottom,
-        userIntent: this.pointerHeld || Date.now() < this.userScrollIntentUntil,
+        userIntent: this.userScrollIntent(),
         current: this.atBottom,
       });
       if (next === this.atBottom) return;
@@ -499,14 +508,28 @@ class TwitchChatPanel extends FloatingPanel {
       this.updateNewBtn();
     });
     // Намерение человека: только эти события имеют право увести чат со дна.
+    // Клавиш тут нет: у ленты нет фокуса, keydown на неё не приходит.
     const markIntent = () => {
       this.userScrollIntentUntil = Date.now() + SCROLL_INTENT_MS;
     };
-    messagesEl.addEventListener("wheel", markIntent, { passive: true });
+    // Только колесо ВВЕРХ: рефлекторное «колесо вниз» у самого дна не уход в
+    // историю, а с ним длинное сообщение снова отключало бы автоскролл.
+    messagesEl.addEventListener(
+      "wheel",
+      (e: WheelEvent) => {
+        if (e.deltaY < 0) markIntent();
+      },
+      { passive: true },
+    );
     messagesEl.addEventListener("touchmove", markIntent, { passive: true });
-    messagesEl.addEventListener("keydown", markIntent);
+    // Движение без зажатой кнопки — значит, её давно отпустили, даже если
+    // pointerup до нас не дошёл.
+    messagesEl.addEventListener("pointermove", (e: PointerEvent) => {
+      if (this.pointerHeld && e.buttons === 0) this.pointerHeld = false;
+    });
     messagesEl.addEventListener("pointerdown", () => {
       this.pointerHeld = true;
+      this.pointerDownAt = Date.now();
       markIntent();
       // Отпускание может случиться за пределами ленты (тянули полосу и
       // увели курсор) — слушаем документ, один раз.
@@ -661,6 +684,13 @@ class TwitchChatPanel extends FloatingPanel {
     super.unmount();
   }
 
+  /** Прокрутку сейчас ведёт человек (с протуханием залипшей кнопки). */
+  private userScrollIntent(): boolean {
+    const now = Date.now();
+    const held = this.pointerHeld && now - this.pointerDownAt < POINTER_HOLD_MAX_MS;
+    return held || now < this.userScrollIntentUntil;
+  }
+
   private scrollToBottomSoon(el: HTMLElement): void {
     if (this.scrollFrame !== null) return;
     this.scrollFrame = requestAnimationFrame(() => {
@@ -669,7 +699,7 @@ class TwitchChatPanel extends FloatingPanel {
       this.stickPending = false;
       if (!el.isConnected || !stick) return;
       // Человек за этот кадр сам ушёл со дна — его решение важнее снимка.
-      if (!this.atBottom && (this.pointerHeld || Date.now() < this.userScrollIntentUntil)) return;
+      if (!this.atBottom && this.userScrollIntent()) return;
       el.scrollTop = el.scrollHeight;
       if (!this.atBottom) {
         this.atBottom = true;
