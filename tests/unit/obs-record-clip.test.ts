@@ -116,6 +116,12 @@ class FakeObs {
   onerror: ((e: unknown) => void) | null = null;
 
   recording = false;
+  /** Recording paused in OBS. */
+  paused = false;
+  /** When the current output started; null for a recording the fake did not start. */
+  recordStartedAt: number | null = null;
+  /** Added to the reported outputDuration (negative: a newer, shorter recording). */
+  durationShiftMs = 0;
   replayActive = false;
   /** Следующий StopRecord отказывает (обрыв связи в момент выхода). */
   failNextStop = false;
@@ -123,6 +129,14 @@ class FakeObs {
   replayAllowed = true;
   params = new Map<string, string>([["Output/Mode", "Simple"]]);
   readonly requests: string[] = [];
+  /** Когда OBS шлёт событие остановки на НАШ StopRecord: до ответа, после или не шлёт. */
+  stopEvent: "none" | "before" | "after" = "none";
+  /** Позднее событие остановки ПРЕЖНЕЙ записи приходит во время следующего StartRecord. */
+  staleStopOnNextStart = false;
+  /** The new output stops while StartRecord is still answering. */
+  stopDuringNextStart = false;
+  /** Соединение рвётся сразу после ответа на следующий StartRecord. */
+  closeAfterNextStart = false;
 
   constructor(public readonly url: string) {
     FakeObs.last = this;
@@ -148,10 +162,27 @@ class FakeObs {
         responseData = { scenes: [], currentProgramSceneName: "Сцена" };
         break;
       case "GetRecordStatus":
-        responseData = { outputActive: this.recording };
+        responseData = {
+          outputActive: this.recording,
+          outputPaused: this.paused,
+          outputDuration:
+            this.recording && this.recordStartedAt !== null
+              ? Date.now() - this.recordStartedAt + this.durationShiftMs
+              : 0,
+        };
         break;
       case "StartRecord":
+        if (this.staleStopOnNextStart) {
+          this.staleStopOnNextStart = false;
+          this.emitStopped();
+        }
         this.recording = true;
+        this.recordStartedAt = Date.now();
+        if (this.stopDuringNextStart) {
+          this.stopDuringNextStart = false;
+          this.recording = false;
+          this.emitStopped();
+        }
         break;
       case "StopRecord":
         if (this.failNextStop) {
@@ -161,6 +192,8 @@ class FakeObs {
         }
         this.recording = false;
         responseData = { outputPath: "/rec/игра.mkv" };
+        if (this.stopEvent === "before") this.emitStopped();
+        if (this.stopEvent === "after") setTimeout(() => this.emitStopped(), 0);
         break;
       case "GetReplayBufferStatus":
         responseData = { outputActive: this.replayActive };
@@ -197,6 +230,10 @@ class FakeObs {
         },
       }),
     });
+    if (type === "StartRecord" && this.closeAfterNextStart) {
+      this.closeAfterNextStart = false;
+      this.close(1006);
+    }
   }
 
   close(code = 1000, reason = ""): void {
@@ -206,10 +243,54 @@ class FakeObs {
   hello(): void {
     this.onmessage?.({ data: JSON.stringify({ op: 0, d: { rpcVersion: 1 } }) });
   }
+
+  /** Стример нажал «Остановить запись» в OBS. */
+  recordStopped(): void {
+    this.recording = false;
+    this.emitStopped();
+  }
+
+  /** Событие RecordStateChanged: вывод записи остановлен. */
+  emitStopped(): void {
+    this.emitRecordState("OBS_WEBSOCKET_OUTPUT_STOPPED");
+  }
+
+  emitRecordState(outputState: string): void {
+    this.onmessage?.({
+      data: JSON.stringify({
+        op: 5,
+        d: {
+          eventType: "RecordStateChanged",
+          eventData: { outputActive: false, outputState },
+        },
+      }),
+    });
+  }
 }
+
+/** Флаг «запись наша»: время старта и соединение OBS, в котором она начата. */
+const OURS = expect.objectContaining({ startedAt: expect.any(Number) });
 
 async function flush(times = 40): Promise<void> {
   for (let i = 0; i < times; i++) await Promise.resolve();
+}
+
+/** Обрыв сокета и автопереподключение: новое соединение, тот же OBS (запись идёт дальше). */
+async function reconnect(old: FakeObs): Promise<FakeObs> {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    old.close(1006);
+    for (let i = 0; i < 120 && FakeObs.last === old; i++) await vi.advanceTimersByTimeAsync(1_000);
+  } finally {
+    vi.useRealTimers();
+  }
+  const next = FakeObs.last;
+  if (!next || next === old) throw new Error("background не переподключился");
+  next.recording = old.recording;
+  next.recordStartedAt = old.recordStartedAt;
+  next.hello();
+  await flush();
+  return next;
 }
 
 async function bootConnected(): Promise<FakeObs> {
@@ -263,7 +344,7 @@ describe("автозапись игр", () => {
     expect(res.success).toBe(true);
     expect(res.data?.started).toBe(true);
     expect(obs.recording).toBe(true);
-    expect(store.data.obs_auto_record_started).toBe(true);
+    expect(store.data.obs_auto_record_started).toEqual(OURS);
   });
 
   test("стример уже пишет сам — не присваиваем и потом НЕ останавливаем", async () => {
@@ -301,7 +382,7 @@ describe("автозапись игр", () => {
     const stop = await command("record_stop", undefined, 5);
     expect(stop.data?.ignored).toBe("other_room_tabs");
     expect(obs.recording, "запись продолжается для второй вкладки").toBe(true);
-    expect(store.data.obs_auto_record_started, "флаг не потерян").toBe(true);
+    expect(store.data.obs_auto_record_started, "флаг не потерян").toEqual(OURS);
   });
 
   test("усыплённая (discarded) вкладка комнатой не считается — запись не сиротеет", async () => {
@@ -346,7 +427,7 @@ describe("стражи владения записью (adversarial 26.08.2026)"
     obs.failNextStop = true;
     const stop = await command("record_stop");
     expect(stop.success).toBe(false);
-    expect(store.data.obs_auto_record_started, "флаг пережил неудачный стоп").toBe(true);
+    expect(store.data.obs_auto_record_started, "флаг пережил неудачный стоп").toEqual(OURS);
     // Повторный стоп (следующий переход/сверка) добивает.
     const retry = await command("record_stop");
     expect(retry.data?.stopped).toBe(true);
@@ -364,7 +445,7 @@ describe("стражи владения записью (adversarial 26.08.2026)"
     expect(stop.data?.stopped).toBe(true);
     expect(start.data?.started, "старт дождался стопа, а не увидел «already»").toBe(true);
     expect(obs.recording, "новая игра записывается").toBe(true);
-    expect(store.data.obs_auto_record_started).toBe(true);
+    expect(store.data.obs_auto_record_started).toEqual(OURS);
   });
 
   test("OBS-3: протухший флаг при ЧУЖОЙ записи чистится сверкой, чужое не трогается", async () => {
@@ -398,7 +479,7 @@ describe("стражи владения записью (adversarial 26.08.2026)"
     for (const fn of wiring.onAlarm) fn({ name: "polemica:obs-watchdog", scheduledTime: 0 });
     await new Promise((r) => setTimeout(r, 0));
     expect(obs.recording).toBe(true);
-    expect(store.data.obs_auto_record_started).toBe(true);
+    expect(store.data.obs_auto_record_started).toEqual(OURS);
   });
 
   test("OBS не подключён — новые команды отвечают по-русски, а не стектрейсом", async () => {
@@ -409,6 +490,383 @@ describe("стражи владения записью (adversarial 26.08.2026)"
     const res = await command("record_start");
     expect(res.success).toBe(false);
     expect(res.error).toBe("OBS не подключён");
+  });
+});
+
+describe("запись остановлена не нами", () => {
+  test("стример остановил нашу и начал свою — выход из комнаты её не трогает", async () => {
+    const obs = await bootConnected();
+    await command("record_start");
+    obs.recordStopped();
+    await flush();
+    obs.recording = true; // своя запись стримера, событие старта нам не важно
+    const stop = await command("record_stop");
+    expect(stop.data?.ignored).toBe("not_ours");
+    expect(obs.recording, "запись стримера жива").toBe(true);
+    expect(obs.requests).not.toContain("StopRecord");
+  });
+
+  test("реконнект не возобновляет запись, остановленную не нами", async () => {
+    const obs = await bootConnected();
+    await command("record_start");
+    obs.recordStopped();
+    await flush();
+    const res = await command("record_start", { reconnect: true });
+    expect(res.data?.ignored).toBe("manual_stop");
+    expect(obs.recording).toBe(false);
+  });
+
+  test("новый вход в комнату после такой остановки снова пишет", async () => {
+    const obs = await bootConnected();
+    await command("record_start");
+    obs.recordStopped();
+    await flush();
+    const res = await command("record_start");
+    expect(res.data?.started).toBe(true);
+    expect(obs.recording).toBe(true);
+    expect(store.data.obs_auto_record_started).toEqual(OURS);
+  });
+
+  test("OBS упал вместе с записью (события не было) — реконнект запись возобновляет", async () => {
+    const obs = await bootConnected();
+    await command("record_start");
+    obs.recording = false;
+    const res = await command("record_start", { reconnect: true });
+    expect(res.data?.started).toBe(true);
+    expect(obs.recording).toBe(true);
+  });
+
+  test("флаг из записи, стартовавшей во время StartRecord, устарел — новую метку не снимает", async () => {
+    const obs = await bootConnected();
+    obs.staleStopOnNextStart = true; // позднее событие прежней записи
+    const start = await command("record_start");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(start.data?.started).toBe(true);
+    expect(store.data.obs_auto_record_started).toEqual(OURS);
+    expect(store.data.obs_auto_record_manual_stop).toBeUndefined();
+  });
+});
+
+describe("свой StopRecord и его событие", () => {
+  test.each(["before", "after"] as const)("событие %s ответа — не ручная остановка", async (when) => {
+    const obs = await bootConnected();
+    await command("record_start");
+    obs.stopEvent = when;
+    const stop = await command("record_stop");
+    await new Promise((r) => setTimeout(r, 0));
+    await flush();
+    expect(stop.data?.stopped).toBe(true);
+    expect(store.data.obs_auto_record_manual_stop).toBeUndefined();
+    const again = await command("record_start", { reconnect: true });
+    expect(again.data?.started).toBe(true);
+  });
+
+  test("проваленный StopRecord не прикрывает последующую чужую остановку", async () => {
+    const obs = await bootConnected();
+    await command("record_start");
+    obs.failNextStop = true;
+    const stop = await command("record_stop");
+    expect(stop.success).toBe(false);
+    obs.recordStopped();
+    await flush();
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+    expect(store.data.obs_auto_record_manual_stop).toBe(true);
+  });
+
+  test.each(["before", "after"] as const)(
+    "own stop event %s the reply, then a new start: the new mark survives",
+    async (when) => {
+      const obs = await bootConnected();
+      await command("record_start");
+      obs.stopEvent = when;
+      await command("record_stop");
+      const start = await command("record_start");
+      await new Promise((r) => setTimeout(r, 0));
+      await flush();
+      expect(start.data?.started).toBe(true);
+      expect(store.data.obs_auto_record_started).toEqual(OURS);
+      expect(store.data.obs_auto_record_manual_stop).toBeUndefined();
+      const stop = await command("record_stop");
+      await new Promise((r) => setTimeout(r, 0));
+      await flush();
+      expect(stop.data?.stopped).toBe(true);
+      expect(obs.recording).toBe(false);
+    },
+  );
+
+  test("output stopped during StartRecord: no mark, and a later manual recording survives", async () => {
+    const obs = await bootConnected();
+    obs.stopDuringNextStart = true;
+    await command("record_start");
+    await flush();
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+    expect(store.data.obs_auto_record_manual_stop).toBe(true);
+    obs.recording = true;
+    const stop = await command("record_stop");
+    expect(stop.data?.ignored).toBe("not_ours");
+    expect(obs.recording).toBe(true);
+    expect(obs.requests).not.toContain("StopRecord");
+  });
+});
+
+describe("manual-stop suppression policy", () => {
+  test("a normal start from another tab clears suppression and starts once", async () => {
+    const obs = await bootConnected();
+    await command("record_start", undefined, 5);
+    obs.recordStopped();
+    await flush();
+    const resumed = await command("record_start", { reconnect: true }, 5);
+    expect(resumed.data?.ignored).toBe("manual_stop");
+    const fresh = await command("record_start", undefined, 9);
+    expect(fresh.data?.started).toBe(true);
+    expect(store.data.obs_auto_record_manual_stop).toBeUndefined();
+    const again = await command("record_start", { reconnect: true }, 5);
+    expect(again.data?.already).toBe(true);
+    expect(obs.requests.filter((r) => r === "StartRecord")).toHaveLength(2);
+  });
+
+  test("a normal start during the streamer's own recording clears suppression and claims nothing", async () => {
+    const obs = await bootConnected();
+    await command("record_start");
+    obs.recordStopped();
+    await flush();
+    obs.recording = true;
+    const res = await command("record_start", undefined, 9);
+    expect(res.data?.already).toBe(true);
+    expect(store.data.obs_auto_record_manual_stop).toBeUndefined();
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+    const stop = await command("record_stop", undefined, 9);
+    expect(stop.data?.ignored).toBe("not_ours");
+    expect(obs.recording).toBe(true);
+  });
+});
+
+describe("владение после смены соединения", () => {
+  test("reconnect, duration matches: ownership confirmed, the recording is stopped", async () => {
+    const first = await bootConnected();
+    await command("record_start");
+    const obs = await reconnect(first);
+    const stop = await command("record_stop");
+    expect(stop.data?.stopped).toBe(true);
+    expect(obs.recording).toBe(false);
+    expect(obs.requests).toContain("StopRecord");
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+  });
+
+  test("reconnect, duration mismatches (a newer recording): unconfirmed, left running", async () => {
+    const first = await bootConnected();
+    await command("record_start");
+    const obs = await reconnect(first);
+    obs.durationShiftMs = -60_000;
+    const stop = await command("record_stop");
+    expect(stop.data?.ignored).toBe("unconfirmed");
+    expect(obs.recording, "запись осталась стримеру").toBe(true);
+    expect(obs.requests).not.toContain("StopRecord");
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+  });
+
+  test("reconnect, recording paused: unconfirmed, left running", async () => {
+    const first = await bootConnected();
+    await command("record_start");
+    const obs = await reconnect(first);
+    obs.paused = true;
+    const stop = await command("record_stop");
+    expect(stop.data?.ignored).toBe("unconfirmed");
+    expect(obs.recording).toBe(true);
+    expect(obs.requests).not.toContain("StopRecord");
+  });
+
+  test("confirmed after a reconnect: the mark moves to the new session", async () => {
+    const first = await bootConnected();
+    await command("record_start");
+    const before = store.data.obs_auto_record_started as { startedAt: number; session: string };
+    const obs = await reconnect(first);
+    wiring.siteTabs = [{ id: 7, inRoom: true }];
+    for (const fn of wiring.onAlarm) fn({ name: "polemica:obs-watchdog", scheduledTime: 0 });
+    await new Promise((r) => setTimeout(r, 0));
+    await flush();
+    const after = store.data.obs_auto_record_started as { startedAt: number; session: string };
+    expect(after.startedAt).toBe(before.startedAt);
+    expect(after.session).not.toBe(before.session);
+    obs.recordStopped();
+    await flush();
+    expect(store.data.obs_auto_record_manual_stop).toBe(true);
+  });
+
+  test("a stop event against a mark from another session does not set manual-stop", async () => {
+    const obs = await bootConnected();
+    store.data.obs_auto_record_started = { startedAt: Date.now(), session: "old" };
+    obs.recordStopped();
+    await flush();
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+    expect(store.data.obs_auto_record_manual_stop).toBeUndefined();
+  });
+
+  test("a RecordStateChanged other than STOPPED is not a stop", async () => {
+    const obs = await bootConnected();
+    await command("record_start");
+    obs.recording = false;
+    obs.emitRecordState("OBS_WEBSOCKET_OUTPUT_STOPPING");
+    await flush();
+    expect(store.data.obs_auto_record_started).toEqual(OURS);
+    expect(store.data.obs_auto_record_manual_stop).toBeUndefined();
+  });
+
+  test("повторные obs_connected: старт после реконнекта идемпотентен", async () => {
+    const first = await bootConnected();
+    const obs = await reconnect(first);
+    const a = await command("record_start", { reconnect: true });
+    const b = await command("record_start", { reconnect: true });
+    expect(a.data?.started).toBe(true);
+    expect(b.data?.already).toBe(true);
+    expect(obs.requests.filter((r) => r === "StartRecord")).toHaveLength(1);
+  });
+
+  test("выход из комнаты во время старта после реконнекта сериализован", async () => {
+    const first = await bootConnected();
+    const obs = await reconnect(first);
+    const [start, stop] = await Promise.all([
+      command("record_start", { reconnect: true }),
+      command("record_stop"),
+    ]);
+    expect(start.data?.started).toBe(true);
+    expect(stop.data?.stopped).toBe(true);
+    expect(obs.recording).toBe(false);
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+  });
+
+  test.each([
+    ["`true` прежних версий", true],
+    ["чужая сессия", { startedAt: 1, session: "old" }],
+    ["время не число", { startedAt: Number.NaN, session: "old" }],
+    ["нет сессии", { startedAt: 1 }],
+  ])("метка без подтверждения (%s) запись не останавливает", async (_name, mark) => {
+    const obs = await bootConnected();
+    store.data.obs_auto_record_started = mark;
+    obs.recording = true;
+    const stop = await command("record_stop");
+    expect(stop.data?.ignored).toBe("unconfirmed");
+    expect(obs.recording).toBe(true);
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+  });
+});
+
+describe("сверка длительности всегда, и в том же соединении (ревью раунд 2)", () => {
+  type Mark = { startedAt: number; session: string };
+
+  test("стример остановил нашу и сразу начал свою, пока событие остановки ждёт очереди: её не трогаем", async () => {
+    const obs = await bootConnected();
+    await command("record_start");
+    const mark = store.data.obs_auto_record_started as Mark;
+    store.data.obs_auto_record_started = { ...mark, startedAt: mark.startedAt - 60_000 }; // наша шла минуту
+    obs.recordStopped();
+    obs.recording = true; // своя запись стримера, только что начата
+    obs.recordStartedAt = Date.now();
+    const stop = await command("record_stop");
+    expect(stop.data?.ignored).toBe("unconfirmed");
+    expect(obs.requests, "запись стримера не остановлена").not.toContain("StopRecord");
+    expect(obs.recording).toBe(true);
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+  });
+
+  test("`already` после реконнекта: метка переходит в новое соединение, остановка стримером ставит подавление", async () => {
+    const first = await bootConnected();
+    await command("record_start");
+    const before = store.data.obs_auto_record_started as Mark;
+    const obs = await reconnect(first);
+    const res = await command("record_start", { reconnect: true });
+    expect(res.data?.already).toBe(true);
+    const after = store.data.obs_auto_record_started as Mark;
+    expect(after.startedAt).toBe(before.startedAt);
+    expect(after.session).not.toBe(before.session);
+    obs.recordStopped();
+    await flush();
+    expect(store.data.obs_auto_record_manual_stop).toBe(true);
+    const again = await command("record_start", { reconnect: true });
+    expect(again.data?.ignored).toBe("manual_stop");
+    expect(obs.requests, "запись не возобновлена против воли стримера").not.toContain("StartRecord");
+  });
+
+  test("`already` после реконнекта на чужой записи: метка снята, выход её не останавливает", async () => {
+    const first = await bootConnected();
+    await command("record_start");
+    const obs = await reconnect(first);
+    obs.durationShiftMs = -60_000; // идёт другая, более новая запись
+    const res = await command("record_start", { reconnect: true });
+    expect(res.data?.already).toBe(true);
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+    const stop = await command("record_stop");
+    expect(stop.data?.ignored).toBe("not_ours");
+    expect(obs.recording).toBe(true);
+    expect(obs.requests).not.toContain("StopRecord");
+  });
+
+  test.each([
+    ["-4 с", -4_000, true],
+    ["+4 с", 4_000, true],
+    ["-6 с", -6_000, false],
+    ["+6 с", 6_000, false],
+  ])("граница допуска 5 с: расхождение %s", async (_name, shift, confirmed) => {
+    const first = await bootConnected();
+    await command("record_start");
+    const obs = await reconnect(first);
+    obs.durationShiftMs = shift;
+    const stop = await command("record_stop");
+    if (confirmed) {
+      expect(stop.data?.stopped).toBe(true);
+      expect(obs.recording).toBe(false);
+    } else {
+      expect(stop.data?.ignored).toBe("unconfirmed");
+      expect(obs.recording).toBe(true);
+      expect(obs.requests).not.toContain("StopRecord");
+    }
+  });
+
+  test.each([
+    ["60 с на двухчасовой записи (в пределах 1%)", -60_000, true],
+    ["90 с на двухчасовой записи (больше 1%)", -90_000, false],
+  ])("допуск растёт с длиной записи: %s", async (_name, shift, confirmed) => {
+    const first = await bootConnected();
+    await command("record_start");
+    const twoHours = 7_200_000;
+    const mark = store.data.obs_auto_record_started as Mark;
+    store.data.obs_auto_record_started = { ...mark, startedAt: mark.startedAt - twoHours };
+    first.recordStartedAt = (first.recordStartedAt ?? Date.now()) - twoHours;
+    const obs = await reconnect(first);
+    obs.durationShiftMs = shift;
+    const stop = await command("record_stop");
+    if (confirmed) {
+      expect(stop.data?.stopped).toBe(true);
+      expect(obs.recording).toBe(false);
+    } else {
+      expect(stop.data?.ignored).toBe("unconfirmed");
+      expect(obs.recording).toBe(true);
+    }
+  });
+
+  test("соединение оборвалось сразу после StartRecord: запись помечена и останавливается после реконнекта", async () => {
+    const first = await bootConnected();
+    first.closeAfterNextStart = true;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let start: Awaited<ReturnType<typeof command>>;
+    try {
+      start = await command("record_start");
+      for (let i = 0; i < 120 && FakeObs.last === first; i++) await vi.advanceTimersByTimeAsync(1_000);
+    } finally {
+      vi.useRealTimers();
+    }
+    const obs = FakeObs.last;
+    if (!obs || obs === first) throw new Error("background не переподключился");
+    obs.recording = first.recording;
+    obs.recordStartedAt = first.recordStartedAt;
+    obs.hello();
+    await flush();
+    expect(start.data?.started).toBe(true);
+    const stop = await command("record_stop");
+    expect(obs.requests, "наша запись не осиротела").toContain("StopRecord");
+    expect(stop.data?.stopped).toBe(true);
+    expect(obs.recording).toBe(false);
+    expect(store.data.obs_auto_record_started).toBeUndefined();
   });
 });
 

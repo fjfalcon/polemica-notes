@@ -6,12 +6,27 @@
  */
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-const sent = vi.hoisted(() => ({ commands: [] as string[] }));
+const sent = vi.hoisted(() => ({
+  commands: [] as string[],
+  data: [] as unknown[],
+  handlers: [] as ((msg: unknown) => unknown)[],
+  /** Background reply to record_stop. */
+  stopReply: { stopped: true } as Record<string, unknown>,
+}));
 
 vi.mock("@core/messaging", () => ({
-  sendRuntime: vi.fn(async (msg: { command: string }) => {
+  sendRuntime: vi.fn(async (msg: { command: string; data?: unknown }) => {
     sent.commands.push(msg.command);
+    sent.data.push(msg.data);
+    if (msg.command === "record_stop") return { success: true, data: sent.stopReply };
     return { success: true, data: { started: true } };
+  }),
+  onMessage: vi.fn((fn: (msg: unknown) => unknown) => {
+    sent.handlers.push(fn);
+    return () => {
+      const i = sent.handlers.indexOf(fn);
+      if (i >= 0) sent.handlers.splice(i, 1);
+    };
   }),
 }));
 vi.mock("@core/log", () => ({
@@ -20,14 +35,48 @@ vi.mock("@core/log", () => ({
 vi.mock("@core/toast", () => ({ showToast: vi.fn(), clearToasts: vi.fn() }));
 
 import { obsRecordFeature, syncObsRecordRoute } from "@content/features/obs-record";
+import { showToast } from "@core/toast";
 import type { FeatureContext } from "@core/feature";
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
+
+/** Фон разослал «OBS подключился» (Identified, в том числе после реконнекта). */
+function obsConnected(): void {
+  for (const fn of [...sent.handlers]) fn({ type: "obs_event", eventType: "obs_connected" });
+}
 
 beforeEach(() => {
   obsRecordFeature.disable();
   syncObsRecordRoute(false);
   sent.commands.length = 0;
+  sent.data.length = 0;
+  sent.stopReply = { stopped: true };
+  vi.mocked(showToast).mockClear();
+});
+
+describe("stop not confirmed by the background", () => {
+  test("unconfirmed: the streamer gets a toast to stop the recording in OBS", async () => {
+    obsRecordFeature.enable({ settings: {} } as unknown as FeatureContext);
+    syncObsRecordRoute(true);
+    await flush();
+    vi.mocked(showToast).mockClear();
+    sent.stopReply = { ignored: "unconfirmed" };
+    syncObsRecordRoute(false);
+    await flush();
+    expect(showToast).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(showToast).mock.calls[0][0]).toContain("OBS");
+  });
+
+  test("other ignore reasons stay silent", async () => {
+    obsRecordFeature.enable({ settings: {} } as unknown as FeatureContext);
+    syncObsRecordRoute(true);
+    await flush();
+    vi.mocked(showToast).mockClear();
+    sent.stopReply = { ignored: "not_ours" };
+    syncObsRecordRoute(false);
+    await flush();
+    expect(showToast).not.toHaveBeenCalled();
+  });
 });
 
 describe("автозапись по маршруту", () => {
@@ -64,5 +113,48 @@ describe("автозапись по маршруту", () => {
     obsRecordFeature.disable();
     await flush();
     expect(sent.commands).toEqual(["record_start", "record_stop"]);
+  });
+});
+
+describe("OBS подключился позже входа в комнату", () => {
+  test("obs_connected в комнате повторяет старт с пометкой reconnect", async () => {
+    obsRecordFeature.enable({ settings: {} } as unknown as FeatureContext);
+    syncObsRecordRoute(true); // старт ушёл, когда OBS ещё не был запущен
+    await flush();
+    obsConnected();
+    await flush();
+    expect(sent.commands).toEqual(["record_start", "record_start"]);
+    expect(sent.data[1]).toEqual({ reconnect: true });
+  });
+
+  test("каждое повторное obs_connected шлёт повтор (дубли гасит фон)", async () => {
+    obsRecordFeature.enable({ settings: {} } as unknown as FeatureContext);
+    syncObsRecordRoute(true);
+    await flush();
+    obsConnected();
+    obsConnected();
+    await flush();
+    expect(sent.commands).toEqual(["record_start", "record_start", "record_start"]);
+    expect(sent.data.slice(1)).toEqual([{ reconnect: true }, { reconnect: true }]);
+  });
+
+  test("вне комнаты obs_connected команд не рождает", async () => {
+    obsRecordFeature.enable({ settings: {} } as unknown as FeatureContext);
+    obsConnected();
+    await flush();
+    expect(sent.commands).toEqual([]);
+  });
+
+  test("disable снимает подписку", async () => {
+    obsRecordFeature.enable({ settings: {} } as unknown as FeatureContext);
+    syncObsRecordRoute(true);
+    await flush();
+    obsRecordFeature.disable();
+    await flush();
+    sent.commands.length = 0;
+    obsConnected();
+    await flush();
+    expect(sent.commands).toEqual([]);
+    expect(sent.handlers).toEqual([]);
   });
 });
