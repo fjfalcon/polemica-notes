@@ -537,6 +537,23 @@ describe("mergeNickKeysIntoId: мусор под ник-ключом и исто
     expect(record?.nicks).toHaveLength(MAX_NICK_HISTORY);
     expect(record?.nicks).toEqual(["Петя", "W1", "W2", "L1", "L2"]);
   });
+
+  test("объект без строкового text не становится победителем", () => {
+    const notes = { "u:42": rec("на месте", NOW - 5), Аня: { text: 42, timestamp: NOW } } as unknown as NotesMap;
+    expect(mergeNickKeysIntoId(notes, "Аня", 42)?.record.text).toBe("на месте");
+  });
+
+  test("нестроковые nicks победителя отбрасываются без исключения", () => {
+    const notes = {
+      Аня: { text: "заметка", timestamp: NOW - 5, nicks: [null, 42, "Вася"] },
+      аня: { text: "старая", timestamp: NOW - 10, nicks: {} },
+    } as unknown as NotesMap;
+    let merged: ReturnType<typeof mergeNickKeysIntoId> = null;
+    expect(() => {
+      merged = mergeNickKeysIntoId(notes, "Аня", 42);
+    }).not.toThrow();
+    expect(merged!.record.nicks).toEqual(["Вася"]);
+  });
 });
 
 describe("round-trip своего бэкапа не режет заметку (ревью 27.08.2026)", () => {

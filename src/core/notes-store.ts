@@ -328,10 +328,8 @@ export function mergeNickKeysIntoId(
 
   const ts = (n: NoteRecord | string | undefined) =>
     n && typeof n !== "string" && typeof n.timestamp === "number" ? n.timestamp : 0;
-  const toRecord = (n: unknown): NoteRecord | undefined => {
-    if (typeof n === "string") return { text: n, timestamp: 0 };
-    return n && typeof n === "object" && !Array.isArray(n) ? (n as NoteRecord) : undefined;
-  };
+  const toRecord = (n: unknown): NoteRecord | undefined =>
+    normalizeNoteRecord(n, Number.POSITIVE_INFINITY) ?? undefined;
   const aliasesOf = (r: NoteRecord): string[] =>
     [r.nick, ...(Array.isArray(r.nicks) ? r.nicks : [])].filter(
       (n): n is string => typeof n === "string" && n.length > 0,
