@@ -5,8 +5,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const store = vi.hoisted(() => ({ data: {} as Record<string, unknown>, sets: 0 }));
+const runtime = vi.hoisted(() => ({ id: "ext" as string | undefined }));
 vi.mock("@core/env", () => ({
   browser: {
+    runtime,
     storage: {
       local: {
         get: vi.fn(async (defaults: Record<string, unknown>) => {
@@ -29,6 +31,7 @@ vi.mock("@core/log", () => ({
 import { browser } from "@core/env";
 import { log } from "@core/log";
 import {
+  MAX_ENTRIES,
   SEEN_PLAYERS_KEY,
   flushSeenPlayersForTest,
   mergeSeen,
@@ -39,6 +42,7 @@ import {
 beforeEach(() => {
   store.data = {};
   store.sets = 0;
+  runtime.id = "ext";
 });
 
 describe("mergeSeen", () => {
@@ -172,5 +176,72 @@ describe("сбои записи справочника", () => {
     rememberSeenPlayers([{ nick: "B", id: "2" }]);
     await flushSeenPlayersForTest();
     expect(await keys()).toEqual(["a", "b"]);
+  });
+
+  test("осиротевшая вкладка не повторяет запись и бросает очередь", async () => {
+    getMock.mockImplementationOnce(async () => {
+      runtime.id = undefined;
+      throw new Error("Extension context invalidated.");
+    });
+    rememberSeenPlayers([{ nick: "A", id: "1" }]);
+    await vi.advanceTimersByTimeAsync(2000);
+    const calls = getMock.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(getMock.mock.calls.length).toBe(calls);
+    runtime.id = "ext";
+    rememberSeenPlayers([{ nick: "B", id: "2" }]);
+    await flushSeenPlayersForTest();
+    expect(await keys()).toEqual(["b"]);
+  });
+
+  test("повторы с экспоненциальной паузой до 60 с и одним предупреждением за серию", async () => {
+    vi.mocked(log.warn).mockClear();
+    setMock.mockRejectedValue(new Error("quota"));
+    try {
+      rememberSeenPlayers([{ nick: "A", id: "1" }]);
+      const attempts: number[] = [];
+      let t = 0;
+      for (let i = 0; i < 9; i++) {
+        const before = setMock.mock.calls.length;
+        while (setMock.mock.calls.length === before) {
+          await vi.advanceTimersByTimeAsync(1000);
+          t += 1000;
+        }
+        attempts.push(t);
+      }
+      const gaps = attempts.slice(1).map((v, i) => v - attempts[i]);
+      expect(gaps).toEqual([2000, 4000, 8000, 16000, 32000, 60000, 60000, 60000]);
+      expect(log.warn).toHaveBeenCalledTimes(1);
+    } finally {
+      setMock.mockReset();
+      setMock.mockImplementation(async (patch: Record<string, unknown>) => {
+        store.sets++;
+        Object.assign(store.data, patch);
+      });
+    }
+    await flushSeenPlayersForTest();
+    expect(await keys()).toEqual(["a"]);
+  });
+
+  test("очередь при сбоях схлопывается по нику и не растёт выше потолка", async () => {
+    setMock.mockRejectedValueOnce(new Error("quota"));
+    rememberSeenPlayers([{ nick: "Лиса", id: "5" }]);
+    await vi.advanceTimersByTimeAsync(2000);
+    rememberSeenPlayers([{ nick: "лиса", id: "7" }]);
+    rememberSeenPlayers(
+      Array.from({ length: MAX_ENTRIES + 10 }, (_, i) => ({ nick: `p${i}`, id: `x${i}` })),
+    );
+    await flushSeenPlayersForTest();
+    const saved = store.data[SEEN_PLAYERS_KEY] as Record<string, { id: string }>;
+    expect(Object.keys(saved)).toHaveLength(MAX_ENTRIES);
+    expect(saved["лиса"]).toBeUndefined();
+    expect(saved[`p${MAX_ENTRIES + 9}`]).toBeDefined();
+  });
+
+  test("зависшее хранилище не блокирует очередь сбросов", async () => {
+    getMock.mockImplementationOnce(() => new Promise(() => {}));
+    rememberSeenPlayers([{ nick: "A", id: "1" }]);
+    await vi.advanceTimersByTimeAsync(2000 + 10_000 + 2000);
+    expect(await keys()).toEqual(["a"]);
   });
 });

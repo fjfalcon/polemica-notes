@@ -12,12 +12,15 @@
  */
 import { browser } from "./env";
 import { log } from "./log";
+import { isContextInvalidated } from "./context";
 
 export const SEEN_PLAYERS_KEY = "pn_seen_players";
 /** Потолок записей: ~3000 × ~60 байт ≈ 180 КБ — мелочь для storage.local. */
 export const MAX_ENTRIES = 3000;
 /** Склейка записей: стол из 10 игроков — одна запись на диск, не десять. */
 const FLUSH_DELAY_MS = 2000;
+const MAX_RETRY_DELAY_MS = 60_000;
+const STORAGE_TIMEOUT_MS = 10_000;
 
 export interface SeenPlayer {
   /** Ник в исходном регистре (последний виденный). */
@@ -87,12 +90,36 @@ export async function readSeenPlayers(): Promise<SeenMap> {
   }
 }
 
-let pending: Array<{ nick: string; id: string }> = [];
+type Entry = { nick: string; id: string };
+
+let pending = new Map<string, Entry>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushChain: Promise<void> = Promise.resolve();
+let failures = 0;
 
-function scheduleFlush(): void {
-  if (!flushTimer) flushTimer = setTimeout(() => void flush(), FLUSH_DELAY_MS);
+function enqueue(entries: Iterable<Entry>): void {
+  for (const e of entries) {
+    const key = e.nick.trim().toLowerCase();
+    if (!key || !e.id) continue;
+    pending.delete(key);
+    pending.set(key, e);
+  }
+  for (const key of pending.keys()) {
+    if (pending.size <= MAX_ENTRIES) break;
+    pending.delete(key);
+  }
+}
+
+function scheduleFlush(delay = FLUSH_DELAY_MS): void {
+  if (!flushTimer) flushTimer = setTimeout(() => void flush(), delay);
+}
+
+function withTimeout<T>(p: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("storage timeout")), STORAGE_TIMEOUT_MS);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
 function flush(): Promise<void> {
@@ -103,23 +130,31 @@ function flush(): Promise<void> {
 
 async function writeBatch(): Promise<void> {
   const batch = pending;
-  pending = [];
-  if (batch.length === 0) return;
+  pending = new Map();
+  if (batch.size === 0 || isContextInvalidated()) return;
   try {
     // Чтение прямо перед записью: другая вкладка могла дописать своё.
-    const merged = mergeSeen(await loadSeenPlayers(), batch, Date.now());
-    await browser.storage.local.set({ [SEEN_PLAYERS_KEY]: merged });
+    const merged = mergeSeen(await withTimeout(loadSeenPlayers()), [...batch.values()], Date.now());
+    await withTimeout(browser.storage.local.set({ [SEEN_PLAYERS_KEY]: merged }));
+    failures = 0;
   } catch (e) {
-    pending = batch.concat(pending);
-    scheduleFlush();
-    log.warn("seen-players", "справочник не сохранён", e);
+    if (isContextInvalidated()) {
+      pending.clear();
+      return;
+    }
+    const newer = pending;
+    pending = batch;
+    enqueue(newer.values());
+    failures++;
+    scheduleFlush(Math.min(FLUSH_DELAY_MS * 2 ** (failures - 1), MAX_RETRY_DELAY_MS));
+    if (failures === 1) log.warn("seen-players", "справочник не сохранён", e);
   }
 }
 
 /** Запомнить игроков стола. Запись склеивается и уходит одним set(). */
 export function rememberSeenPlayers(entries: ReadonlyArray<{ nick: string; id: string }>): void {
-  if (entries.length === 0) return;
-  pending.push(...entries);
+  if (entries.length === 0 || isContextInvalidated()) return;
+  enqueue(entries);
   scheduleFlush();
 }
 
