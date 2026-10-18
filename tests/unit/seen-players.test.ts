@@ -244,4 +244,26 @@ describe("сбои записи справочника", () => {
     await vi.advanceTimersByTimeAsync(2000 + 10_000 + 2000);
     expect(await keys()).toEqual(["a"]);
   });
+
+  test("зависшая запись не перекрывается повтором до своего завершения", async () => {
+    setMock.mockClear();
+    let release!: () => void;
+    setMock.mockImplementationOnce(
+      (patch: Record<string, unknown>) =>
+        new Promise<void>((r) => {
+          release = () => {
+            Object.assign(store.data, patch);
+            r();
+          };
+        }),
+    );
+    rememberSeenPlayers([{ nick: "A", id: "1" }]);
+    await vi.advanceTimersByTimeAsync(2000 + 10_000 + 120_000);
+    expect(setMock).toHaveBeenCalledTimes(1);
+    release();
+    await settle();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(setMock).toHaveBeenCalledTimes(2);
+    expect(await keys()).toEqual(["a"]);
+  });
 });

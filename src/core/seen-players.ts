@@ -21,6 +21,7 @@ export const MAX_ENTRIES = 3000;
 const FLUSH_DELAY_MS = 2000;
 const MAX_RETRY_DELAY_MS = 60_000;
 const STORAGE_TIMEOUT_MS = 10_000;
+const STORAGE_TIMEOUT = new Error("storage timeout");
 
 export interface SeenPlayer {
   /** Ник в исходном регистре (последний виденный). */
@@ -96,6 +97,7 @@ let pending = new Map<string, Entry>();
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let flushChain: Promise<void> = Promise.resolve();
 let failures = 0;
+let stalledWrite: Promise<void> | null = null;
 
 function enqueue(entries: Iterable<Entry>): void {
   for (const e of entries) {
@@ -117,7 +119,7 @@ function scheduleFlush(delay = FLUSH_DELAY_MS): void {
 function withTimeout<T>(p: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("storage timeout")), STORAGE_TIMEOUT_MS);
+    timer = setTimeout(() => reject(STORAGE_TIMEOUT), STORAGE_TIMEOUT_MS);
   });
   return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
@@ -129,13 +131,26 @@ function flush(): Promise<void> {
 }
 
 async function writeBatch(): Promise<void> {
+  if (stalledWrite) return;
   const batch = pending;
   pending = new Map();
   if (batch.size === 0 || isContextInvalidated()) return;
   try {
     // Чтение прямо перед записью: другая вкладка могла дописать своё.
     const merged = mergeSeen(await withTimeout(loadSeenPlayers()), [...batch.values()], Date.now());
-    await withTimeout(browser.storage.local.set({ [SEEN_PLAYERS_KEY]: merged }));
+    const write = browser.storage.local.set({ [SEEN_PLAYERS_KEY]: merged });
+    try {
+      await withTimeout(write);
+    } catch (e) {
+      if (e !== STORAGE_TIMEOUT) throw e;
+      stalledWrite = write
+        .catch(() => undefined)
+        .finally(() => {
+          stalledWrite = null;
+          scheduleFlush();
+        });
+      throw e;
+    }
     failures = 0;
   } catch (e) {
     if (isContextInvalidated()) {
