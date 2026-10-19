@@ -700,14 +700,17 @@ async function handleObsQuery(
           // и метка переходит в текущее соединение: иначе её остановка стримером
           // не поставила бы подавление, и следующий реконнект запустил бы запись снова.
           // Чужая (метки нет или она не подтвердилась — стример пишет сам) — не
-          // присваиваем и не трогаем; неподтверждённую метку снимаем.
+          // присваиваем и не трогаем; неподтверждённую метку снимаем и ставим
+          // подавление: когда стример её остановит, реконнект в этой комнате не
+          // должен запускать новую. Обычный вход в комнату подавление снимает.
           const st = (await browser.storage.local.get({ [OBS_AUTO_RECORD_KEY]: null })) as Record<
             string,
             unknown
           >;
           const mark = st[OBS_AUTO_RECORD_KEY];
-          if (mark != null && !(await confirmOwnership(mark))) {
-            await browser.storage.local.remove(OBS_AUTO_RECORD_KEY);
+          if (mark == null || !(await confirmOwnership(mark))) {
+            if (mark != null) await browser.storage.local.remove(OBS_AUTO_RECORD_KEY);
+            await browser.storage.local.set({ [OBS_AUTO_RECORD_MANUAL_STOP_KEY]: true });
           }
           return { already: true };
         }

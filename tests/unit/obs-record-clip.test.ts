@@ -625,7 +625,7 @@ describe("manual-stop suppression policy", () => {
     expect(obs.requests.filter((r) => r === "StartRecord")).toHaveLength(2);
   });
 
-  test("a normal start during the streamer's own recording clears suppression and claims nothing", async () => {
+  test("обычный старт во время записи стримера ничего не присваивает и ставит подавление", async () => {
     const obs = await bootConnected();
     await command("record_start");
     obs.recordStopped();
@@ -633,7 +633,7 @@ describe("manual-stop suppression policy", () => {
     obs.recording = true;
     const res = await command("record_start", undefined, 9);
     expect(res.data?.already).toBe(true);
-    expect(store.data.obs_auto_record_manual_stop).toBeUndefined();
+    expect(store.data.obs_auto_record_manual_stop).toBe(true);
     expect(store.data.obs_auto_record_started).toBeUndefined();
     const stop = await command("record_stop", undefined, 9);
     expect(stop.data?.ignored).toBe("not_ours");
@@ -674,6 +674,35 @@ describe("владение после смены соединения", () => {
     expect(stop.data?.ignored).toBe("unconfirmed");
     expect(obs.recording).toBe(true);
     expect(obs.requests).not.toContain("StopRecord");
+  });
+
+  test("своя запись на паузе не подтвердилась после реконнекта: после остановки стримером реконнект не пишет", async () => {
+    const first = await bootConnected();
+    await command("record_start");
+    const obs = await reconnect(first);
+    obs.paused = true;
+    const res = await command("record_start", { reconnect: true });
+    expect(res.data?.already).toBe(true);
+    expect(store.data.obs_auto_record_started).toBeUndefined();
+    obs.recordStopped();
+    await flush();
+    const again = await command("record_start", { reconnect: true });
+    expect(again.data?.ignored).toBe("manual_stop");
+    expect(obs.recording).toBe(false);
+    expect(obs.requests).not.toContain("StartRecord");
+  });
+
+  test("запись стримера шла до входа в комнату: после её остановки реконнект не пишет", async () => {
+    const obs = await bootConnected();
+    obs.recording = true;
+    const res = await command("record_start");
+    expect(res.data?.already).toBe(true);
+    obs.recordStopped();
+    await flush();
+    const again = await command("record_start", { reconnect: true });
+    expect(again.data?.ignored).toBe("manual_stop");
+    expect(obs.recording).toBe(false);
+    expect(obs.requests).not.toContain("StartRecord");
   });
 
   test("confirmed after a reconnect: the mark moves to the new session", async () => {
