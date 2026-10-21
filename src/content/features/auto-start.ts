@@ -31,6 +31,7 @@ import { SITE, TEXT, OWN, classifyPhaseText, endedScreenVisible, SITE_CLASS } fr
 import { isAutoAcceptSuppressed } from "../auto-accept-gate";
 import { noteAutoAcceptDispatched } from "./queue-requeue";
 import type { Feature, FeatureContext } from "@core/feature";
+import { isGameRoomPath } from "@shared/routes";
 
 const SCOPE = "auto-start";
 
@@ -542,6 +543,7 @@ function isRolesHiddenByCSS(): boolean {
 
 /** Показать всё НАШЕ: CSS и легаси inline-слой. Пин obs-панели — её дело. */
 function showAllRoles(): void {
+  lastOurShowAt = Date.now();
   showAllRolesCSS();
   applyInlineRoleVisibility(getRoleVisibilityTargets(), true);
 }
@@ -564,15 +566,23 @@ function removeRoleDisplayOverride(): void {
 
 /** Флаг сайта, каким мы его видели последним (null — ролей ещё не было). */
 let siteFlag: boolean | null = null;
-/** Последнее действие игрока (клик, клавиша) — смена флага сайта = его решение. */
-let lastUserInputAt = 0;
+/**
+ * Последняя КОМАНДА ролей сайту от игрока: его D/Ctrl+D, дошедшие до сайта
+ * (наш роутер их не забрал), и клик по пункту меню «Скрыть/Показать роли».
+ * Только она делает смену флага решением игрока — прежде годился любой клик
+ * рядом по времени (внешний аудит №3, §4 п.5).
+ */
+let lastSiteRoleCommandAt = 0;
+/** Когда НАШ слой последний раз показал роли (D, ночной показ, nightShow). */
+let lastOurShowAt = 0;
 /**
  * Окно «смена флага — действие игрока». Флаг сайт сам не меняет, кроме
  * разового переворота у зрителя с canSeeRolesAsViewer (подключение к
  * комнате) — поэтому окно короткое.
  */
 const USER_INITIATED_MS = 700;
-let onUserInput: (() => void) | null = null;
+let onSiteCommandKey: ((e: Event) => void) | null = null;
+let onSiteCommandClick: ((e: Event) => void) | null = null;
 let unsubRoleDomImmediate: (() => void) | null = null;
 
 function readSiteFlag(): boolean | null {
@@ -593,18 +603,32 @@ function syncSiteFlag(): void {
   const first = siteFlag === null;
   siteFlag = flag;
   if (first && flag) return;
-  const byUser = !first && Date.now() - lastUserInputAt < USER_INITIATED_MS;
+  // Первая увиденная роль смонтирована уже скрытой: флаг сайта мог быть
+  // выключен ДО нашего последнего показа (Ctrl+D в лобби, потом наш D;
+  // наш ночной показ до раздачи) — тогда это не новое решение, и более
+  // новый показ стоит (внешний аудит №3, H02). Команда ролей сайту после
+  // нашего показа — решение игрока, принимаем.
+  if (first && lastOurShowAt > 0 && lastSiteRoleCommandAt <= lastOurShowAt) return;
+  const byUser = Date.now() - lastSiteRoleCommandAt < USER_INITIATED_MS;
   if (!flag) adoptSiteDecision(false, byUser);
   else if (byUser) adoptSiteDecision(true, true);
 }
 
 function adoptSiteDecision(show: boolean, byUser: boolean): void {
   if (byUser) lastManualRoleActionAt = Date.now();
+  // Скрытие увидели поздно (ролей ещё не было), но команду игрок отдал —
+  // решение датируется ею: ночная автоматика его не переигрывает (аудит №3).
+  else if (!show && lastSiteRoleCommandAt > lastManualRoleActionAt) {
+    lastManualRoleActionAt = lastSiteRoleCommandAt;
+  }
   if (peeking) {
     // Под V решение применится на отпускании.
     if (show) {
       peekRestoreHidden = false;
       peekRestoreInline = false;
+      // И CSS, поставленный уже ПОД V (наступил день): иначе отпускание его не
+      // снимало, и показ игрока терялся (внешний аудит №3, H01).
+      showAllRolesCSS();
     } else {
       peekRestoreHidden = true;
       peekRestoreReason = "manual";
@@ -627,8 +651,51 @@ function adoptSiteDecision(show: boolean, byUser: boolean): void {
   }
 }
 
+/**
+ * Новая игра в ТОМ ЖЕ документе (SPA-переход поиск → комната): прежде
+ * состояние прошлой игры (показанные D роли, «ручное» этой ночи) переезжало
+ * в новую, и авто-скрытие не перевзводилось — раздача шла с открытыми
+ * ролями (внешний аудит №3, §4 п.7). Проверка — в немедленном подписчике,
+ * до монтирования ролей новой игры.
+ */
+let lastGamePath: string | null = null;
+
+function checkGameRoute(): void {
+  const path = location.pathname;
+  if (!isGameRoomPath(path) || path === lastGamePath) return;
+  const fresh = lastGamePath === null;
+  lastGamePath = path;
+  if (fresh) return;
+  log.info(SCOPE, "новая игра в том же документе — состояние скрытия ролей сброшено");
+  lastManualRoleActionAt = 0;
+  lastSiteRoleCommandAt = 0;
+  lastOurShowAt = 0;
+  siteFlag = null;
+  sceneHide = null;
+  obsNightSince = null;
+  pendingNightShowSince = null;
+  rolePhaseInitialized = false;
+  lastDetectedRolePhase = null;
+  if (cfg.autoHideRoles) hideAllRolesCSS("auto");
+}
+
 /** Немедленный подписчик (до кадра): смена display ролей или новые узлы. */
 function onRoleDomImmediate(muts: MutationRecord[]): void {
+  checkGameRoute();
+  // Смена этапа (текст/класс .stage/.substage) — фаза сразу, до кадра:
+  // прежде её видел только тик интервала, и в начале дня роли до ~1,15 с
+  // оставались открытыми (случайные сценарии 21.10.2026).
+  // Под V — тоже (как тик интервала): день прячет и под клавишей (fail-safe).
+  if (cfg.rolePhaseSwitch) {
+    for (const m of muts) {
+      const t = m.target as Element;
+      const el = t.nodeType === 1 ? t : t.parentElement;
+      if (el?.closest?.(SITE.stage)) {
+        applyRolePhase(detectRolePhase());
+        break;
+      }
+    }
+  }
   for (const m of muts) {
     const relevant =
       m.type === "attributes"
@@ -701,12 +768,22 @@ export function shouldRehideAfterPeek(opts: {
 function nightShowDue(): boolean {
   // При автосценах ночной показ ведёт OBS: его ночь — с первого nightShow
   // (подтверждённая ночная сцена), а не с распознавания фазы auto-start.
-  if (obsAutoScenesActive()) return obsNightSince !== null && lastManualRoleActionAt < obsNightSince;
-  return (
-    cfg.rolePhaseSwitch &&
-    lastDetectedRolePhase === "night" &&
-    lastManualRoleActionAt < nightAutoShowStartedAt
-  );
+  if (obsAutoScenesActive()) return obsNightSince !== null && manualBeforeNight(obsNightSince);
+  return cfg.rolePhaseSwitch && lastDetectedRolePhase === "night" && manualBeforeNight(nightAutoShowStartedAt);
+}
+
+/**
+ * Запас на распознавание фазы: ночь в игре начинается РАНЬШЕ, чем её видит
+ * детектор (интервал 1 с + дребезг 150 мс; у obs-panel — подтверждение
+ * 150+350 мс). Ручное решение в этом окне — решение ЭТОЙ ночи: прежде D,
+ * нажатый между настоящим началом ночи и распознаванием, считался «вчерашним»,
+ * и ночной показ открывал спрятанное (внешний аудит №3, B02).
+ */
+const PHASE_RECOGNITION_SLACK_MS = 2500;
+
+/** Последнее ручное решение было ДО начала этой ночи (с запасом). */
+function manualBeforeNight(nightStart: number): boolean {
+  return lastManualRoleActionAt < nightStart - PHASE_RECOGNITION_SLACK_MS;
 }
 
 /**
@@ -1012,7 +1089,7 @@ function syncRolesWithSceneGate(
   if (peeking) {
     if (reason === "nightShow") {
       pendingNightShowSince = info?.nightSince ?? Date.now();
-      obsNightSince = pendingNightShowSince;
+      noteObsNight(pendingNightShowSince);
     }
     if (reason === "beforeDayScene") obsNightSince = null;
     return;
@@ -1069,11 +1146,20 @@ function releaseSceneHide(): void {
   }
 }
 
+/**
+ * Начало ночи OBS — САМОЕ РАННЕЕ с последнего дня: реконнект OBS и F5
+ * распознают ту же игровую ночь заново и присылают более позднее начало, а
+ * ручное решение этой ночи от этого не устаревает (внешний аудит №3, B02/B03).
+ */
+function noteObsNight(nightSince: number): void {
+  obsNightSince = obsNightSince === null ? nightSince : Math.min(obsNightSince, nightSince);
+}
+
 function onObsNightShow(nightSince: number): void {
-  obsNightSince = nightSince;
+  noteObsNight(nightSince);
   const hadSceneHide = sceneHide;
   sceneHide = null;
-  if (lastManualRoleActionAt < nightSince) {
+  if (manualBeforeNight(obsNightSince!)) {
     showAllRoles();
     log.info(SCOPE, "ночная сцена: роли стола показаны вместе со своей");
     return;
@@ -1426,6 +1512,7 @@ function enableGamePage() {
   log.info(SCOPE, "game-page behaviors enabled");
 
   gameInterval = setInterval(() => {
+    checkGameRoute();
     clickStartGameButton();
     disableWebcams();
     queueRolePhaseCheck();
@@ -1434,19 +1521,31 @@ function enableGamePage() {
   // Одна власть: скрытие сайта нейтрализовано, его текущее «скрыто»
   // (зритель, прошлое нажатие) принимаем в наш слой сразу.
   installRoleDisplayOverride();
+  lastGamePath = null;
+  checkGameRoute();
   siteFlag = null;
   syncSiteFlag();
   unsubRoleDomImmediate = onDomChangeImmediate(onRoleDomImmediate);
-  // Любое действие игрока: смена флага сайта вслед за ним — его решение.
-  // isTrusted не требуем — синтетических событий мы больше не шлём.
-  onUserInput = () => {
-    lastUserInputAt = Date.now();
+  // Команды ролей сайту от игрока (см. lastSiteRoleCommandAt). D, дошедший
+  // до document, наш роутер не забрал — его получит сайт.
+  onSiteCommandKey = (e: Event) => {
+    const k = e as KeyboardEvent;
+    if (k.code === "KeyD" && !k.altKey && !k.shiftKey && !k.repeat) lastSiteRoleCommandAt = Date.now();
   };
-  for (const type of ["click", "pointerdown", "keydown"]) {
-    document.addEventListener(type, onUserInput, true);
-  }
+  onSiteCommandClick = (e: Event) => {
+    const item = (e.target as Element | null)?.closest?.("li, button, [role=\"button\"]");
+    const text = norm(item);
+    if (item && (containsAny(text, TEXT.showRoles) || containsAny(text, TEXT.hideRoles))) {
+      lastSiteRoleCommandAt = Date.now();
+    }
+  };
+  document.addEventListener("keydown", onSiteCommandKey, true);
+  document.addEventListener("click", onSiteCommandClick, true);
 
   startInitialAutoHideRole();
+  // Фазу — сразу, а не первым тиком интервала: днём при одной автосмене роли
+  // были открыты ~1,15 с после включения (внешний аудит №3, B05).
+  if (cfg.rolePhaseSwitch) applyRolePhase(detectRolePhase());
 
   // Отмечаем действия игрока, чтобы автоклики не спорили с ним.
   // isTrusted отсекает наши же синтетические клики.
@@ -1491,12 +1590,10 @@ function disableGamePage() {
   unsubSiteRoleKey = null;
   unsubRoleDomImmediate?.();
   unsubRoleDomImmediate = null;
-  if (onUserInput) {
-    for (const type of ["click", "pointerdown", "keydown"]) {
-      document.removeEventListener(type, onUserInput, true);
-    }
-  }
-  onUserInput = null;
+  if (onSiteCommandKey) document.removeEventListener("keydown", onSiteCommandKey, true);
+  if (onSiteCommandClick) document.removeEventListener("click", onSiteCommandClick, true);
+  onSiteCommandKey = null;
+  onSiteCommandClick = null;
   // Флаг сайта снова его: без нашего слоя роли видны так, как решил сайт.
   removeRoleDisplayOverride();
   siteFlag = null;
@@ -1566,7 +1663,11 @@ function applyConfig(ctx: FeatureContext) {
   // Включили автосмену посреди фазы — переинициализируем её на ближайшей
   // проверке: прежде отменённый выключением ночной показ не перевзводился, и
   // роли оставались скрыты до новой ночи (внешний аудит 21.10.2026, H03).
-  if (!prevPhaseSwitch && cfg.rolePhaseSwitch) rolePhaseInitialized = false;
+  if (!prevPhaseSwitch && cfg.rolePhaseSwitch) {
+    rolePhaseInitialized = false;
+    // Включили посреди игры — сразу (внешний аудит №3, B05).
+    if (gameInterval !== null) applyRolePhase(detectRolePhase());
+  }
 
   // Выключили фазовое переключение — гасим уже взведённый ночной таймер:
   // раньше он переживал выключение (проверка настройки жила в пути, который
@@ -1611,6 +1712,9 @@ function applyConfig(ctx: FeatureContext) {
     // ночной показ этой ночью его не переигрывает (иначе касание V ночью
     // открывало только что спрятанное). Запуск страницы — не решение.
     if (gameInterval !== null) lastManualRoleActionAt = Date.now();
+    // CSS теперь держит и настройка: вернувшаяся ночная сцена его не снимает
+    // как «только сценовый» (внешний аудит №3, B04).
+    if (sceneHide) sceneHide = { ...sceneHide, cssWasPresent: true };
     startInitialAutoHideRole();
   }
 }
@@ -1658,7 +1762,8 @@ export const autoStartFeature: Feature = {
     lastDetectedRolePhase = null;
     nightAutoShowStartedAt = 0;
     lastManualRoleActionAt = 0;
-    lastUserInputAt = 0;
+    lastSiteRoleCommandAt = 0;
+    lastOurShowAt = 0;
     webcamDisabled = false;
     videoButtonClicked = false;
   },

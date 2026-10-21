@@ -3,7 +3,7 @@
  * Пока подмена активна — прячет чужие роли и блокирует клавишу D/В.
  * Порт role-faker.js на единый keyboard-роутер и общий DOM-наблюдатель.
  */
-import { keyboard, isTypingContext, producesText } from "@core/keyboard";
+import { keyboard, isTypingContext, editsText } from "@core/keyboard";
 import { onDomChange } from "@core/dom";
 import { log } from "@core/log";
 import { showToast } from "@core/toast";
@@ -31,7 +31,10 @@ export function shouldSwallowRoleKey(e: KeyboardEvent, hideKeyCode: string): boo
   if (e.code !== hideKeyCode) return false;
   // Пока пользователь печатает (KeyD = «в» в русской раскладке) или жмёт
   // Cmd/Ctrl+D — не глотаем.
-  if (isTypingContext(e) && producesText(e.code)) return false;
+  // Те же клавиши правки текста, что у роутера: иначе Enter/стрелки в поле
+  // ввода при хоткее на них отменялись блокировщиком (внешний аудит №3).
+  if (isTypingContext(e) && editsText(e.code)) return false;
+  if (e.isComposing || e.keyCode === 229) return false;
   if (e.ctrlKey || e.metaKey || e.altKey) return false;
   return true;
 }
@@ -306,6 +309,9 @@ class RoleFaker {
     const myRole = document.querySelector<HTMLElement>(SITE.myRole);
     if (myRole) {
       const use = myRole.querySelector("use");
+      // E раньше флаша наблюдателя: новая настоящая роль ещё не схвачена —
+      // хватаем сейчас, иначе E вернул бы прежнюю (внешний аудит №3, §4 п.3).
+      if (use && myRole.hasAttribute("data-original-role") && this.isFaked) this.captureRealRole(myRole, use);
       if (use && myRole.hasAttribute("data-original-role")) {
         const role = myRole.getAttribute("data-original-role");
         const base = myRole.getAttribute("data-original-sprite-base") || this.resolveSpriteBase();
@@ -342,23 +348,7 @@ class RoleFaker {
     const href = use.getAttribute("href") || use.getAttribute("xlink:href") || "";
     if (href.includes("#stop")) return;
     const role = this.roles[this.currentRoleIndex];
-    // Сайт поставил НАСТОЯЩУЮ роль (в том числе новую — смена роли в том же
-    // узле): её и вернёт E, а не снимок прежней (внешний аудит №2, §4 п.2).
-    // RoomIcon сайта патчит xlink:href — наш href при этом остаётся фальшивым
-    // (браузер рисует href), поэтому смотрим оба.
-    const xlink =
-      use.getAttributeNS("http://www.w3.org/1999/xlink", "href") || use.getAttribute("xlink:href") || "";
-    const realHref = !href.endsWith(`#${role.icon}`) ? href : !xlink.endsWith(`#${role.icon}`) ? xlink : "";
-    if (realHref && !realHref.includes("#stop")) {
-      const real = realHref.split("#")[1];
-      if (real && real !== el.getAttribute("data-original-role")) {
-        el.setAttribute("data-original-role", real);
-        const tipNow = el.querySelector(SITE.siteTooltipText)?.textContent ?? "";
-        if (tipNow && tipNow !== `Ваша роль - ${role.name}`) {
-          el.setAttribute("data-original-role-name", tipNow.replace("Ваша роль - ", ""));
-        }
-      }
-    }
+    const xlink = this.captureRealRole(el, use);
     if (!href.endsWith(`#${role.icon}`) || !xlink.endsWith(`#${role.icon}`)) {
       const base = el.getAttribute("data-original-sprite-base") || this.resolveSpriteBase();
       const fake = `${base}#${role.icon}`;
@@ -375,6 +365,31 @@ class RoleFaker {
     const tip = el.querySelector(SITE.siteTooltipText);
     const text = `Ваша роль - ${role.name}`;
     if (tip && tip.textContent !== text) tip.textContent = text;
+  }
+
+  /**
+   * Сайт поставил НАСТОЯЩУЮ роль (в том числе новую — смена роли в том же
+   * узле): её и вернёт E, а не снимок прежней (внешний аудит №2, §4 п.2).
+   * RoomIcon сайта патчит xlink:href — наш href при этом остаётся фальшивым
+   * (браузер рисует href), поэтому смотрим оба. Возвращает xlink.
+   */
+  private captureRealRole(el: HTMLElement, use: Element): string {
+    const role = this.roles[this.currentRoleIndex];
+    const href = use.getAttribute("href") || use.getAttribute("xlink:href") || "";
+    const xlink =
+      use.getAttributeNS("http://www.w3.org/1999/xlink", "href") || use.getAttribute("xlink:href") || "";
+    const realHref = !href.endsWith(`#${role.icon}`) ? href : !xlink.endsWith(`#${role.icon}`) ? xlink : "";
+    if (realHref && !realHref.includes("#stop")) {
+      const real = realHref.split("#")[1];
+      if (real && real !== el.getAttribute("data-original-role")) {
+        el.setAttribute("data-original-role", real);
+        const tipNow = el.querySelector(SITE.siteTooltipText)?.textContent ?? "";
+        if (tipNow && tipNow !== `Ваша роль - ${role.name}`) {
+          el.setAttribute("data-original-role-name", tipNow.replace("Ваша роль - ", ""));
+        }
+      }
+    }
+    return xlink;
   }
 
   /** Перенаклад текущей подмены на пересозданный узел (без сдвига по кругу). */

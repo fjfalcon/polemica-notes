@@ -220,3 +220,20 @@ test("одна власть: ночью игрок спрятал D — своя
   await vi.advanceTimersByTimeAsync(3_000);
   expect([vis(own()), vis(peer())], "прежний visible-пин оставлял свою роль в эфире").toEqual(["hidden", "hidden"]);
 });
+
+test("реконнект OBS через 5 с после ручного скрытия — та же ночь, роли остаются скрыты", async () => {
+  seam.persisted = true;
+  autoStartFeature.enable(ctx());
+  await obsPanelFeature.enable(ctx());
+  await vi.advanceTimersByTimeAsync(6_600);
+  expect([vis(own()), vis(peer())]).toEqual(["visible", "visible"]);
+  document.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD", bubbles: true }));
+  document.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyD", bubbles: true }));
+  await vi.advanceTimersByTimeAsync(5_000); // дальше запаса распознавания
+  event("obs_disconnected", null);
+  await vi.advanceTimersByTimeAsync(500);
+  event("obs_connected", null);
+  event("obs_scenes_updated", { scenes: [{ sceneName: "day" }, { sceneName: "night" }], currentScene: "night" });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect([vis(own()), vis(peer())], "реконнект — не новая ночь").toEqual(["hidden", "hidden"]);
+});

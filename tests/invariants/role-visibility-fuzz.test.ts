@@ -221,13 +221,10 @@ function setPhase(phase: "day" | "night"): void {
  * наш CSS-тег, inline-слой, пин.
  */
 function visible(el: HTMLElement): boolean {
-  const overridden = !!document.getElementById("pn-role-display-override");
-  if (el.style.display === "none" && !overridden) return false;
-  if (el.style.visibility === "hidden" || el.style.opacity === "0") return false;
-  const cssHide = !!document.getElementById("polemica-role-hide");
-  const pinnedVisible =
-    el.style.visibility === "visible" && el.style.getPropertyPriority("visibility") === "important";
-  return !(cssHide && !pinnedVisible);
+  // Вычисленный стиль (jsdom учитывает !important и каскад): «тег на месте»
+  // не доказывает скрытие — пустое правило с тем же id прошло бы (аудит №3).
+  const cs = getComputedStyle(el);
+  return cs.display !== "none" && cs.visibility !== "hidden" && cs.opacity !== "0";
 }
 
 function snapshot(): boolean[] {
@@ -565,7 +562,7 @@ async function runScenario(
             spec.hidden = true;
             spec.reason = reason;
           }
-          vReleased = true;
+          triggers.add("release");
           specSceneSync();
           if (obsNightShowPendingUnderPeek) {
             obsNightShowPendingUnderPeek = false;
@@ -597,7 +594,7 @@ async function runScenario(
         phase = action;
         setPhase(action);
         if (!changed) break;
-        phaseChangedThisStep = true;
+        if (action === "night") triggers.add("night");
         if (action === "night") {
           if (cfg.phaseSwitch) spec.nightStartAuto = step;
           spec.nightStartObs = step;
@@ -616,6 +613,7 @@ async function runScenario(
         break;
       case "sceneOn":
         if (!obs.auto || phase !== "night" || obs.safe) break;
+        triggers.add("sceneOn");
         obs.safe = true;
         obs.listener?.("gate");
         scheduleNightShow();
@@ -632,12 +630,17 @@ async function runScenario(
         if (action === "phaseOn") cfg.phaseSwitch = true;
         autoStartFeature.update?.(settings());
         // Включили авто-скрытие посреди игры — решение игрока «прятать».
-        if (action === "autoHideOn") spec.manualStep = step;
+        if (action === "autoHideOn") {
+          spec.manualStep = step;
+          // CSS теперь держит и настройка — сценой не снимается (аудит №3, B04).
+          if (spec.sceneHide) spec.sceneHide.cssPre = true;
+        }
         if (action === "autoHideOn" && !spec.peek) hideSpec("auto");
         // Скрытие снова включили под V — на отпускании оно действует.
         if ((action === "autoHideOn" || action === "phaseOn") && spec.peek) {
           spec.peek.clearedBySettings = false;
         }
+        if (action === "phaseOn" && !wasPhase) triggers.add("phaseOn");
         if (action === "phaseOn" && !wasPhase) {
           if (phase === "day") {
             if (!spec.peek) hideSpec("auto");
@@ -658,18 +661,13 @@ async function runScenario(
     }
   };
 
-  /** Отпускание V на этом шаге (перевзвод ночного показа). */
-  let vReleased = false;
-  /** Фаза реально сменилась на этом шаге. */
-  let phaseChangedThisStep = false;
+  /** Поводы отложенных эффектов, накопленные за шаг (в т.ч. внутри серии). */
+  const triggers = new Set<"night" | "sceneOn" | "phaseOn" | "release">();
   /** Отложенные эффекты шага (за 12 с жизни): ночной показ, nightShow OBS. */
-  const resolveDeferred = (action: Simple) => {
-    const released = vReleased;
-    vReleased = false;
-    const phaseChanged = phaseChangedThisStep;
-    phaseChangedThisStep = false;
-    const nightShowFired =
-      obs.auto && obs.safe && phase === "night" && ((action === "night" && phaseChanged) || action === "sceneOn");
+  const resolveDeferred = () => {
+    const t = new Set(triggers);
+    triggers.clear();
+    const nightShowFired = obs.auto && obs.safe && phase === "night" && (t.has("night") || t.has("sceneOn"));
     if (nightShowFired) {
       if (spec.peek) {
         obsNightShowPendingUnderPeek = true;
@@ -678,7 +676,7 @@ async function runScenario(
     }
     // Ночной показ автосмены (без автосцен) — РАЗОВОЕ событие: начало ночи,
     // включение автосмены ночью, перевзвод на отпускании V.
-    const trigger = (action === "night" && phaseChanged) || action === "phaseOn" || released;
+    const trigger = t.has("night") || t.has("phaseOn") || t.has("release");
     if (!obs.auto && trigger && autoShowDue() && !spec.peek) showSpec();
   };
 
@@ -709,7 +707,8 @@ async function runScenario(
       let action: Action;
       if (scripted) action = scripted.actions[i];
       else if (!held && !blurred && r() < 0.15) {
-        const pool: Simple[] = ["Vdown", "Vup", "pttDown", "pttUp", "rerender", "wait"];
+        const pool: Simple[] = ["Vdown", "Vup", "pttDown", "pttUp", "rerender", "wait", "hide", "day", "night", "ctrlD"];
+        if (obs.auto) pool.push("sceneOff", "sceneOn");
         const n = 2 + Math.floor(r() * 3);
         action = { burst: Array.from({ length: n }, () => pickSimple(pool)), gap: Math.floor(r() * 300) };
       } else action = pickSimple(options);
@@ -725,6 +724,8 @@ async function runScenario(
           if (sub === "Vup" && !held) continue;
           if (sub === "pttDown" && ptt) continue;
           if (sub === "pttUp" && !ptt) continue;
+          // D уже зажат как «подсмотреть» — второй раз его не нажать.
+          if (sub === "ctrlD" && held && cfg.peekKey === "KeyD") continue;
           await perform(sub, seat);
           await vi.advanceTimersByTimeAsync(action.gap);
           const snap = snapshot();
@@ -733,11 +734,11 @@ async function runScenario(
         if (held) await perform("Vup", seat);
         if (ptt) await perform("pttUp", seat);
         await settle(trace);
-        resolveDeferred(action.burst.includes("night") ? "night" : "wait");
+        resolveDeferred();
       } else {
         await perform(action, seat);
         await settle(trace);
-        resolveDeferred(action);
+        resolveDeferred();
         // Мигание: каждая роль меняется за шаг не больше одного раза.
         for (let k = 0; k < pre.length; k++) {
           let flips = trace[0][k] !== pre[k] ? 1 : 0;
@@ -879,6 +880,11 @@ describe("скрытие ролей: найденные сценарии", () =>
       "под V выключили и снова включили авто-скрытие, ночной показ отработал — отпускание прячет",
       { autoHide: true, phaseSwitch: false, phase: "night" },
       ["Vdown", "autoHideOff", "autoHideOn", "phaseOn", "phaseOff", "Vup"],
+    ],
+    [
+      "день и ночь под V за 0,6 с, отпустил — ночной показ новой ночи",
+      { useModifier: true, autoHide: false, phaseSwitch: true, initialFlag: true, phase: "night" },
+      ["autoHideOn", "wait", { burst: ["Vdown", "day", "night"], gap: 288 }, "wait"],
     ],
     // ─── второй внешний аудит ───
     [

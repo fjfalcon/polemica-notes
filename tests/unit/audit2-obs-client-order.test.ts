@@ -39,7 +39,7 @@ import {
   OBS_RETRY_BLOCKED_KEY,
   OBS_RETRY_BLOCK_REASON_KEY,
   ObsClient,
-} from "../../../src/background/obs-client";
+} from "../../src/background/obs-client";
 
 /** Минимальный двойник сокета OBS: им управляет сам тест. */
 class FakeSocket {

@@ -391,6 +391,7 @@ export function syncObsRoomRoute(inRoom: boolean): void {
  * этой вкладке.
  */
 async function switchScene(sceneName: string, manual = false): Promise<boolean> {
+  const epoch = sceneInfoEpoch;
   const response = await obsCommand("set_scene", { sceneName, manual });
   // Отказ по владению приходит как success с data.ignored: сцену НЕ трогали,
   // поэтому ни currentScene, ни подсветку обновлять нельзя — иначе панель
@@ -403,8 +404,13 @@ async function switchScene(sceneName: string, manual = false): Promise<boolean> 
   if (response && response.success) {
     // Именно sceneName: раньше сюда передавалась модульная currentScene,
     // т.е. подсвечивалась ПРОШЛАЯ сцена, а не только что установленная.
-    currentScene = sceneName;
-    panel?.setCurrentScene(sceneName);
+    // Но только если за время запроса не пришло событие сцены: оно новее
+    // нашего ответа (стример вручную вернул день) — поздний успех ночи
+    // открывал роли на фактически дневной сцене (внешний аудит №3, B01).
+    if (epoch === sceneInfoEpoch) {
+      currentScene = sceneName;
+      panel?.setCurrentScene(sceneName);
+    }
     return true;
   } else {
     log.error(SCOPE, "Failed to switch scene", response?.error);
@@ -536,6 +542,10 @@ async function restorePersistedAutoState(status: any = null, epoch = sceneInfoEp
     }
 
     currentTimeOfDay = stored.currentTimeOfDay;
+    // У восстановленной ночи есть начало: без него каждый nightShow нёс
+    // «сейчас», и возврат ночной сцены переигрывал ручное скрытие этой ночи
+    // (внешний аудит №3, B03).
+    if (currentTimeOfDay === "night" && nightSince === null) nightSince = Date.now();
     // Латч из persisted НЕ восстанавливается (аудит скрытия ролей
     // 29.08.2026, №2): он описывает мёртвый DOM прошлой загрузки. Считанное
     // «hidden» до применения глушило ретрай — applyRoleVisibility после F5
@@ -1647,7 +1657,14 @@ function applyAutoSettings(ctx: FeatureContext): void {
     // что день», и смена пары сцен ночью могла выдать дневную сцену в эфир
     // (ревью 02.08.2026).
     if (wasInitialized && currentTimeOfDay) {
-      void autoSwitchScene(currentTimeOfDay);
+      // Повторное включение днём — через ту же защиту, что смена фазы:
+      // роли стола прячутся ДО команды дневной сцены (внешний аудит №3, B06).
+      const known = currentTimeOfDay;
+      void (async () => {
+        if (known === "day") await hideRoleBeforeDaySceneSwitch();
+        if (!autoModeEnabled) return;
+        await autoSwitchScene(known);
+      })();
       // Симметрия teardown/enable (§4 п.7): выключение возвращает стили роли
       // (restoreRoleVisibility в stopDOMMonitoring), значит включение обязано
       // применить видимость к уже известной фазе заново. Без этого цикл
