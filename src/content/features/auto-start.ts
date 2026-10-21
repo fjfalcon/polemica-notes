@@ -19,7 +19,7 @@ import { onDomChange, safeClick, isVisible } from "@core/dom";
 import { keyboard } from "@core/keyboard";
 import { log } from "@core/log";
 import { showToast } from "@core/toast";
-import { isPinnedElement, liftPins, restoreLiftedPins } from "../role-pin";
+import { isNativeRoleHidden, isPinnedElement, liftPins, restoreLiftedPins } from "../role-pin";
 import { isRoleFaked } from "./role-faker";
 import { nightSceneSafeForRoleShow } from "../panels/obs-panel";
 import { SITE, TEXT, OWN, classifyPhaseText, endedScreenVisible, SITE_CLASS } from "@core/selectors";
@@ -78,7 +78,7 @@ let webcamClickInterval: ReturnType<typeof setInterval> | null = null;
 // Скрытие/показ роли
 const roleVisibilityState = new WeakMap<
   HTMLElement,
-  { display: string; visibility: string; opacity: string; pointerEvents: string }
+  { visibility: string; opacity: string; pointerEvents: string }
 >();
 let trackedRolesVisible: boolean | null = null;
 let pendingRoleSyncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -418,16 +418,6 @@ function getPrimaryOwnRoleElement(roleElements = getRoleVisibilityTargets()): HT
   return roleElements[0] || null;
 }
 
-function getRoleUseHref(roleElement: HTMLElement | null): string {
-  if (!roleElement) return "";
-  const useElement = roleElement.querySelector("use");
-  if (!useElement) return "";
-  return (
-    useElement.getAttribute("href") ||
-    useElement.getAttribute("xlink:href") ||
-    ""
-  ).toLowerCase();
-}
 
 function isRoleElementActuallyVisible(roleElement: HTMLElement | null): boolean {
   if (!roleElement) return false;
@@ -447,19 +437,21 @@ interface OwnRoleState {
 
 function getOwnRoleState(roleElements = getRoleVisibilityTargets()): OwnRoleState {
   const primaryElement = getPrimaryOwnRoleElement(roleElements);
-  const href = getRoleUseHref(primaryElement);
-  const nativeHidden = href.includes("#stop");
+  // Скрытие САЙТА: display:none от его v-show (или прежний #stop) — см.
+  // isNativeRoleHidden. До 21.10.2026 здесь искался только #stop, и после
+  // смены вёрстки сайта признак не срабатывал никогда.
+  const nativeHidden = isNativeRoleHidden(primaryElement);
   // Узлы под пином obs-панели (data-pn-role-pin) НЕ наши: их скрытость —
   // состояние автосмены сцен, а не «наш inline». Считать её своей значило
   // снять снимок ЧУЖОГО пина и дописать поверх display:none — роль
   // оставалась скрытой от игрока всю ночь (аудит скрытия ролей 29.08.2026,
   // находка 7).
+  // display сюда НЕ входит: это флаг сайта (nativeHidden), наш inline-слой
+  // его не пишет. Иначе скрытие сайта читалось как «наше» и снималось
+  // нашим показом только у СВОЕЙ роли — сокомандники оставались скрытыми.
   const inlineHidden = roleElements.some(
     (el) =>
-      !isPinnedElement(el) &&
-      (el.style.display === "none" ||
-        el.style.visibility === "hidden" ||
-        el.style.opacity === "0"),
+      !isPinnedElement(el) && (el.style.visibility === "hidden" || el.style.opacity === "0"),
   );
   return {
     nativeHidden,
@@ -485,7 +477,6 @@ function rememberRoleInlineState(roleElements: HTMLElement[]) {
     if (isPinnedElement(el)) return; // чужой пин — не «исходное состояние»
     if (roleVisibilityState.has(el)) return;
     roleVisibilityState.set(el, {
-      display: el.style.display,
       visibility: el.style.visibility,
       opacity: el.style.opacity,
       pointerEvents: el.style.pointerEvents,
@@ -500,18 +491,19 @@ function applyInlineRoleVisibility(roleElements: HTMLElement[], isVisible: boole
     // модуль role-pin, подъём/возврат пина — отдельный слой peek (наход. 7).
     if (isPinnedElement(el)) return;
     const original =
-      roleVisibilityState.get(el) || { display: "", visibility: "", opacity: "", pointerEvents: "" };
+      roleVisibilityState.get(el) || { visibility: "", opacity: "", pointerEvents: "" };
     if (isVisible) {
       // Снимку НЕ доверяем прятать (тот же урок, что находка B у пина,
       // 03.09.2026): скрытые значения в «оригинале» — чей-то чужой hide
       // (прежняя версия, чужой писатель), и «показ» из такого снимка был
       // no-op — роль ночью оставалась скрытой при зелёной верификации.
-      el.style.display = original.display === "none" ? "" : original.display;
+      // display НЕ пишем (21.10.2026): им сайт прячет роли по своему флагу
+      // (v-show), и Vue поправит его только на следующей смене флага —
+      // наша запись рассинхронизировала свою роль с сокомандниками.
       el.style.visibility = original.visibility === "hidden" ? "" : original.visibility;
       el.style.opacity = original.opacity === "0" ? "" : original.opacity;
       el.style.pointerEvents = original.pointerEvents === "none" ? "" : original.pointerEvents;
     } else {
-      el.style.display = "none";
       el.style.visibility = "hidden";
       el.style.opacity = "0";
       el.style.pointerEvents = "none";
@@ -654,9 +646,10 @@ let unsubPeek: (() => void) | null = null;
 /** Скрытие, снятое на время подсматривания: вернуть ровно то, что было. */
 let peekRestoreHidden = false;
 /**
- * СВОЯ роль была скрыта нативно (сайт рисует #stop вместо иконки) — вернуть
- * это скрытие при отпускании. Отдельный слой: CSS прячет ролей ВСЕХ, нативное
- * скрытие — только свою (жалоба стримера 27.08.2026).
+ * Роли были скрыты САЙТОМ (его флаг roleDisplay: display:none на каждой роли,
+ * своей и сокомандников; прежде — #stop) — вернуть это скрытие при
+ * отпускании, отдав сайту его D (жалоба стримера 27.08.2026; механизм сайта
+ * сменился — 21.10.2026).
  */
 let peekRestoreNative = false;
 /** Своя роль была спрятана inline-стилями (наш же путь setRoleVisibility). */
@@ -705,8 +698,8 @@ export function shouldRehideAfterPeek(
  * Подсмотреть роли, пока клавиша зажата.
  *
  * Скрытие живёт в ТРЁХ слоях, и снимать надо все: CSS прячет роли всех
- * игроков, нативное скрытие сайта (#stop вместо иконки) и наши inline-стили —
- * только СВОЮ. До 27.08.2026 снимался лишь CSS, поэтому у стримера, чья роль
+ * игроков, нативное скрытие сайта (его флаг roleDisplay — display:none на
+ * каждой роли; снимается только сайтовым D) и наши inline-стили — только СВОЮ. До 27.08.2026 снимался лишь CSS, поэтому у стримера, чья роль
  * была скрыта ещё и нативно (свой D, авто-скрытие при входе), «подсмотреть»
  * показывало роли всех, КРОМЕ его собственной — то есть ровно то, ради чего
  * клавишу и держат. Так же — тремя слоями — снимают скрытие handleRoleKey и
@@ -803,7 +796,7 @@ function restoreNativeHide(): void {
   if (peeking) return;
   const primary = getPrimaryOwnRoleElement();
   if (!primary) return;
-  if (getRoleUseHref(primary).includes("#stop")) return; // уже скрыта
+  if (isNativeRoleHidden(primary)) return; // уже скрыта сайтом
   dispatchNativeRoleToggle();
   peekRestoreAttempts += 1;
   if (peekRestoreAttempts >= 5) {
@@ -916,8 +909,7 @@ function scheduleNightRoleAutoShow(delayMs: number) {
     // 2) Нативный показ через D
     const roleElements = getRoleVisibilityTargets();
     const primary = getPrimaryOwnRoleElement(roleElements);
-    const href = getRoleUseHref(primary);
-    const nativeHidden = href.includes("#stop");
+    const nativeHidden = isNativeRoleHidden(primary);
 
     if (nativeHidden) dispatchNativeRoleToggle();
 
@@ -931,7 +923,7 @@ function scheduleNightRoleAutoShow(delayMs: number) {
       // Застрявший INLINE — тоже «не показана»: раньше проверялся только
       // натив, и ретрай считал inline-скрытую роль показанной.
       const stillHidden = el
-        ? getRoleUseHref(el).includes("#stop") || getOwnRoleState().inlineHidden
+        ? isNativeRoleHidden(el) || getOwnRoleState().inlineHidden
         : false;
       if (
         stillHidden &&
@@ -1424,7 +1416,7 @@ function handleRoleKey(e?: KeyboardEvent) {
     applyInlineRoleVisibility(getRoleVisibilityTargets(), true);
     // Под CSS роль могла быть скрыта и нативно — досылаем D сайту сами.
     const primary = getPrimaryOwnRoleElement();
-    if (getRoleUseHref(primary).includes("#stop")) dispatchNativeRoleToggle();
+    if (isNativeRoleHidden(primary)) dispatchNativeRoleToggle();
     trackedRolesVisible = true;
     return;
   }

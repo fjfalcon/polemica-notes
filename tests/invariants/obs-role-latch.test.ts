@@ -316,3 +316,36 @@ describe("жалоба 01.10.2026: ночной показ роли ждёт н�
     );
   });
 });
+
+/**
+ * 21.10.2026: сайт прячет роли общим флагом roleDisplay через v-show —
+ * `style.display` на КАЖДОЙ роли принадлежит ему. Наша запись display
+ * рассинхронизировала свою роль с сокомандниками («Бош не показывается,
+ * моя только по V»), а у подмены — раскрывала состав при смене флага.
+ * Наши слои — только visibility/opacity/pointer-events; детектор скрытия
+ * сайта (isNativeRoleHidden) на этом инварианте и держится.
+ */
+describe("display на ролях — флаг сайта, наш код его не пишет", () => {
+  const files = [
+    "src/content/features/auto-start.ts",
+    "src/content/role-pin.ts",
+    "src/content/features/role-faker.ts",
+  ];
+  test.each(files)("%s: ни одной записи display", (rel) => {
+    const code = fs
+      .readFileSync(path.join(ROOT, rel), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+    expect(code, "style.display = …").not.toMatch(/\.style\.display\s*=(?!=)/);
+    expect(code, "setProperty('display')").not.toMatch(/setProperty\(\s*["']display["']/);
+    expect(code, "removeProperty('display')").not.toMatch(/removeProperty\(\s*["']display["']/);
+  });
+
+  test("проверки «сайт спрятал» идут через isNativeRoleHidden, а не через один #stop", () => {
+    const code = fs.readFileSync(path.join(ROOT, "src/content/features/auto-start.ts"), "utf8");
+    expect(code).not.toMatch(/href\.includes\("#stop"\)/);
+    expect(code).not.toMatch(/getRoleUseHref\([^)]*\)\.includes\("#stop"\)/);
+    expect((code.match(/isNativeRoleHidden\(/g) ?? []).length).toBeGreaterThanOrEqual(5);
+  });
+});
+

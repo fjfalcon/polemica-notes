@@ -24,8 +24,6 @@ import { SITE } from "@core/selectors";
 export type PinTarget = "visible" | "hidden";
 
 interface RoleStyleSnapshot {
-  display: string;
-  displayPriority: string;
   visibility: string;
   visibilityPriority: string;
   opacity: string;
@@ -56,6 +54,28 @@ export function getRoleVisibilityTargets(): HTMLElement[] {
   return targets;
 }
 
+/**
+ * Прячет ли роль САМ САЙТ (21.10.2026). Сайт перешёл на общий флаг
+ * `roleDisplay` (D / пункт меню) и `v-show`: каждому элементу роли — и
+ * своей, и сокомандников — Vue пишет `style.display = "none"`. Прежде сайт
+ * подменял значок на `#stop`, и наш код искал только его — после смены
+ * вёрстки все проверки «сайт спрятал» молча не срабатывали: D и V не
+ * отдавали сайту его D, роли сокомандников оставались скрытыми, а своя
+ * расходилась с ними (жалоба 21.10.2026).
+ *
+ * ИНВАРИАНТ: наш код НЕ пишет `display` на элементы ролей (пин, inline-слой,
+ * подмена — только visibility/opacity/pointer-events). Поэтому display:none
+ * на роли однозначно означает скрытие сайта. `#stop` оставлен на случай
+ * возврата прежней вёрстки.
+ */
+export function isNativeRoleHidden(el: HTMLElement | null): boolean {
+  if (!el) return false;
+  if (el.style.display === "none") return true;
+  const use = el.querySelector("use");
+  const href = (use?.getAttribute("href") || use?.getAttribute("xlink:href") || "").toLowerCase();
+  return href.includes("#stop");
+}
+
 /** Узел несёт наш пин — его видимостью владеет этот модуль, а не вызывающий. */
 export function isPinnedElement(el: HTMLElement): boolean {
   return el.hasAttribute(PIN_ATTR);
@@ -74,8 +94,6 @@ function restoreProp(el: HTMLElement, prop: string, value: string, priority: str
 function applyToElement(el: HTMLElement, target: PinTarget): void {
   if (!snapshots.has(el)) {
     snapshots.set(el, {
-      display: el.style.display,
-      displayPriority: el.style.getPropertyPriority("display"),
       visibility: el.style.visibility,
       visibilityPriority: el.style.getPropertyPriority("visibility"),
       opacity: el.style.opacity,
@@ -97,11 +115,9 @@ function applyToElement(el: HTMLElement, target: PinTarget): void {
     setImportant(el, "visibility", "visible");
     setImportant(el, "opacity", "1");
     el.style.pointerEvents = snap.pointerEvents === "none" ? "" : snap.pointerEvents;
-    // display:none под visible-пином — чужое скрытие (auto-start при входе в
-    // игру пишет display:none ДО пина; жалоба 04.10.2026): visibility:visible
-    // его не перебивает, и «показ» был no-op. Снимок хранит display — его
-    // честно вернёт releasePins.
-    if (el.style.display === "none") el.style.removeProperty("display");
+    // display НЕ трогаем ни в какую сторону: это флаг САЙТА (см.
+    // isNativeRoleHidden). Снятие display:none показывало свою роль при
+    // скрытых сайтом ролях сокомандников — зеркальный рассинхрон (21.10.2026).
   } else {
     setImportant(el, "visibility", "hidden");
     setImportant(el, "opacity", "0");
@@ -113,7 +129,6 @@ function applyToElement(el: HTMLElement, target: PinTarget): void {
 function stripFromElement(el: HTMLElement): void {
   const snap = snapshots.get(el);
   if (snap) {
-    restoreProp(el, "display", snap.display, snap.displayPriority);
     restoreProp(el, "visibility", snap.visibility, snap.visibilityPriority);
     restoreProp(el, "opacity", snap.opacity, snap.opacityPriority);
     restoreProp(el, "pointer-events", snap.pointerEvents, snap.pointerEventsPriority);
@@ -178,21 +193,19 @@ export function releasePins(): void {
  * победила фазу» была бы ошибкой в сторону эфира.
  *
  * Подъём — это ПОКАЗ (жалоба 04.10.2026, «V нажимаю — ничего»): снимок
- * снимался при первом пине и нёс чужое скрытие — auto-start при входе в игру
- * пишет display:none/hidden/0 ДО пина obs-панели. Восстановленный снимок
- * возвращал этот hidden, и V не показывал ничего, а peek был уверен, что
- * снял все слои (inline-слой auto-start запиненные узлы пропускает).
- * Прежняя заметка F-7 «display:none никто, кроме stopPeek, не пишет» была
- * неверна — её опроверг ровно этот путь. Поэтому после снятия пина
- * скрывающие значения гасятся (идиома «показ не доверяет снимку прятать»,
- * 4-е появление класса). Сам снимок НЕ трогаем: releasePins по-прежнему
- * вернёт исходное, а restoreLiftedPins перепинит цель поверх.
+ * снимался при первом пине и мог нести чужое скрытие — inline-слой
+ * auto-start прячет роль ДО пина obs-панели. Поэтому после снятия пина
+ * скрывающие visibility/opacity/pointer-events гасятся (идиома «показ не
+ * доверяет снимку прятать»). Сам снимок НЕ трогаем: releasePins вернёт
+ * исходное, restoreLiftedPins перепинит цель поверх.
+ *
+ * display — НЕ наш (21.10.2026): им сайт прячет роли по своему флагу
+ * (v-show). Его снимает только сайтовый D — это делает peek в auto-start.
  */
 export function liftPins(): boolean {
   if (pinTarget === null || lifted) return false;
   for (const el of touched) {
     stripFromElement(el);
-    if (el.style.display === "none") el.style.removeProperty("display");
     if (el.style.visibility === "hidden") el.style.removeProperty("visibility");
     if (el.style.opacity === "0") el.style.removeProperty("opacity");
     if (el.style.pointerEvents === "none") el.style.removeProperty("pointer-events");

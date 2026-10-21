@@ -422,6 +422,20 @@ src/
     twitch_floating_panel_enabled, 8.1.23→8.1.24). Смена ДЕФОЛТА миграцией не
     является: у уже настроивших значение лежит в storage и не изменится
     (кейс role_marker_enabled true→false, 8.1.43).
+13. **`style.display` на элементах ролей — флаг САЙТА, наш код его не
+    пишет** (21.10.2026). Сайт прячет роли общим флагом `roleDisplay` (его D
+    и пункт меню) через Vue `v-show`: `display:none` получает КАЖДАЯ роль —
+    своя и сокомандников; прежний механизм `#stop` сайт больше не использует.
+    Vue переписывает display только на смене флага, поэтому наша запись
+    рассинхронизирует свою роль с сокомандниками («Бош не показывается,
+    моя только по V»), а у подмены роли — раскрывает состав при смене
+    флага. Наши слои (CSS-скрытие, inline auto-start, пин role-pin,
+    подмена) — только visibility/opacity/pointer-events. «Сайт спрятал»
+    определяет ТОЛЬКО `isNativeRoleHidden()` (role-pin.ts: display:none или
+    прежний #stop); снять скрытие сайта — только отдать ему его D
+    (`dispatchNativeRoleToggle`). Исполняемо: tests/invariants/obs-role-latch
+    (ни одной записи display в auto-start/role-pin/role-faker) и модель
+    сайта в auto-start-accept.test.ts («сайт прячет роли общим флагом»).
 
 ## 5. Карта хранилища
 

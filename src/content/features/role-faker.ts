@@ -50,7 +50,7 @@ class RoleFaker {
   get faked(): boolean {
     return this.isFaked;
   }
-  private originalRoles = new Map<HTMLElement, { display: string; visibility: string }>();
+  private originalRoles = new Map<HTMLElement, { visibility: string; visibilityPriority: string }>();
   private originalStyles = new Map<HTMLElement, { right: string; position: string }>();
   private spriteBase?: string;
 
@@ -150,13 +150,22 @@ class RoleFaker {
     this.originalStyles.clear();
   }
 
+  /**
+   * Прятать — visibility, НЕ display (21.10.2026): display — флаг сайта
+   * (roleDisplay → v-show). Наш display:none Vue перезаписывал на первой же
+   * смене флага (D, пункт меню) — сокомандники проступали посреди подмены,
+   * и состав уезжал в эфир; а возврат снимка затирал актуальный флаг сайта.
+   */
   private hideOtherRoles() {
     document.querySelectorAll<HTMLElement>(SITE.anyRole).forEach((el) => {
       if (el.closest(SITE.myRoleMark) || el.closest(SITE.myPlayerTile)) return;
       if (!this.originalRoles.has(el)) {
-        this.originalRoles.set(el, { display: el.style.display, visibility: el.style.visibility });
+        this.originalRoles.set(el, {
+          visibility: el.style.visibility,
+          visibilityPriority: el.style.getPropertyPriority("visibility"),
+        });
       }
-      el.style.display = "none";
+      el.style.setProperty("visibility", "hidden", "important");
     });
     if (!this.offDom) {
       // Пишем только при реальном расхождении: общий наблюдатель следит за
@@ -166,15 +175,18 @@ class RoleFaker {
         if (!this.isFaked) return;
         document.querySelectorAll<HTMLElement>(SITE.anyRole).forEach((el) => {
           if (el.closest(SITE.myRoleMark) || el.closest(SITE.myPlayerTile)) return;
-          if (el.style.display !== "none") {
+          if (el.style.visibility !== "hidden") {
             // Снимок ДО скрытия: узел, созданный Vue во время подмены,
             // прятался без регистрации — E/disable возвращали только старые,
             // и напарник оставался скрыт до перерисовки сайта (аудит
             // 29.08.2026, №8).
             if (!this.originalRoles.has(el)) {
-              this.originalRoles.set(el, { display: el.style.display, visibility: el.style.visibility });
+              this.originalRoles.set(el, {
+                visibility: el.style.visibility,
+                visibilityPriority: el.style.getPropertyPriority("visibility"),
+              });
             }
-            el.style.display = "none";
+            el.style.setProperty("visibility", "hidden", "important");
           }
         });
         // №3: Vue пересоздал узел СВОЕЙ роли — data-original-* умерли вместе
@@ -198,8 +210,8 @@ class RoleFaker {
 
   private resetRoles() {
     this.originalRoles.forEach((s, el) => {
-      el.style.display = s.display;
-      el.style.visibility = s.visibility;
+      el.style.removeProperty("visibility");
+      if (s.visibility) el.style.setProperty("visibility", s.visibility, s.visibilityPriority);
     });
     this.originalRoles.clear();
     this.resetMenuPositions();

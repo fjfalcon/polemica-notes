@@ -184,11 +184,26 @@ describe("подмена переживает Vue-перерисовки (ауд
     late.style.display = "inline-flex";
     (document.querySelector("#p2") as HTMLElement).appendChild(late);
     fireDom();
-    expect(late.style.display, "скрыт наблюдателем").toBe("none");
+    expect(late.style.visibility, "скрыт наблюдателем").toBe("hidden");
+    expect(late.style.display, "display — флаг сайта, подмена его не трогает").toBe("inline-flex");
     pressE();
-    expect(late.style.display, "E вернул исходный display, а не бросил скрытым").toBe(
-      "inline-flex",
-    );
+    expect(late.style.visibility, "E вернул исходное, а не бросил скрытым").toBe("");
+    expect(late.style.display).toBe("inline-flex");
     expect(isRoleFaked()).toBe(false);
+  });
+
+  test("21.10.2026: смена флага сайта (D) посреди подмены не раскрывает сокомандника", () => {
+    // Сайт прячет/показывает роли v-show — пишет display всем ролям. Наш
+    // прежний display:none Vue перезаписывал на первой же смене флага, и
+    // состав чёрных проступал посреди подмены — в эфир.
+    mountTable();
+    enable();
+    pressF();
+    const partner = document.querySelector<HTMLElement>("#p2 .player__role")!;
+    expect(partner.style.visibility).toBe("hidden");
+    partner.style.display = "none"; // сайт спрятал роли
+    partner.style.display = ""; // и показал обратно (его D)
+    fireDom();
+    expect(partner.style.visibility, "сокомандник по-прежнему скрыт подменой").toBe("hidden");
   });
 });
