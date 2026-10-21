@@ -9,6 +9,12 @@ const seam = vi.hoisted(() => ({
   subs: [] as Array<(muts: Array<{ addedNodes: unknown[] }>) => void>,
 }));
 vi.mock("@core/dom", () => ({
+  onDomChangeImmediate: (fn: (muts: MutationRecord[]) => void) => {
+    const mo = new MutationObserver(fn);
+    mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
+    return () => mo.disconnect();
+  },
+
   onDomChange: vi.fn((cb: (muts: Array<{ addedNodes: unknown[] }>) => void) => {
     seam.subs.push(cb);
     return () => {
@@ -233,51 +239,6 @@ describe("подсматривание ролей: возврат скрытия
     autoStartFeature.disable();
   });
 
-  test("«подсмотреть» показывает и СВОЮ роль, скрытую нативно (жалоба стримера 27.08.2026)", () => {
-    // Скрытие живёт двумя слоями: CSS прячет роли ВСЕХ, а свою роль сайт
-    // прячет ещё и сам (#stop вместо иконки). Клавиша снимала только CSS —
-    // стример видел роли всех, КРОМЕ своей, то есть ровно ту, ради которой
-    // клавишу и держат.
-    const kb = vi.mocked(keyboard);
-    document.body.innerHTML = `
-      <div class="players">
-        <div class="player my-player">
-          <div class="player__role role role my-role"><svg><use href="#stop"></use></svg></div>
-        </div>
-      </div>`;
-    const dKeys: string[] = [];
-    // Сайт на свой D переворачивает иконку роли — без этого проверка возврата
-    // была бы ложно-зелёной: «уже скрыто» и без нашего участия.
-    const use = document.querySelector("use") as SVGElement;
-    const spy = vi.spyOn(document, "dispatchEvent").mockImplementation((e: Event) => {
-      // Сайт без опции «хоткеи с модификатором» слушает только простой D.
-      if (e.type === "keydown" && !(e as KeyboardEvent).ctrlKey) {
-        dKeys.push((e as KeyboardEvent).code);
-        const now = use.getAttribute("href") ?? "";
-        use.setAttribute("href", now.includes("#stop") ? "#role-mafia" : "#stop");
-      }
-      return true;
-    });
-    autoStartFeature.enable({ settings: { auto_hide_roles_enabled: true } } as never);
-    vi.advanceTimersByTime(1_100);
-    expect(document.getElementById("polemica-role-hide"), "роли скрыты CSS").not.toBeNull();
-
-    const holdCall = kb.registerHold.mock.calls.at(-1)!;
-    dKeys.length = 0;
-    (holdCall[1] as () => void)();
-    expect(document.getElementById("polemica-role-hide"), "CSS снят").toBeNull();
-    expect(dKeys, "сайту дослан D — иначе своя роль осталась бы под #stop").toContain("KeyD");
-
-    // Отпускание обязано вернуть ОБА слоя: роль, оставшаяся на экране, уедет
-    // в эфир — это ровно то, от чего фича защищает.
-    dKeys.length = 0;
-    (holdCall[2] as () => void)();
-    expect(document.getElementById("polemica-role-hide"), "CSS вернулся").not.toBeNull();
-    expect(dKeys, "нативное скрытие вернулось").toContain("KeyD");
-    spy.mockRestore();
-    autoStartFeature.disable();
-  });
-
   test("после отпускания возвращаем РОВНО то скрытие, что было (21.10.2026)", () => {
     // Решение не по «роли сейчас видны»: во время удержания они видны по
     // определению, и сверка с DOM успевала записать «показаны» — отпускание
@@ -435,22 +396,20 @@ describe("inline-слой подчиняется фазе (жалоба Ильи
 });
 
 /**
- * Сайт прячет роли ОБЩИМ флагом (жалоба 21.10.2026). Его вёрстка сменилась:
- * D / пункт меню переключают `roleDisplay`, и Vue (v-show) пишет
- * `style.display = "none"` КАЖДОМУ элементу роли — своей и сокомандников.
- * Прежде сайт подменял значок на `#stop`, и наш код искал только его:
- * D и V не отдавали сайту его D, сокомандники оставались скрытыми, своя
- * роль расходилась с ними («Бош не показывается, моя только по V»).
+ * «Одна власть» (решение владельца 21.10.2026): роли видны/скрыты только по
+ * нашему CSS. Скрытие сайта (флаг roleDisplay → v-show → inline display:none
+ * на каждой роли) нейтрализовано правилом стилей, а решение игрока на сайте
+ * принимается в наш слой. Синтетического D сайту больше нет.
  */
-describe("сайт прячет роли общим флагом roleDisplay (v-show)", () => {
-  /** Модель сайта: стол мафии и его обработчик D, как у Vue v-show. */
+describe("одна власть: флаг сайта нейтрализован, его решения — в наш слой", () => {
+  /** Стол мафии со скрытым сайтом флагом и сайтовым D (как v-show). */
   function mafiaTableWithSiteFlag(phase: "day" | "night"): {
     own: HTMLElement;
     partner: HTMLElement;
     siteToggles: () => number;
   } {
-    document.body.className = phase;
     document.body.innerHTML = `
+      <div class="stage"><div class="substage current">${phase === "night" ? "Ход мафии" : "Речь игрока"}</div></div>
       <div class="player my-player">
         <span class="player__role role my-role mafia"><svg><use href="#mafia"></use></svg></span>
       </div>
@@ -459,25 +418,20 @@ describe("сайт прячет роли общим флагом roleDisplay (v-
       </div>`;
     const own = document.querySelector<HTMLElement>(".my-role")!;
     const partner = document.querySelector<HTMLElement>(".godfather")!;
-    let roleDisplay = true;
     let toggles = 0;
-    const apply = () => {
-      for (const el of document.querySelectorAll<HTMLElement>(".player__role")) {
-        el.style.display = roleDisplay ? "" : "none";
-      }
-    };
     document.addEventListener("keydown", (e) => {
-      // hotkeys-js: простой D — только без модификаторов.
       if ((e as KeyboardEvent).code !== "KeyD" || (e as KeyboardEvent).ctrlKey) return;
-      roleDisplay = !roleDisplay;
       toggles++;
-      apply();
     });
     // Игрок уже спрятал роли самим сайтом (его D / меню).
-    roleDisplay = false;
-    apply();
+    own.style.display = "none";
+    partner.style.display = "none";
     return { own, partner, siteToggles: () => toggles };
   }
+  /** Видит ли зритель роль: наш CSS-тег и нейтрализатор display сайта. */
+  const seen = (el: HTMLElement) =>
+    (el.style.display !== "none" || !!document.getElementById("pn-role-display-override")) &&
+    !document.getElementById("polemica-role-hide");
 
   const pressOurD = () => {
     const kb = keyboard as unknown as { register: ReturnType<typeof vi.fn> };
@@ -487,62 +441,59 @@ describe("сайт прячет роли общим флагом roleDisplay (v-
     );
   };
 
-  test("D из-под нашего CSS отдаёт сайту его D: своя роль И сокомандник видны вместе", () => {
+  test("скрытие сайта при включении принято в наш CSS; D показывает всё, сайту D не шлём", async () => {
     const { own, partner, siteToggles } = mafiaTableWithSiteFlag("day");
     autoStartFeature.enable({
-      settings: { auto_hide_roles_enabled: true, role_phase_auto_switch_enabled: false },
-    } as never);
-    vi.advanceTimersByTime(1_100); // наше CSS-скрытие встало поверх сайтового
-    pressOurD();
-    expect(document.getElementById("polemica-role-hide"), "наш CSS снят").toBeNull();
-    expect(siteToggles(), "сайту отдан его D — флаг roleDisplay включён").toBe(1);
-    expect(partner.style.display, "дон-сокомандник виден («Бош не показывается»)").toBe("");
-    expect(own.style.display, "своя роль видна").toBe("");
-    autoStartFeature.disable();
-  });
-
-  test("V при скрытии сайтом: видно всё вместе, отпустили — всё скрыто вместе (без зеркала)", () => {
-    const { own, partner, siteToggles } = mafiaTableWithSiteFlag("day");
-    autoStartFeature.enable({
-      settings: {
-        auto_hide_roles_enabled: true,
-        role_phase_auto_switch_enabled: true,
-        hotkey_role_peek: "KeyV",
-      },
-    } as never);
-    vi.advanceTimersByTime(2_500);
-    const kb = keyboard as unknown as { registerHold: ReturnType<typeof vi.fn> };
-    const holdCall = kb.registerHold.mock.calls.at(-1)!;
-    (holdCall[1] as () => void)(); // зажали V
-    expect([own.style.display, partner.style.display], "при V видны обе").toEqual(["", ""]);
-    (holdCall[2] as () => void)(); // отпустили
-    expect(siteToggles(), "показ и возврат — два D сайту").toBe(2);
-    expect(
-      [own.style.display, partner.style.display],
-      "отпустили — скрыты ОБЕ: своя не расходится с сокомандником",
-    ).toEqual(["none", "none"]);
-    autoStartFeature.disable();
-  });
-
-  test("№5: выключили авто-скрытие под дневным пином — сайту НЕ шлём D, роли стола видны", () => {
-    // setRoleVisibility(true) решал по учёту и видимости СВОЕЙ роли: своя
-    // под дневным пином obs-панели «не видна» → D при показанном флаге →
-    // «показать роли» прятало роли всего стола (adversarial 21.10.2026).
-    const { partner, siteToggles } = mafiaTableWithSiteFlag("day");
-    document.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD" })); // флаг сайта: показано
-    const base = siteToggles();
-    autoStartFeature.enable({
-      settings: { auto_hide_roles_enabled: true, role_phase_auto_switch_enabled: false },
-    } as never);
-    vi.advanceTimersByTime(1_100);
-    pinOwnRole("hidden"); // дневной пин obs-панели
-    autoStartFeature.update({
       settings: { auto_hide_roles_enabled: false, role_phase_auto_switch_enabled: false },
     } as never);
-    vi.advanceTimersByTime(500);
-    expect(siteToggles() - base, "флаг сайта не тронут").toBe(0);
-    expect(partner.style.display, "сокомандник виден").toBe("");
-    expect(document.getElementById("polemica-role-hide")).toBeNull();
+    expect(document.getElementById("polemica-role-hide"), "решение сайта принято").not.toBeNull();
+    expect([seen(own), seen(partner)]).toEqual([false, false]);
+    pressOurD();
+    expect([seen(own), seen(partner)], "своя И дон видны вместе").toEqual([true, true]);
+    expect(own.style.display, "inline display сайта мы не трогаем (инвариант №13)").toBe("none");
+    expect(siteToggles(), "синтетического D сайту больше нет").toBe(0);
+    autoStartFeature.disable();
+    expect(document.getElementById("pn-role-display-override"), "без нас решает сайт").toBeNull();
+  });
+
+  test("V при скрытии сайтом: видно всё вместе, отпустили — всё скрыто вместе", () => {
+    const { own, partner, siteToggles } = mafiaTableWithSiteFlag("day");
+    autoStartFeature.enable({
+      settings: { auto_hide_roles_enabled: false, role_phase_auto_switch_enabled: false, hotkey_role_peek: "KeyV" },
+    } as never);
+    const kb = keyboard as unknown as { registerHold: ReturnType<typeof vi.fn> };
+    const holdCall = kb.registerHold.mock.calls.at(-1)!;
+    expect((holdCall[1] as () => boolean)(), "подсматривание включилось").toBe(true);
+    expect([seen(own), seen(partner)]).toEqual([true, true]);
+    (holdCall[2] as () => void)();
+    expect([seen(own), seen(partner)], "отпустили — скрыты ОБЕ").toEqual([false, false]);
+    expect(siteToggles()).toBe(0);
+    autoStartFeature.disable();
+  });
+
+  test("ночной автопоказ при скрытии сайтом — видно всё вместе, без D сайту", () => {
+    const { own, partner, siteToggles } = mafiaTableWithSiteFlag("night");
+    autoStartFeature.enable({
+      settings: { auto_hide_roles_enabled: true, role_phase_auto_switch_enabled: true },
+    } as never);
+    vi.advanceTimersByTime(6_000);
+    expect([seen(own), seen(partner)]).toEqual([true, true]);
+    expect(siteToggles()).toBe(0);
+    autoStartFeature.disable();
+  });
+
+  test("№5: выключили авто-скрытие под дневным пином — роли стола видны", () => {
+    const { partner } = mafiaTableWithSiteFlag("day");
+    partner.style.display = "";
+    document.querySelector<HTMLElement>(".my-role")!.style.display = "";
+    autoStartFeature.enable({
+      settings: { auto_hide_roles_enabled: true, role_phase_auto_switch_enabled: false },
+    } as never);
+    pinOwnRole("hidden"); // дневной пин obs-панели
+    autoStartFeature.update!({
+      settings: { auto_hide_roles_enabled: false, role_phase_auto_switch_enabled: false },
+    } as never);
+    expect(seen(partner), "сокомандник виден").toBe(true);
     releasePins();
     autoStartFeature.disable();
   });
@@ -555,17 +506,6 @@ describe("сайт прячет роли общим флагом roleDisplay (v-
     expect(getComputedStyle(note).visibility).toBe("hidden");
     autoStartFeature.disable();
     expect(getComputedStyle(note).visibility).not.toBe("hidden");
-  });
-
-  test("ночной автопоказ при скрытии сайтом отдаёт сайту D — видно всё вместе", () => {
-    const { own, partner, siteToggles } = mafiaTableWithSiteFlag("night");
-    autoStartFeature.enable({
-      settings: { auto_hide_roles_enabled: true, role_phase_auto_switch_enabled: true },
-    } as never);
-    vi.advanceTimersByTime(6_000);
-    expect(siteToggles(), "сайтовое скрытие снято его же D").toBe(1);
-    expect([own.style.display, partner.style.display]).toEqual(["", ""]);
-    autoStartFeature.disable();
   });
 });
 
@@ -600,28 +540,14 @@ describe("клавиша скрытия уступает подмене роли
 describe("peek и пин: source-стражи (№7/№10; поведение пина — в role-pin.test)", () => {
   const src = readFileSync("src/content/features/auto-start.ts", "utf8");
 
-  test("верификация ночного показа видит застрявший inline (03.09.2026)", () => {
-    // Поведенчески не закрепить без гонок с таймингами интервала фазы:
-    // окно верификации 500 мс. Страж по исходнику: проверка «показана ли»
-    // обязана включать inlineHidden, иначе inline-скрытая роль считается
-    // показанной и ретрай молчит.
-    const start = src.indexOf("const stillHidden = el");
-    expect(start).toBeGreaterThan(-1);
-    const slice = src.slice(start, start + 220);
-    expect(slice).toMatch(/\|\| getOwnRoleState\(\)\.inlineHidden/);
-    // Семантический мутант «inlineHidden && false» содержал подстроку и
-    // проходил прежнюю грепу (adversarial 03.09.2026, №7 из списка мутаций).
-    expect(slice).not.toMatch(/inlineHidden\s*&&/);
-  });
-
   test("Н6: возврат натива ночью с автосменой перевзводит ночной показ", () => {
     // V, удержанная через переход в ночь дольше night-show, оставляла роль
     // нативно скрытой до ручного D: показ отработал ПОД клавишей, а
     // applyRolePhase его не перевзводит (фаза не менялась).
     const stopStart = src.indexOf("function stopPeek");
-    const body = src.slice(stopStart, src.indexOf("function restoreNativeHide"));
+    const body = src.slice(stopStart, src.indexOf("function bindPeekKey"));
     // Поведенчески — в role-visibility-fuzz («V держали через смену на ночь»).
-    expect(body).toMatch(/scheduleNightRoleAutoShow\(/);
+    expect(body).toMatch(/showAllRoles\(\)/);
     expect(body).toMatch(/nightShowDue\(\)/);
   });
 
@@ -643,8 +569,8 @@ describe("peek и пин: source-стражи (№7/№10; поведение п
   });
 
   test("№10: D во время peek глушится и для сайта", () => {
-    const start = src.indexOf("if (peeking) {");
-    const body = src.slice(start, start + 600);
-    expect(body).toMatch(/stopPropagation/);
+    const start = src.indexOf("function handleRoleKey");
+    const body = src.slice(start, src.indexOf("if (isRoleFaked())", start));
+    expect(body).toMatch(/if \(peeking\) \{[\s\S]*stopPropagation/);
   });
 });

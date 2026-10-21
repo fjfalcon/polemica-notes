@@ -9,7 +9,6 @@ import { log } from "@core/log";
 import { showToast } from "@core/toast";
 import { SITE } from "@core/selectors";
 import type { Feature, FeatureContext } from "@core/feature";
-import { isOwnRoleToggleEvent } from "../native-role-toggle";
 
 interface RoleDef {
   name: string;
@@ -29,10 +28,6 @@ interface RoleDef {
  * НАСТОЯЩУЮ роль прямо посреди подмены.
  */
 export function shouldSwallowRoleKey(e: KeyboardEvent, hideKeyCode: string): boolean {
-  // Наш синтетический D — не игрок: глотая его, блокировщик срывал возврат
-  // скрытия после «подсмотреть» (adversarial 21.10.2026, №9). Под подменой
-  // он безопасен: чужие роли спрятаны visibility, свою держит фальшивка.
-  if (isOwnRoleToggleEvent(e)) return false;
   if (e.code !== hideKeyCode) return false;
   // Пока пользователь печатает (KeyD = «в» в русской раскладке) или жмёт
   // Cmd/Ctrl+D — не глотаем.
@@ -73,6 +68,10 @@ function setFakeShield(on: boolean, icon?: string): void {
     // Текст «Игрок является …» (on_reveal_role) — то же знание, что значок.
     `html[${FAKE_SHIELD_ATTR}] ${SITE.roleRevealNotice} ` +
     `{ visibility: hidden !important; }` +
+    // Подсказка роли по наведению: Vue мог вернуть настоящую подпись до
+    // флаша наблюдателя (внешний аудит №2, §4 п.2) — под подменой подсказок
+    // ролей нет вовсе.
+    ` html[${FAKE_SHIELD_ATTR}] ${SITE.anyRole} ${SITE.siteTooltipText} { visibility: hidden !important; }` +
     (icon
       ? ` html[${FAKE_SHIELD_ATTR}] ${SITE.anyRole}[data-original-role] use:not([href$="#${icon}"]) ` +
         `{ visibility: hidden !important; }`
@@ -313,6 +312,9 @@ class RoleFaker {
         const href = `${base}#${role}`;
         use.setAttribute("href", href);
         use.setAttribute("xlink:href", href);
+        if (use.hasAttributeNS("http://www.w3.org/1999/xlink", "href")) {
+          use.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", href);
+        }
       }
       const tip = myRole.querySelector(SITE.siteTooltipText);
       if (tip && myRole.hasAttribute("data-original-role-name")) {
@@ -340,11 +342,33 @@ class RoleFaker {
     const href = use.getAttribute("href") || use.getAttribute("xlink:href") || "";
     if (href.includes("#stop")) return;
     const role = this.roles[this.currentRoleIndex];
-    if (!href.endsWith(`#${role.icon}`)) {
+    // Сайт поставил НАСТОЯЩУЮ роль (в том числе новую — смена роли в том же
+    // узле): её и вернёт E, а не снимок прежней (внешний аудит №2, §4 п.2).
+    // RoomIcon сайта патчит xlink:href — наш href при этом остаётся фальшивым
+    // (браузер рисует href), поэтому смотрим оба.
+    const xlink =
+      use.getAttributeNS("http://www.w3.org/1999/xlink", "href") || use.getAttribute("xlink:href") || "";
+    const realHref = !href.endsWith(`#${role.icon}`) ? href : !xlink.endsWith(`#${role.icon}`) ? xlink : "";
+    if (realHref && !realHref.includes("#stop")) {
+      const real = realHref.split("#")[1];
+      if (real && real !== el.getAttribute("data-original-role")) {
+        el.setAttribute("data-original-role", real);
+        const tipNow = el.querySelector(SITE.siteTooltipText)?.textContent ?? "";
+        if (tipNow && tipNow !== `Ваша роль - ${role.name}`) {
+          el.setAttribute("data-original-role-name", tipNow.replace("Ваша роль - ", ""));
+        }
+      }
+    }
+    if (!href.endsWith(`#${role.icon}`) || !xlink.endsWith(`#${role.icon}`)) {
       const base = el.getAttribute("data-original-sprite-base") || this.resolveSpriteBase();
       const fake = `${base}#${role.icon}`;
       use.setAttribute("href", fake);
       use.setAttribute("xlink:href", fake);
+      // И пространственный атрибут сайта — иначе перекраска шла бы на каждом
+      // флаше (он так и оставался бы настоящим).
+      if (use.hasAttributeNS("http://www.w3.org/1999/xlink", "href")) {
+        use.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", fake);
+      }
     }
     // Подпись сверяем ВСЕГДА: сайт мог вернуть настоящую при фальшивом
     // значке — и она всплывала по наведению (внешний аудит 21.10.2026).

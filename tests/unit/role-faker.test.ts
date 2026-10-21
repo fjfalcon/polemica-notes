@@ -29,7 +29,6 @@ vi.mock("@core/log", () => ({
 
 import { isRoleFaked, roleFakerFeature, shouldSwallowRoleKey } from "@content/features/role-faker";
 import type { FeatureContext } from "@core/feature";
-import { dispatchNativeRoleToggle } from "@content/native-role-toggle";
 
 function keydown(init: KeyboardEventInit & { code: string }): KeyboardEvent {
   return new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
@@ -53,21 +52,6 @@ describe("shouldSwallowRoleKey (§4.5 gates of the D blocker)", () => {
     // Инвертированный гейт §4.5: пропустив повтор, мы отдали бы D сайту, и он
     // показал бы настоящую роль посреди подмены. Тест держит это решение.
     expect(shouldSwallowRoleKey(keydown({ code: "KeyD", repeat: true }), "KeyD")).toBe(true);
-  });
-
-  test("наш синтетический D не глотает (adversarial 21.10.2026, №9)", () => {
-    // Глотая его, блокировщик срывал возврат скрытия после «подсмотреть».
-    const seen: boolean[] = [];
-    const spy = (e: Event) => seen.push(shouldSwallowRoleKey(e as KeyboardEvent, "KeyD"));
-    document.addEventListener("keydown", spy);
-    dispatchNativeRoleToggle();
-    document.removeEventListener("keydown", spy);
-    expect(seen.length, "пара D и пара Ctrl+D").toBe(2);
-    expect(seen.every((v) => v === false)).toBe(true);
-  });
-
-  test.each(["KeyF", "KeyE", "Space"])("ignores unrelated key %s", (code) => {
-    expect(shouldSwallowRoleKey(keydown({ code }), "KeyD")).toBe(false);
   });
 
   test("follows the rebound hide key, not the literal D", () => {

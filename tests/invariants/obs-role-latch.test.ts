@@ -84,7 +84,7 @@ describe("симметрия автомода: таймер видимости �
 describe("латч против живого узла (аудит скрытия ролей 29.08.2026, №1/№2)", () => {
   test("№1: ранний выход schedule сверяет латч с живым пином, не с памятью", () => {
     expect(source).toMatch(
-      /lastAppliedRoleVisibility === targetVisibility && pinHolds\(targetVisibility\)/,
+      /lastAppliedRoleVisibility === targetVisibility && roleStateHolds\(targetVisibility\)/,
     );
   });
 
@@ -341,11 +341,12 @@ describe("display на ролях — флаг сайта, наш код его 
     expect(code, "removeProperty('display')").not.toMatch(/removeProperty\(\s*["']display["']/);
   });
 
-  test("проверки «сайт спрятал» идут через isNativeRoleHidden, а не через один #stop", () => {
+  test("одна власть: auto-start не шлёт сайту D и не пишет display — нейтрализует правилом стилей", () => {
     const code = fs.readFileSync(path.join(ROOT, "src/content/features/auto-start.ts"), "utf8");
-    expect(code).not.toMatch(/href\.includes\("#stop"\)/);
-    expect(code).not.toMatch(/getRoleUseHref\([^)]*\)\.includes\("#stop"\)/);
-    expect((code.match(/isNativeRoleHidden\(/g) ?? []).length).toBeGreaterThanOrEqual(5);
+    expect(code, "синтетического D сайту больше нет").not.toMatch(/new KeyboardEvent\(/);
+    expect(code).not.toMatch(/dispatchEvent\(/);
+    expect(code, "нейтрализатор — таблица стилей").toMatch(/display: \$\{SITE\.roleDisplayValue\} !important/);
+    expect(code, "решение сайта принимается немедленным подписчиком").toMatch(/onDomChangeImmediate\(onRoleDomImmediate\)/);
   });
 });
 

@@ -412,15 +412,24 @@ async function switchScene(sceneName: string, manual = false): Promise<boolean> 
   }
 }
 
+/**
+ * Эпоха сведений о сцене: растёт на каждом событии сцены от OBS. Ответ
+ * get_status, запрошенный ДО события, — устаревший снимок: прежде он
+ * перетирал уже обработанный уход с ночной сцены, восстанавливал ночь и
+ * снимал скрытие своей роли на дневной сцене (внешний аудит №2, B01).
+ */
+let sceneInfoEpoch = 0;
+
 async function requestOBSStatus(): Promise<void> {
   try {
+    const epoch = sceneInfoEpoch;
     const response = await obsCommand("get_status");
     if (response && response.success) {
       const status = response.data;
       if (status && status.connected) {
         panel?.setConnectionStatus("Подключено", "connected");
         scenes = status.scenes || [];
-        currentScene = status.currentScene ?? null;
+        if (epoch === sceneInfoEpoch) currentScene = status.currentScene ?? null;
         panel?.setScenes(scenes, currentScene);
       } else {
         panel?.setConnectionStatus("Не подключено", "error");
@@ -500,7 +509,7 @@ async function clearPersistedAutoState(resetRuntimeState = false): Promise<void>
   }
 }
 
-async function restorePersistedAutoState(status: any = null): Promise<boolean> {
+async function restorePersistedAutoState(status: any = null, epoch = sceneInfoEpoch): Promise<boolean> {
   if (!autoModeEnabled) return false;
 
   try {
@@ -508,7 +517,8 @@ async function restorePersistedAutoState(status: any = null): Promise<boolean> {
     if (!resolvedStatus?.connected || !resolvedStatus.sessionId) return false;
 
     obsSessionId = resolvedStatus.sessionId;
-    currentScene = resolvedStatus.currentScene || currentScene;
+    // Снимок старше уже обработанного события сцены — сцену не трогаем (B01).
+    if (epoch === sceneInfoEpoch) currentScene = resolvedStatus.currentScene || currentScene;
     scenes = resolvedStatus.scenes || scenes;
 
     const res = await browser.storage.local.get(["obs_auto_scene_state"]);
@@ -552,8 +562,14 @@ async function restorePersistedAutoState(status: any = null): Promise<boolean> {
 
 function applyRoleVisibility(isRoleVisible: boolean): boolean {
   // Пин и снимки — в ../role-pin; здесь остаётся решение «когда» и латч.
+  // Одна власть (решение владельца 21.10.2026): пин только ПРЯЧЕТ свою роль
+  // (защита эфира). Показ — снять пин и сообщить auto-start (nightShow): он
+  // открывает роли стола своим CSS-слоем в тот же момент — своя и напарники
+  // вместе, без зеркала (внешний аудит №2, H04/H05). Прежний visible-пин
+  // (!important) был второй властью и спорил с ручным скрытием игрока.
   const target = isRoleVisible ? ("visible" as const) : ("hidden" as const);
-  if (!pinOwnRole(target)) {
+  if (isRoleVisible) releasePins();
+  else if (!pinOwnRole("hidden")) {
     log.debug(SCOPE, "Role visibility targets not found, skipping role update");
     return false;
   }
@@ -572,8 +588,14 @@ function applyRoleVisibility(isRoleVisible: boolean): boolean {
         ? "роль показана (ночь, эфир на ночной сцене)"
         : "роль скрыта (день или эфир не на ночной сцене)",
     );
+    if (isRoleVisible) notifyRoleSceneGate("nightShow", { nightSince: nightSince ?? Date.now() });
   }
   return true;
+}
+
+/** Держится ли желаемое: «скрыто» — живой hidden-пин; «видно» — пина нет. */
+function roleStateHolds(want: "visible" | "hidden"): boolean {
+  return want === "hidden" ? pinHolds("hidden") : !pinHolds("hidden");
 }
 
 function setImportant(el: HTMLElement, prop: string, value: string): void {
@@ -620,8 +642,14 @@ export function nightSceneSafeForRoleShow(): boolean {
   return nightRoleShowAllowed({ nightScene, currentScene });
 }
 
-export type RoleSceneGateReason = "gate" | "beforeDayScene";
-let roleSceneGateListener: ((reason: RoleSceneGateReason) => void) | null = null;
+export type RoleSceneGateReason = "gate" | "beforeDayScene" | "nightShow";
+type RoleSceneGateListener = (reason: RoleSceneGateReason, info?: { nightSince?: number }) => void;
+let roleSceneGateListener: RoleSceneGateListener | null = null;
+
+/** Ведут ли автосцены OBS видимость ролей (тогда ночной показ — за ними). */
+export function obsAutoScenesActive(): boolean {
+  return autoModeEnabled;
+}
 
 /**
  * auto-start подписывается, чтобы роли СОКОМАНДНИКОВ (его CSS) шли вместе
@@ -629,18 +657,16 @@ let roleSceneGateListener: ((reason: RoleSceneGateReason) => void) | null = null
  * сцены (adversarial 21.10.2026, №7). Зовётся из healRolePin — он
  * срабатывает на каждую смену сцены, (ре)коннект и разрыв OBS.
  */
-export function setRoleSceneGateListener(
-  fn: (reason: RoleSceneGateReason) => void,
-): () => void {
+export function setRoleSceneGateListener(fn: RoleSceneGateListener): () => void {
   roleSceneGateListener = fn;
   return () => {
     if (roleSceneGateListener === fn) roleSceneGateListener = null;
   };
 }
 
-function notifyRoleSceneGate(reason: RoleSceneGateReason): void {
+function notifyRoleSceneGate(reason: RoleSceneGateReason, info?: { nightSince?: number }): void {
   try {
-    roleSceneGateListener?.(reason);
+    roleSceneGateListener?.(reason, info);
   } catch (err) {
     log.error(SCOPE, "role scene gate listener threw", err);
   }
@@ -677,7 +703,7 @@ function healRolePin(): void {
   notifyRoleSceneGate("gate");
   const want = desiredRoleVisibility();
   if (!want) return;
-  if (pinHolds(want)) return;
+  if (roleStateHolds(want) && lastAppliedRoleVisibility === want) return;
   if (getRoleVisibilityTargets().length === 0) return; // узлов ещё/уже нет
   lastAppliedRoleVisibility = null; // латч мёртв вместе с прежним узлом
   // Скрыть — СРАЗУ, не таймером: «в эфир» не ждёт даже одного кадра
@@ -714,7 +740,7 @@ function scheduleRoleVisibility(timeOfDay: TimeOfDay, attempt = 0): void {
   // Латч сверяется с ЖИВЫМ узлом (аудит скрытия ролей 29.08.2026, №1): Vue
   // пересоздаёт плитку, пин умирает вместе с ней, а глобальная переменная
   // продолжала утверждать «скрыто» — настоящая роль была видна в эфире.
-  if (lastAppliedRoleVisibility === targetVisibility && pinHolds(targetVisibility)) {
+  if (lastAppliedRoleVisibility === targetVisibility && roleStateHolds(targetVisibility)) {
     log.debug(SCOPE, "Role visibility already set to", targetVisibility);
     return;
   }
@@ -1505,6 +1531,7 @@ function handleOBSEvent(eventType: string, data: any): void {
 
   switch (eventType) {
     case "obs_scenes_updated":
+      sceneInfoEpoch++;
       if (data && data.scenes) {
         scenes = data.scenes;
         currentScene = data.currentScene ?? null;
@@ -1526,6 +1553,7 @@ function handleOBSEvent(eventType: string, data: any): void {
       break;
 
     case "obs_scene_changed":
+      sceneInfoEpoch++;
       currentScene = data ?? null;
       if (!panel && autoModeEnabled && hasActiveGameInterface()) doShow();
       panel?.setCurrentScene(currentScene);
@@ -1542,6 +1570,7 @@ function handleOBSEvent(eventType: string, data: any): void {
       break;
 
     case "obs_disconnected":
+      sceneInfoEpoch++;
       void clearPersistedAutoState(true);
       scenes = [];
       currentScene = null;
@@ -1702,9 +1731,10 @@ export const obsPanelFeature: Feature = {
 
     // Запрос статуса OBS + восстановление состояния авто-сцены.
     if (autoModeEnabled) {
+      const epoch = sceneInfoEpoch;
       const response = await obsCommand("get_status");
       const status = response?.success ? response.data : null;
-      await restorePersistedAutoState(status);
+      await restorePersistedAutoState(status, epoch);
     }
 
     syncPanelVisibilityWithGameState();
@@ -1766,5 +1796,9 @@ export const obsPanelFeature: Feature = {
     phaseUnknownSince = 0;
     phaseUnknownReported = false;
     autoSettingsInitialized = false;
+    // Автосцен больше нет — гейт сцены открыт: сценовое скрытие напарников у
+    // auto-start должно сняться и при изолированном выключении этой фичи
+    // (внешний аудит №2, L01).
+    notifyRoleSceneGate("gate");
   },
 };

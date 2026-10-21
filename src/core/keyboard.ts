@@ -6,7 +6,6 @@
  * Поддерживает раскладко-независимость через event.code (KeyF == и F, и А).
  */
 import { log } from "./log";
-import { isSynthetic } from "./synthetic-keys";
 
 export type HotkeyHandler = (e: KeyboardEvent) => void;
 
@@ -29,6 +28,28 @@ export function producesText(code: string): boolean {
   );
 }
 
+/**
+ * Клавиши, которые в поле ввода РЕДАКТИРУЮТ текст, хотя символа не дают:
+ * Enter (новая строка), Tab, Backspace/Delete, стрелки, Home/End/PageUp/Down.
+ * Назначенный на них хоткей в чате/заметке срабатывал на каждом переводе
+ * строки — hide=Enter открывал роли стола (внешний аудит №2, B04).
+ * F-клавиши и Escape сюда не входят: пауза на F8 работает и из чата.
+ */
+export function editsText(code: string): boolean {
+  return (
+    producesText(code) ||
+    /^(Enter|NumpadEnter|Tab|Backspace|Delete|Arrow|Home|End|PageUp|PageDown|Insert)/.test(code)
+  );
+}
+
+/**
+ * Код клавиши, которую сайт держит под свой тумблер ролей (hotkeys-js `d`).
+ * Любая наша привязка на неё забирает клавишу у сайта целиком: иначе сброс
+ * подмены или выкрик на D переключали флаг ролей сайта и открывали стол
+ * (внешний аудит №2, B03).
+ */
+const SITE_ROLE_TOGGLE_CODE = "KeyD";
+
 /** Пользователь печатает — в поле ввода, в textarea или в contenteditable. */
 export function isTypingContext(e: KeyboardEvent): boolean {
   const candidates: Array<EventTarget | null> = [e.target, document.activeElement];
@@ -46,8 +67,6 @@ class KeyboardRouter {
   private started = false;
 
   private onKeyDown = (e: KeyboardEvent) => {
-    // Наши синтетические события (D сайту) — не нажатия игрока.
-    if (isSynthetic(e)) return;
     const b = this.bindings.get(e.code);
     const watchers = this.observers.get(e.code);
     if (!b && !watchers) return;
@@ -56,7 +75,11 @@ class KeyboardRouter {
     // Обратная сторона: в русской раскладке KeyF — это «а», KeyD — «в», KeyE — «у».
     // Без этих проверок фраза в игровом чате перещёлкивала подменённую роль и
     // снимала скрытие роли — то есть показывала её на стриме.
-    if (isTypingContext(e) && producesText(e.code)) return;
+    if (isTypingContext(e) && editsText(e.code)) return;
+    // Включившееся «зажатие» — клавиша целиком наша, в любых сочетаниях и
+    // повторах: Ctrl/Alt-повтор удерживаемой V доходил до сайта, и hotkeys-js
+    // считал V зажатой навсегда (внешний аудит №2, B02).
+    if (this.swallowed.has(e.code)) e.stopPropagation();
     // Наблюдатели видят то, что НЕ забирает наш хоткей: клавишу без
     // привязки и любые сочетания с Ctrl/Cmd — их получит сайт (у опции
     // «хоткеи с модификатором» Ctrl/Cmd+D — его тумблер ролей), а фича
@@ -66,6 +89,7 @@ class KeyboardRouter {
     if (!b) return;
     // Ctrl+F / Cmd+D и прочие сочетания принадлежат браузеру и сайту, не нам.
     if (e.altKey || modified) return;
+    if (e.code === SITE_ROLE_TOGGLE_CODE) e.stopPropagation();
     // Зажатая клавиша не должна гнать обработчик с частотой автоповтора. А
     // сайту — и подавно: у hotkeys-js нет защиты от повтора, и зажатый D
     // переключал флаг ролей на КАЖДОМ повторе — мигание в эфире.
@@ -104,7 +128,7 @@ class KeyboardRouter {
   private holds = new Map<string, { down: () => boolean | void; up: () => void }>();
 
   private onKeyUp = (e: KeyboardEvent) => {
-    if (isSynthetic(e)) return;
+    if (e.code === SITE_ROLE_TOGGLE_CODE && this.bindings.has(e.code)) e.stopPropagation();
     const wasSwallowed = this.swallowed.has(e.code);
     if (this.releaseHold(e.code) && wasSwallowed) e.stopPropagation();
   };

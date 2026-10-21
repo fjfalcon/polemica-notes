@@ -15,8 +15,16 @@ const seam = vi.hoisted(() => ({
   persisted: false,
   /** Видимость в момент отправки set_scene — до того, как OBS что-либо сделал. */
   atSend: [] as Array<{ scene: string; own: string; peer: string }>,
+  /** OBS отказывает в смене сцены (вкладка не владелец) — сцена не меняется. */
+  refuse: false,
 }));
-vi.mock("@core/dom", () => ({ onDomChange: () => () => {}, safeClick: () => true, isVisible: () => true }));
+vi.mock("@core/dom", () => ({
+  onDomChangeImmediate: (fn: (muts: MutationRecord[]) => void) => {
+    const mo = new MutationObserver(fn);
+    mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
+    return () => mo.disconnect();
+  },
+ onDomChange: () => () => {}, safeClick: () => true, isVisible: () => true }));
 vi.mock("@core/env", () => ({
   browser: {
     storage: {
@@ -48,6 +56,7 @@ vi.mock("@core/messaging", () => ({
       return { success: true, data: { connected: true, sessionId: "s", currentScene: seam.scene, scenes: [] } };
     }
     if (msg.command === "set_scene") {
+      if (seam.refuse) return { ignored: "not_owner" };
       seam.atSend.push({
         scene: msg.data!.sceneName!,
         own: getComputedStyle(own()).visibility,
@@ -98,6 +107,7 @@ beforeEach(() => {
   seam.sent = [];
   seam.atSend = [];
   seam.persisted = false;
+  seam.refuse = false;
 });
 afterEach(() => {
   autoStartFeature.disable();
@@ -117,7 +127,8 @@ test("H02: 2с-опрос heal не сбрасывает 3с-задержку н
   expect(own().style.visibility).toBe("hidden");
   stage("Ночь | ход мафии");
   await vi.advanceTimersByTimeAsync(15_000);
-  expect(own().style.visibility, "ночью на ночной сцене своя роль показана").toBe("visible");
+  expect(vis(own()), "ночью на ночной сцене своя роль показана").toBe("visible");
+  expect(vis(peer()), "и напарник — вместе с ней (одна власть)").toBe("visible");
 });
 
 test("B05: перед командой дневной сцены напарники УЖЕ скрыты, хотя current ещё ночь", async () => {
@@ -141,7 +152,7 @@ test("B06: разрыв OBS не отменяет свежее защитное 
   autoStartFeature.enable(ctx());
   await obsPanelFeature.enable(ctx());
   await vi.advanceTimersByTimeAsync(6_600);
-  expect(own().style.visibility).toBe("visible");
+  expect(vis(own())).toBe("visible");
   event("obs_disconnected", null);
   expect(vis(own()), "скрыта синхронно — ни одного кадра").toBe("hidden");
   await vi.advanceTimersByTimeAsync(500);
@@ -183,4 +194,29 @@ test("B07: одни автосцены (без автосмены фаз) — у
   await vi.advanceTimersByTimeAsync(50);
   expect(vis(own())).toBe("hidden");
   expect(vis(peer()), "без зеркала: напарник тоже").toBe("hidden");
+});
+
+test("выключили автосцены ночью, эфир был на дневной сцене — ночной показ автосмены открывает роли", async () => {
+  seam.persisted = true;
+  seam.scene = "day";
+  seam.refuse = true;
+  autoStartFeature.enable(ctx());
+  await obsPanelFeature.enable(ctx());
+  await vi.advanceTimersByTimeAsync(6_000);
+  expect([vis(own()), vis(peer())], "не ночная сцена — скрыто всё").toEqual(["hidden", "hidden"]);
+  obsPanelFeature.update!(ctx({ obs_auto_mode_enabled: false }));
+  await vi.advanceTimersByTimeAsync(4_000);
+  expect([vis(own()), vis(peer())]).toEqual(["visible", "visible"]);
+});
+
+test("одна власть: ночью игрок спрятал D — своя роль скрыта вместе с напарником (пин OBS не держит её)", async () => {
+  seam.persisted = true;
+  autoStartFeature.enable(ctx());
+  await obsPanelFeature.enable(ctx());
+  await vi.advanceTimersByTimeAsync(6_000);
+  expect([vis(own()), vis(peer())]).toEqual(["visible", "visible"]);
+  document.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD", bubbles: true }));
+  document.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyD", bubbles: true }));
+  await vi.advanceTimersByTimeAsync(3_000);
+  expect([vis(own()), vis(peer())], "прежний visible-пин оставлял свою роль в эфире").toEqual(["hidden", "hidden"]);
 });

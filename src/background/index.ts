@@ -576,10 +576,12 @@ async function handleObsQuery(
   // стояли бы за ним — «сцена переключилась через 15 секунд после фазы».
   switch (cmd) {
     case "get_status": {
-      const st = obs.getStatus();
       const s = await getSettings();
       // UI обязан объяснить молчание OBS (adversarial 27.08.2026, №5).
       const needsPassword = Boolean(s.obs_password) && !(await passwordFitsHost(s.obs_host));
+      // Снимок — ПОСЛЕ ожиданий: снятый до них, он мог устареть на событие
+      // смены сцены (внешний аудит №2, B01).
+      const st = obs.getStatus();
       return { ...st, needsPassword };
     }
     case "set_scene": {

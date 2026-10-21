@@ -81,6 +81,14 @@ const MIN_FLUSH_INTERVAL_MS = 250;
 class SharedDomObserver {
   private observer: MutationObserver | null = null;
   private subscribers = new Set<DomSubscriber>();
+  /**
+   * Немедленные подписчики: зовутся прямо в колбэке MutationObserver — это
+   * микрозадача ПОСЛЕ патча Vue и ДО отрисовки кадра. Только для дешёвых
+   * проверок, от которых зависит видимость в эфире (видимость ролей,
+   * 21.10.2026): обычный проход дросселирован rAF/250 мс, и открытый кадр
+   * успевал бы уехать в эфир. Записи в DOM — только идемпотентные.
+   */
+  private immediate = new Set<(muts: MutationRecord[]) => void>();
   private pending: MutationRecord[] = [];
   private dropped = 0;
   private scheduled = false;
@@ -104,13 +112,30 @@ class SharedDomObserver {
     this.ensureStarted();
     return () => {
       this.subscribers.delete(fn);
-      if (this.subscribers.size === 0) this.stop();
+      if (this.subscribers.size === 0 && this.immediate.size === 0) this.stop();
+    };
+  }
+
+  subscribeImmediate(fn: (muts: MutationRecord[]) => void): () => void {
+    this.immediate.add(fn);
+    this.ensureStarted();
+    return () => {
+      this.immediate.delete(fn);
+      if (this.subscribers.size === 0 && this.immediate.size === 0) this.stop();
     };
   }
 
   private ensureStarted() {
     if (this.observer) return;
     this.observer = new MutationObserver((muts) => {
+      for (const fn of this.immediate) {
+        try {
+          fn(muts);
+        } catch (err) {
+          log.error("dom", "immediate subscriber threw", err);
+        }
+      }
+      if (this.subscribers.size === 0) return;
       const room = MAX_PENDING - this.pending.length;
       if (room > 0) {
         // Без spread: `push(...muts)` на большой пачке даёт RangeError.
@@ -293,6 +318,11 @@ export const domObserver = new SharedDomObserver();
 /** Подписаться на изменения DOM через общий наблюдатель. */
 export function onDomChange(fn: DomSubscriber): () => void {
   return domObserver.subscribe(fn);
+}
+
+/** Немедленный подписчик (до кадра) — см. SharedDomObserver.immediate. */
+export function onDomChangeImmediate(fn: (muts: MutationRecord[]) => void): () => void {
+  return domObserver.subscribeImmediate(fn);
 }
 
 /**

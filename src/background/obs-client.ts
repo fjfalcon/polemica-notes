@@ -478,6 +478,7 @@ export class ObsClient {
   private handleEvent(eventData: any): void {
     switch (eventData.eventType) {
       case "CurrentProgramSceneChanged": {
+        this.sceneEventSeq++;
         const name = eventData.eventData.sceneName;
         // Эхо нашего же setCurrentScene: state уже применён и разослан —
         // второй notifyAll давал 2×tabs.query и 2N сообщений вкладкам на
@@ -550,8 +551,16 @@ export class ObsClient {
     return this.scenes;
   }
 
+  /** Счётчик событий смены сцены: ACK запроса не перетирает более новое (аудит №2). */
+  private sceneEventSeq = 0;
+
   async setCurrentScene(sceneName: string): Promise<boolean> {
+    const seq = this.sceneEventSeq;
     await this.request("SetCurrentProgramScene", { sceneName });
+    // За время запроса пришло событие смены сцены (эхо нашей или более новая
+    // ручная) — правду уже установило оно. Иначе запоздалый ACK возвращал
+    // ночь поверх уже дневной сцены (внешний аудит №2, условный п.1).
+    if (seq !== this.sceneEventSeq) return true;
     // Событие CurrentProgramSceneChanged обычно ОБГОНЯЕТ ответ запроса и уже
     // разослало смену — второй notifyAll давал 2×tabs.query на каждую фазу
     // (PERF26-17; adversarial №9: гард только в событии не дедупил типичный

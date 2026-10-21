@@ -153,6 +153,12 @@ export const SITE = {
   myRole: ".player__role.role.role.my-role",
   anyRole: ".player__role.role.role",
   /**
+   * Собственный display роли в стилях сайта (room/bundle/style.css:
+   * `.player__role{display:flex}`). Им нейтрализуем скрытие сайта (v-show
+   * пишет inline display:none) — правилом таблицы стилей с !important.
+   */
+  roleDisplayValue: "flex",
+  /**
    * Уведомление на плитке «Игрок является мафией» (сокет on_reveal_role;
    * класс элемента = тип уведомления). То же знание, что значок роли.
    */
@@ -600,6 +606,8 @@ export const OWN = {
   rotateButton: "rotate-button",
   muteButton: "mute-button",
   roleHideStyle: "polemica-role-hide",
+  /** Нейтрализатор скрытия ролей САЙТОМ (его v-show): display поверх inline. */
+  roleDisplayOverride: "pn-role-display-override",
   /** Контейнер для иконок, добавляемых к игроку. */
   playerIcons: "player-icons",
   /** Контейнер инлайновой статистики игрока. */
@@ -626,6 +634,8 @@ export const OWN = {
  * молча, пока `SITE` выглядел бы исправленным (внешний аудит).
  */
 export const SITE_CLASS = {
+  /** Значок роли игрока (span под v-show флага roleDisplay). */
+  playerRole: "player__role",
   /** Плитка игрока и своя плитка. */
   player: "player",
   myPlayer: "my-player",
