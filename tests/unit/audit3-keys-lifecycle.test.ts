@@ -83,6 +83,7 @@ beforeEach(() => {
     const hidden = own().style.display !== "none";
     queueMicrotask(() => document.querySelectorAll<HTMLElement>(".player__role")
       .forEach(el => { el.style.display = hidden ? "none" : ""; }));
+    return false; // как обёртка хоткеев сайта (preventDefault)
   });
 });
 afterEach(async () => {

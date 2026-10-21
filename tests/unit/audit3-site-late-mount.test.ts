@@ -39,7 +39,7 @@ function mount() {
 function install(flag: boolean, phase: boolean, autoHide: boolean, existing = false) {
   nativeFlag = flag;
   hotkeys = factory(window, document, navigator);
-  hotkeys(useModifier ? "ctrl+d, command+d" : "d", () => { nativeFlag = !nativeFlag; });
+  hotkeys(useModifier ? "ctrl+d, command+d" : "d", () => { nativeFlag = !nativeFlag; return false; });
   document.body.innerHTML = '<div class="stage"><div class="substage current">Ход мафии</div></div><div class="player"></div>';
   if (existing) mount();
   autoStartFeature.enable({ settings: { auto_accept_enabled: false, skip_start_screen_enabled: false, auto_hide_roles_enabled: autoHide, role_phase_auto_switch_enabled: phase, hotkey_role_hide: "KeyD", hotkey_role_peek: "KeyV" } } as never);

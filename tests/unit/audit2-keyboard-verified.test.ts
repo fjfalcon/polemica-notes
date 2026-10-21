@@ -33,7 +33,7 @@ let cleanup: Array<() => void> = [];
 function apply() {
   document.querySelectorAll<HTMLElement>(".player__role").forEach(el => el.style.display = roleDisplay ? "" : "none");
 }
-function toggle() { roleDisplay = !roleDisplay; queueMicrotask(apply); }
+function toggle() { roleDisplay = !roleDisplay; queueMicrotask(apply); return false; } // false → preventDefault, как у сайта
 function install(modifier = false, initial = false) {
   hotkeys = hotkeysFactory(window, document, navigator);
   roleDisplay = initial;

@@ -33,7 +33,7 @@ afterEach(() => { autoStartFeature.disable(); hk?.unbind(); document.body.replac
 
 test.each(["control-no-extra-command", "typing-D-100ms", "typing-D-1000ms", "PTT-blocked-CtrlD"])("first mount respects latest own show: %s", async mode => {
  flag = true; hk = factory(window, document, navigator);
- hk("ctrl+d, command+d", () => { flag = !flag; });
+ hk("ctrl+d, command+d", () => { flag = !flag; return false; }); // как обёртка сайта
  document.body.innerHTML = '<div class="roller"><div class="new-stage">Идет набор игроков</div></div><div class="player my-player"></div><textarea></textarea>';
  autoStartFeature.enable({ settings: { auto_accept_enabled: false, skip_start_screen_enabled: false, auto_hide_roles_enabled: true, role_phase_auto_switch_enabled: false, hotkey_role_hide: "KeyD", hotkey_role_peek: "KeyV" } } as never);
  await vi.advanceTimersByTimeAsync(1000);

@@ -78,7 +78,7 @@ vi.useFakeTimers(); // monotonic performance clock shared by all cells
 function nativeSite(c: Cell) {
   let flag = c.native;
   const flush = () => { for (const el of roles()) el.style.display = flag ? "" : "none"; };
-  hotkeys(c.modifier ? "ctrl+d,command+d" : "d", () => { flag = !flag; queueMicrotask(flush); });
+  hotkeys(c.modifier ? "ctrl+d,command+d" : "d", () => { flag = !flag; queueMicrotask(flush); return false; });
   hotkeys(c.modifier ? "ctrl+v,command+v" : "v", () => {});
   flush();
   return { get flag() { return flag; }, setFlag(next: boolean) { flag = next; queueMicrotask(flush); },

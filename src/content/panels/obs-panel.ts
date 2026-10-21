@@ -20,7 +20,7 @@
  */
 import { FloatingPanel } from "@core/FloatingPanel";
 // isVisible переименован: в этом модуле имя занято флагом видимости панели.
-import { onDomChange, isVisible as isElementVisible } from "@core/dom";
+import { onDomChange, onDomChangeImmediate, isVisible as isElementVisible } from "@core/dom";
 import { browser } from "@core/env";
 import { log } from "@core/log";
 import { onMessage, sendRuntime } from "@core/messaging";
@@ -31,7 +31,7 @@ import {
   matchFinishedVisible,
   SITE_CLASS,
 } from "@core/selectors";
-import { isGameRoomPath } from "@shared/routes";
+import { gameRouteKey, isGameRoomPath } from "@shared/routes";
 import {
   getRoleVisibilityTargets,
   pinHolds,
@@ -344,6 +344,7 @@ function restoreRoleVisibility(): void {
 // Таймеры/подписки (всё должно быть снято в disable()).
 let unsubMessage: (() => void) | null = null;
 let unsubDom: (() => void) | null = null;
+let unsubRouteImmediate: (() => void) | null = null;
 let gameUiDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 let timeOfDayCheckDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -497,12 +498,9 @@ async function savePersistedAutoState(): Promise<void> {
 }
 
 async function clearPersistedAutoState(resetRuntimeState = false): Promise<void> {
-  try {
-    await browser.storage.local.remove("obs_auto_scene_state");
-  } catch (e) {
-    log.error(SCOPE, "Failed to clear OBS auto scene state", e);
-  }
-
+  // Сброс состояния — СРАЗУ, до ожидания storage: его позднее продолжение
+  // стирало уже новую подтверждённую ночь после реконнекта (внешний аудит
+  // №5, H03).
   if (resetRuntimeState) {
     if (pendingRoleVisibilityTimer) {
       clearTimeout(pendingRoleVisibilityTimer);
@@ -515,16 +513,29 @@ async function clearPersistedAutoState(resetRuntimeState = false): Promise<void>
     // Сброс выше гасил и СВЕЖЕЕ защитное скрытие, взведённое после разрыва
     // OBS, — старый visible-пин держал роль (внешний аудит 21.10.2026, B06).
     // Фаза теперь неизвестна → желаемое «скрыто» — применяем сразу.
+    phaseEpoch++;
     healRolePin();
+  }
+  try {
+    await browser.storage.local.remove("obs_auto_scene_state");
+  } catch (e) {
+    log.error(SCOPE, "Failed to clear OBS auto scene state", e);
   }
 }
 
 async function restorePersistedAutoState(status: any = null, epoch = sceneInfoEpoch): Promise<boolean> {
   if (!autoModeEnabled) return false;
+  // Снимок фазы из storage — только пока живого знания о фазе нет и комната
+  // та же: прежде поздний ответ ставил прошлую фазу поверх живой и сам слал
+  // дневную сцену без защиты напарников (внешний аудит №5, B03/C06).
+  const phaseAt = phaseEpoch;
+  const routeAt = routeEpoch;
+  const stale = () => !autoModeEnabled || phaseEpoch !== phaseAt || routeEpoch !== routeAt;
 
   try {
     const resolvedStatus = status || (await getStoredConnectionState());
     if (!resolvedStatus?.connected || !resolvedStatus.sessionId) return false;
+    if (stale()) return false;
 
     obsSessionId = resolvedStatus.sessionId;
     // Снимок старше уже обработанного события сцены — сцену не трогаем (B01).
@@ -534,6 +545,7 @@ async function restorePersistedAutoState(status: any = null, epoch = sceneInfoEp
     const res = await browser.storage.local.get(["obs_auto_scene_state"]);
     const stored = (res as any).obs_auto_scene_state as AutoSceneState | undefined;
     if (!stored || stored.sessionId !== obsSessionId || !stored.currentTimeOfDay) return false;
+    if (stale()) return false;
     // Возраст обязателен: восстановление существует для F5 и смерти service
     // worker — это секунды-минуты. Старая запись означает давно ушедшую игру,
     // и восстановив её, вкладка утверждала бы в эфире фазу той игры (и шла бы
@@ -560,10 +572,21 @@ async function restorePersistedAutoState(status: any = null, epoch = sceneInfoEp
     // Через roleTargetFor (жалоба 01.10.2026): restore не имеет права
     // показать роль, пока эфир не на ночной сцене — autoSwitchScene ниже
     // сам перезапустит показ после подтверждённой смены.
-    const applied = applyRoleVisibility(roleTargetFor(currentTimeOfDay) === "visible");
-    if (!applied) scheduleRoleVisibility(currentTimeOfDay, 1);
+    const restored = currentTimeOfDay;
+    const applied = applyRoleVisibility(roleTargetFor(restored) === "visible");
+    if (!applied) scheduleRoleVisibility(restored, 1);
 
-    await autoSwitchScene(currentTimeOfDay);
+    // Дневная сцена — через ту же защиту, что смена фазы: напарники
+    // скрыты ДО команды и кадр отрисован (аудит №5, B03). Включение фичи
+    // этот кадр не ждёт.
+    if (restored === "day") {
+      void hideRoleBeforeDaySceneSwitch().then(() => {
+        if (!stale()) void autoSwitchScene(restored);
+      });
+      log.debug(SCOPE, "Restored persisted OBS auto scene state", stored);
+      return true;
+    }
+    await autoSwitchScene(restored);
     log.debug(SCOPE, "Restored persisted OBS auto scene state", stored);
     return true;
   } catch (e) {
@@ -720,7 +743,14 @@ function healRolePin(): void {
   const want = desiredRoleVisibility();
   if (!want) return;
   if (roleStateHolds(want) && lastAppliedRoleVisibility === want) return;
-  if (getRoleVisibilityTargets().length === 0) return; // узлов ещё/уже нет
+  if (getRoleVisibilityTargets().length === 0) {
+    // Узлов ещё/уже нет: желаемое НЕ применено — латч прежнего состояния
+    // больше не правда. Иначе возврат к нему (DAY без своей плитки → NIGHT)
+    // считался «уже сделано», и nightShow терялся до конца ночи (внешний
+    // аудит №5, H02).
+    if (lastAppliedRoleVisibility !== want) lastAppliedRoleVisibility = null;
+    return;
+  }
   lastAppliedRoleVisibility = null; // латч мёртв вместе с прежним узлом
   // Скрыть — СРАЗУ, не таймером: «в эфир» не ждёт даже одного кадра
   // (внешний аудит 21.10.2026, B06).
@@ -770,7 +800,7 @@ function scheduleRoleVisibility(timeOfDay: TimeOfDay, attempt = 0): void {
       : 250;
   log.debug(SCOPE, "Scheduling role visibility change to", targetVisibility, "in", delayMs);
   pendingRoleVisibilityTarget = targetVisibility;
-  const scheduledPath = location.pathname;
+  const scheduledRoute = routeEpoch;
   pendingRoleVisibilityTimer = setTimeout(() => {
     pendingRoleVisibilityTimer = null;
     pendingRoleVisibilityTarget = null;
@@ -778,10 +808,8 @@ function scheduleRoleVisibility(timeOfDay: TimeOfDay, attempt = 0): void {
     // но проверка здесь дешёвая и закрывает будущие пути взведения.
     if (!autoModeEnabled) return;
     // Таймер прошлой комнаты (SPA) — не решение новой игры (аудит №4, S4).
-    if (location.pathname !== scheduledPath) {
-      checkPhaseRoute();
-      return;
-    }
+    checkPhaseRoute();
+    if (routeEpoch !== scheduledRoute) return;
     // Цель ПЕРЕсчитывается на срабатывании: за время задержки сцена могла
     // подтвердиться (или уйти) — применяем правду момента, не снимок.
     // И фазу — тоже: ночной таймер, взведённый поздним успехом смены сцены,
@@ -1225,6 +1253,7 @@ function evaluateTimeOfDay(): void {
         // не видно даже того, распознали мы фазу или нет.
         log.info(SCOPE, "фаза подтверждена:", currentTimeOfDay, "→", confirmedTimeOfDay);
         currentTimeOfDay = confirmedTimeOfDay;
+        phaseEpoch++;
         pendingTimeOfDay = null;
         nightSince = confirmedTimeOfDay === "night" ? Date.now() : null;
         longNightWarned = false;
@@ -1374,23 +1403,55 @@ async function autoSwitchScene(timeOfDay: TimeOfDay): Promise<void> {
 
 // ─────────────────────────── мониторинг DOM (день/ночь) ───────────────────────────
 
-/** Путь, на котором слежение за фазой видело страницу последний раз. */
+/** Игра (путь + game_id), которую слежение за фазой видело последней. */
 let lastPhaseRoutePath: string | null = null;
+/** Растёт на каждой смене пути: отложенное решение прошлой комнаты — не новой. */
+let routeEpoch = 0;
+/**
+ * Растёт на каждом ЖИВОМ знании фазы (подтверждение детектором, сброс при
+ * новой игре или разрыве). Снимок фазы из storage, прочитанный до этого,
+ * устарел (внешний аудит №5, B03).
+ */
+let phaseEpoch = 0;
 
 /**
  * Новая игра в том же документе (SPA): фаза, начало ночи и отложенный показ
  * роли — от прошлой комнаты. Прежде старый ночной таймер открывал роль в
  * новой игре с неизвестной фазой, а «та же ночь» не давала нового nightShow
  * (внешний аудит №4, S4). Сбрасываем до живого распознавания: без фазы
- * желаемое — скрыто.
+ * желаемое — скрыто. Проверка — немедленным подписчиком: обычный склеивал
+ * выход и возврат в ту же комнату (аудит №5, C02).
  */
 function checkPhaseRoute(): void {
-  const path = location.pathname;
+  const path = gameRouteKey(location);
   if (path === lastPhaseRoutePath) return;
   const previous = lastPhaseRoutePath;
   lastPhaseRoutePath = path;
-  if (previous === null || !isGameRoomPath(path)) return;
-  log.info(SCOPE, "новая игра в том же документе — фаза автосцен сброшена");
+  routeEpoch++;
+  if (previous === null || !isGameRoomPath(location.pathname)) return;
+  resetPhaseForNewGame("новая игра в том же документе");
+}
+
+/** Фаза этой комнаты уже была известна — матч шёл. */
+let roundSeenRunning = false;
+
+/**
+ * Новая игра в ТОЙ ЖЕ комнате: экран набора после идущего матча (URL не
+ * меняется). Иначе «ночь» прошлой игры продолжалась в новой, и nightShow
+ * новой ночи не приходил (внешний аудит №5, C05).
+ */
+function checkNewRound(): void {
+  if (pregameScreenVisible()) {
+    if (!roundSeenRunning) return;
+    roundSeenRunning = false;
+    resetPhaseForNewGame("новая игра в той же комнате");
+  } else if (currentTimeOfDay !== null) {
+    roundSeenRunning = true;
+  }
+}
+
+function resetPhaseForNewGame(why: string): void {
+  log.info(SCOPE, `${why} — фаза автосцен сброшена`);
   cancelPendingRoleVisibility();
   if (pendingTimeOfDayConfirmTimer) {
     clearTimeout(pendingTimeOfDayConfirmTimer);
@@ -1399,6 +1460,7 @@ function checkPhaseRoute(): void {
   pendingTimeOfDay = null;
   currentTimeOfDay = null;
   nightSince = null;
+  phaseEpoch++;
   lastAppliedRoleVisibility = null;
   healRolePin();
   requestTimeOfDayCheck();
@@ -1421,9 +1483,12 @@ function startDOMMonitoring(): void {
   // его добирает редкий страховочный опрос ниже.
   const PHASE_SCOPE = SITE.phaseScope;
   const ROLE_SEL = SITE.ownRoleTargets.join(", ");
-  lastPhaseRoutePath = location.pathname;
+  lastPhaseRoutePath = gameRouteKey(location);
+  unsubRouteImmediate = onDomChangeImmediate(checkPhaseRoute);
+  roundSeenRunning = false;
   unsubDom = onDomChange((mutations) => {
     checkPhaseRoute();
+    checkNewRound();
     let shouldCheckTime = false;
     let roleNodeAdded = false;
     // Break только когда найдено ОБА: ранний выход по phaseScope съедал
@@ -1469,17 +1534,23 @@ function startDOMMonitoring(): void {
   // сверяется с живым DOM и перенакладывает в пределах пары секунд.
   timeOfDayFallbackTimer = setInterval(() => {
     checkPhaseRoute();
+    checkNewRound();
     healRolePin();
     requestTimeOfDayCheck();
   }, 2000);
 
   // Начальная проверка времени суток.
   setTimeout(() => requestTimeOfDayCheck(), 1000);
+  // Фаза ещё неизвестна → своя роль скрыта, а гейт сцены прячет стол — сразу
+  // при включении, а не первым опросом (внешний аудит №5, B04).
+  healRolePin();
 }
 
 function stopDOMMonitoring(): void {
   unsubDom?.();
   unsubDom = null;
+  unsubRouteImmediate?.();
+  unsubRouteImmediate = null;
   // Возвращаем роли сайта в исходный вид: авто-режим мог оставить их
   // скрытыми (день) или принудительно показанными (ночь), и без этого они
   // застывали в таком виде до перерисовки страницы сайтом (находка 7).

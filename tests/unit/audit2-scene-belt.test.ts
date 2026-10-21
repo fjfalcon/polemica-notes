@@ -63,6 +63,7 @@ function installSite(initial: boolean, modifier = false) {
     if (e.ctrlKey) downKeys.add(17); else downKeys.delete(17);
     const want = modifier ? [17, 68] : [68];
     if (want.length === downKeys.size && want.every(k => downKeys.has(k))) {
+      e.preventDefault(); // как обёртка хоткеев сайта
       site.flag = !site.flag; site.toggles++;
       if (!queued) { queued = true; queueMicrotask(flush); }
     }

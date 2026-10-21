@@ -71,7 +71,7 @@ function update(patch: Record<string, unknown>) {
 function applyFlag() { document.querySelectorAll<HTMLElement>(".player__role").forEach(el => { el.style.display = nativeFlag ? "" : "none"; }); }
 function installNative(modifier = false) {
   hotkeys("d,ctrl+d,command+d", () => {}); hotkeys.unbind();
-  hotkeys(modifier ? "ctrl+d,command+d" : "d", () => { nativeFlag = !nativeFlag; queueMicrotask(applyFlag); });
+  hotkeys(modifier ? "ctrl+d,command+d" : "d", () => { nativeFlag = !nativeFlag; queueMicrotask(applyFlag); return false; });
 }
 beforeEach(() => {
   vi.useFakeTimers(); vi.advanceTimersByTime(++epoch * 100_000); vi.setSystemTime(1_900_000_000_000);

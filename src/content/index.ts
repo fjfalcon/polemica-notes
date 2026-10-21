@@ -56,11 +56,15 @@ import { twitchPanelFeature } from "./panels/twitch-panel";
 const manager = new FeatureManager().register(
   searchFeature,
   autoStartFeature,
+  // Приватность ролей — до фич, которые ждут storage (заметки): менеджер
+  // включает фичи по очереди с await, и автосцены OBS иначе стартовали
+  // только после загрузки заметок — роли были открыты (внешний аудит №5, B04).
+  obsPanelFeature,
+  roleFakerFeature,
   autoReadyFeature,
   playerNotesFeature,
   matchStatsFeature,
   tooltipFeature,
-  roleFakerFeature,
   pauseHotkeyFeature,
   outcryHotkeyFeature,
   hotkeyHintsFeature,
@@ -78,7 +82,6 @@ const manager = new FeatureManager().register(
   nickPlateFeature,
   wsLogFeature,
   controlsSafetyFeature,
-  obsPanelFeature,
   twitchPanelFeature,
   sessionStatsFeature,
   tableSummaryFeature,

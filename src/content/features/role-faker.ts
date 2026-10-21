@@ -9,6 +9,7 @@ import { log } from "@core/log";
 import { showToast } from "@core/toast";
 import { SITE } from "@core/selectors";
 import type { Feature, FeatureContext } from "@core/feature";
+import { FAKE_HIDDEN_ATTR, FAKE_SHIELD_ATTR, setLiveFaker, sweepOrphanFake } from "../role-fake-orphans";
 
 interface RoleDef {
   name: string;
@@ -47,9 +48,6 @@ export function shouldSwallowRoleKey(e: KeyboardEvent, hideKeyCode: string): boo
  * фальшивки (data-original-role ставит changeRole на свою роль).
  */
 const FAKE_SHIELD_ID = "pn-role-fake-shield";
-/** Маркер чужой роли, спрятанной подменой: по нему снимаются следы прежней копии. */
-const FAKE_HIDDEN_ATTR = "data-pn-fake-hidden";
-const FAKE_SHIELD_ATTR = "data-pn-role-faked";
 
 function setFakeShield(on: boolean, icon?: string): void {
   const root = document.documentElement;
@@ -83,33 +81,6 @@ function setFakeShield(on: boolean, icon?: string): void {
   if (!root.hasAttribute(FAKE_SHIELD_ATTR)) root.setAttribute(FAKE_SHIELD_ATTR, "");
 }
 
-/**
- * Следы подмены от прежней копии скрипта (обновление расширения посреди
- * игры; внешний аудит 21.10.2026, раздел E): у свежей копии пустые снимки, и
- * E не возвращал ни чужие роли, ни настоящий значок.
- */
-function sweepOrphanFake(spriteBase: () => string): void {
-  document.documentElement.removeAttribute(FAKE_SHIELD_ATTR);
-  document.querySelectorAll<HTMLElement>(`[${FAKE_HIDDEN_ATTR}]`).forEach((el) => {
-    el.style.removeProperty("visibility");
-    el.removeAttribute(FAKE_HIDDEN_ATTR);
-  });
-  document.querySelectorAll<HTMLElement>("[data-original-role]").forEach((el) => {
-    const use = el.querySelector("use");
-    const base = el.getAttribute("data-original-sprite-base") || spriteBase();
-    const href = `${base}#${el.getAttribute("data-original-role")}`;
-    use?.setAttribute("href", href);
-    use?.setAttribute("xlink:href", href);
-    const tip = el.querySelector(SITE.siteTooltipText);
-    if (tip && el.hasAttribute("data-original-role-name")) {
-      tip.textContent = `Ваша роль - ${el.getAttribute("data-original-role-name")}`;
-    }
-    el.removeAttribute("data-original-role");
-    el.removeAttribute("data-original-role-name");
-    el.removeAttribute("data-original-sprite-base");
-  });
-}
-
 class RoleFaker {
   private readonly roles: RoleDef[] = [
     { name: "undefined", icon: "player" },
@@ -134,6 +105,12 @@ class RoleFaker {
   hideKeyCode = "KeyD";
 
   onFakeKey = () => {
+    // Подмена уже стоит, а сайт успел сменить настоящую роль в том же узле
+    // до сверки наблюдателя — схватить её ДО следующей фальшивки (индекс ещё
+    // указывает на текущую), иначе E вернёт прежнюю (внешний аудит №5, §4.3).
+    const mine = document.querySelector<HTMLElement>(SITE.myRole);
+    const mineUse = mine?.querySelector("use");
+    if (this.isFaked && mine?.hasAttribute("data-original-role") && mineUse) this.captureRealRole(mine, mineUse);
     // Своей роли может не быть вовсе (зритель, судья, роль ещё не
     // смонтирована). Раньше в этом случае подмена не происходила, но чужие
     // роли всё равно скрывались и D блокировался — поле оставалось пустым
@@ -487,6 +464,7 @@ export const roleFakerFeature: Feature = {
     faker = new RoleFaker();
     const fresh = faker;
     sweepOrphanFake(() => fresh.spriteBaseForSweep());
+    setLiveFaker(true);
     faker.hideKeyCode = ctx.settings.hotkey_role_hide || "KeyD";
     boundFake = ctx.settings.hotkey_role_fake || "KeyF";
     boundReset = ctx.settings.hotkey_role_reset || "KeyE";
@@ -508,5 +486,6 @@ export const roleFakerFeature: Feature = {
     offKeys = [];
     faker?.teardown();
     faker = null;
+    setLiveFaker(false);
   },
 };

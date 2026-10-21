@@ -158,7 +158,11 @@ function installSite(initialFlag: boolean, useModifier: boolean): SiteModel {
     syncModifiers(e);
     const pressed = [...downKeys].sort().join(",");
     for (const h of handlers) {
-      if (h.keys.some((k) => [...k].sort().join(",") === pressed)) h.fn();
+      if (h.keys.some((k) => [...k].sort().join(",") === pressed)) {
+        // Обёртка хоткеев сайта: `return event.preventDefault(),n(),!1`.
+        e.preventDefault();
+        h.fn();
+      }
     }
   };
   const onKeyUp = (ev: Event) => {
@@ -454,6 +458,8 @@ async function runScenario(
     else if (had && !had.cssPre && spec.hidden && spec.reason !== "manual") showSpec();
   };
   let obsNightShowPendingUnderPeek = false;
+  /** Последний переход в день: для «переходного дня» (аудит №5, B01). */
+  let dayAt: { ms: number; nightStart: number } | null = null;
 
   // Включение: решение сайта «скрыто» принимается сразу; авто-скрытие прячет.
   autoStartFeature.enable(settings());
@@ -596,10 +602,20 @@ async function runScenario(
         if (!changed) break;
         if (action === "night") triggers.add("night");
         if (action === "night") {
-          if (cfg.phaseSwitch) spec.nightStartAuto = step;
+          // День короче 2 с — переходная подпись роллера: та же ночь, её
+          // начало и ручные решения остаются (внешний аудит №5, B01).
+          const transient = cfg.phaseSwitch && dayAt !== null && Date.now() - dayAt.ms < 2_000 && dayAt.nightStart >= 0;
+          if (cfg.phaseSwitch && !transient) spec.nightStartAuto = step;
           spec.nightStartObs = step;
-        } else if (cfg.phaseSwitch && !spec.peek) hideSpec("auto");
+          dayAt = null;
+        } else {
+          dayAt = { ms: Date.now(), nightStart: cfg.phaseSwitch ? spec.nightStartAuto : -1 };
+          if (cfg.phaseSwitch && !spec.peek) hideSpec("auto");
+        }
         obsPhase(action);
+        // beforeDayScene перевзводит сценовое скрытие: ручной показ на прошлом
+        // уходе со сцены не открывает стол новому дню (аудит №5, B03).
+        if (action === "day" && obs.auto && spec.sceneHide) spec.sceneHide.manualStep = spec.manualStep;
         if (action === "day") specSceneSync();
         break;
       }
@@ -786,6 +802,9 @@ describe("скрытие ролей: случайные сценарии на м
   test(
     `${SEEDS} сценариев × 25 шагов — итог всегда по замыслу`,
     async () => {
+      // ROLE_FUZZ_ONLY=<seed из сообщения> — повторить один сценарий.
+      const only = Number(process.env.ROLE_FUZZ_ONLY || 0);
+      if (only) return runScenario(only, 25);
       for (let seed = 1; seed <= SEEDS; seed++) await runScenario(seed * 7919, 25);
     },
     600_000,

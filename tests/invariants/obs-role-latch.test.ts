@@ -272,7 +272,7 @@ describe("жалоба 01.10.2026: ночной показ роли ждёт н�
       source.indexOf("async function restorePersistedAutoState"),
       source.indexOf("// ─────────────────────────── видимость своей роли"),
     );
-    expect(body).toMatch(/applyRoleVisibility\(roleTargetFor\(currentTimeOfDay\) === "visible"\)/);
+    expect(body).toMatch(/applyRoleVisibility\(roleTargetFor\(restored\) === "visible"\)/);
     expect(body).not.toMatch(/applyRoleVisibility\(currentTimeOfDay === "night"\)/);
   });
 

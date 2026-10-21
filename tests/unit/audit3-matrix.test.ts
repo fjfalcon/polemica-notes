@@ -112,7 +112,7 @@ function nativeSite(c: Cell) {
   let flag = c.native;
   let videos = 0;
   const flush = () => { for (const el of roles()) el.style.display = flag ? "" : "none"; };
-  const toggle = () => { flag = !flag; queueMicrotask(flush); };
+  const toggle = () => { flag = !flag; queueMicrotask(flush); return false; }; // как обёртка сайта
   hotkeys(c.modifier ? "ctrl+d,command+d" : "d", toggle);
   hotkeys(c.modifier ? "ctrl+v,command+v" : "v", () => videos++);
   flush();

@@ -180,7 +180,7 @@ export const SITE = {
    * «Промах», пауза, итог — мутациями с target `.roller`, ни одна не внутри
    * `.stage`; внешний аудит №4, B01) и экран `.ended`.
    */
-  rolePhaseHost: ".roller, .stage, .substage, .ended",
+  rolePhaseHost: ".roller, .stage, .substage, .ended, .new-stage",
   substageCurrent: ".substage.current",
   /** МЁРТВЫЙ: сайт рендерит подстадии только как current/next/temp. */
   substageActive: ".substage.active",
