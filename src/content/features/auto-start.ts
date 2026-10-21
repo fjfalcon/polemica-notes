@@ -20,8 +20,9 @@ import { keyboard } from "@core/keyboard";
 import { log } from "@core/log";
 import { showToast } from "@core/toast";
 import { isNativeRoleHidden, isPinnedElement, liftPins, restoreLiftedPins } from "../role-pin";
+import { dispatchNativeRoleToggle, isOwnRoleToggleEvent } from "../native-role-toggle";
 import { isRoleFaked } from "./role-faker";
-import { nightSceneSafeForRoleShow } from "../panels/obs-panel";
+import { nightSceneSafeForRoleShow, setRoleSceneGateListener } from "../panels/obs-panel";
 import { SITE, TEXT, OWN, classifyPhaseText, endedScreenVisible, SITE_CLASS } from "@core/selectors";
 import { isAutoAcceptSuppressed } from "../auto-accept-gate";
 import { noteAutoAcceptDispatched } from "./queue-requeue";
@@ -81,8 +82,8 @@ const roleVisibilityState = new WeakMap<
   { visibility: string; opacity: string; pointerEvents: string }
 >();
 let trackedRolesVisible: boolean | null = null;
+let unsubSceneGate: (() => void) | null = null;
 let pendingRoleSyncTimer: ReturnType<typeof setTimeout> | null = null;
-let suppressRoleKeyHandlingUntil = 0;
 let lastManualRoleActionAt = 0;
 let initialAutoHideTimer: ReturnType<typeof setInterval> | null = null;
 let initialAutoHideAttempts = 0;
@@ -517,21 +518,6 @@ function clearPendingRoleSync() {
   pendingRoleSyncTimer = null;
 }
 
-function dispatchNativeRoleToggle(): boolean {
-  suppressRoleKeyHandlingUntil = Date.now() + 250;
-  const keyOptions = {
-    key: "d",
-    code: "KeyD",
-    keyCode: 68,
-    which: 68,
-    bubbles: true,
-    cancelable: true,
-  };
-  document.dispatchEvent(new KeyboardEvent("keydown", keyOptions));
-  document.dispatchEvent(new KeyboardEvent("keyup", keyOptions));
-  return true;
-}
-
 function syncRoleStateFromDom(): boolean {
   const roleElements = getRoleVisibilityTargets();
   if (roleElements.length === 0) return false;
@@ -579,7 +565,13 @@ function setRoleVisibility(isVisible: boolean): boolean {
     return true;
   }
 
-  const shouldUseNativeToggle = trackedRolesVisible !== isVisible;
+  // Тумблер сайта — только если роли прячет именно САЙТ (adversarial
+  // 21.10.2026, №5): прежде решение шло по учёту и видимости своей роли, и
+  // своя роль под дневным пином obs-панели («не видна») отправляла D при
+  // показанном флаге — «показать роли» прятало роли ВСЕГО стола.
+  const shouldUseNativeToggle = isVisible
+    ? currentState.nativeHidden
+    : !currentState.nativeHidden && trackedRolesVisible !== isVisible;
 
   if (shouldUseNativeToggle) {
     dispatchNativeRoleToggle();
@@ -679,19 +671,38 @@ export function hidesRolesByDay(opts: { autoHideRoles: boolean; rolePhaseSwitch:
 /**
  * Вернуть ли скрытие после отпускания клавиши.
  *
- * Считаем ПО НАСТРОЙКАМ И ФАЗЕ, а не по «роли сейчас видны»: во время
- * подсматривания роли видны по определению, периодическая сверка с DOM
- * записывала «видны» в общее состояние, и отпускание решало, что прятать
- * нечего — роль оставалась на экране и уезжала в эфир (найдено самопроверкой
- * 12.08.2026, до релиза).
+ * Считаем НЕ по «роли сейчас видны»: во время подсматривания роли видны по
+ * определению, периодическая сверка с DOM записывала «видны» в общее
+ * состояние, и отпускание решало, что прятать нечего — роль оставалась на
+ * экране и уезжала в эфир (найдено самопроверкой 12.08.2026, до релиза).
+ *
+ * Правило (случайные сценарии 21.10.2026): возвращаем РОВНО то скрытие, что
+ * было до нажатия. Единственное исключение — ночной показ положен
+ * (автосмена, ночь, игрок после наступления ночи роли руками не трогал) И
+ * эфир уже на ночной сцене: тогда роли и так должны быть видны, а спрятать
+ * их, чтобы показ открыл их снова, — мигание в эфире. Прежде ночью с
+ * автосменой скрытие не возвращалось вовсе — и при эфире, ещё стоящем на
+ * дневной сцене, роли после V оставались открытыми на ней; а без настроек
+ * скрытия не возвращалось ничего — и снятый подсматриванием страховочный
+ * CSS (restoreNativeHide) не возвращался, роли оставались видны.
  */
-export function shouldRehideAfterPeek(
-  opts: { autoHideRoles: boolean; rolePhaseSwitch: boolean },
-  phase: "day" | "night" | null,
-): boolean {
-  if (!hidesRolesByDay(opts)) return false;
-  // Ночью роли показывает фазовая логика — её решение перебивать нельзя.
-  return !(opts.rolePhaseSwitch && phase === "night");
+export function shouldRehideAfterPeek(opts: {
+  nightShowDue: boolean;
+  nightSceneSafe: boolean;
+}): boolean {
+  return !(opts.nightShowDue && opts.nightSceneSafe);
+}
+
+/**
+ * Ночной показ ещё «должен» случиться: автосмена, ночь, и игрок после
+ * наступления ночи роли руками не трогал (D/меню — его решение главнее).
+ */
+function nightShowDue(): boolean {
+  return (
+    cfg.rolePhaseSwitch &&
+    lastDetectedRolePhase === "night" &&
+    lastManualRoleActionAt < nightAutoShowStartedAt
+  );
 }
 
 /**
@@ -705,8 +716,9 @@ export function shouldRehideAfterPeek(
  * клавишу и держат. Так же — тремя слоями — снимают скрытие handleRoleKey и
  * ночной автопоказ.
  */
-function startPeek(): void {
-  if (peeking) return;
+/** true — подсматривание включено (клавиша наша, сайту не отдаётся). */
+function startPeek(): boolean {
+  if (peeking) return true;
   if (peekRestoreTimer) {
     clearTimeout(peekRestoreTimer);
     peekRestoreTimer = null;
@@ -722,7 +734,8 @@ function startPeek(): void {
   // поднят, pinHolds отвечает «держится» — обс не воюет с подсматриванием.
   peekRestorePin = liftPins();
   // Нечего снимать — и показывать нечего: клавиша не должна ничего трогать.
-  if (!peekRestoreHidden && !peekRestoreNative && !peekRestoreInline && !peekRestorePin) return;
+  // false — роутер отдаст клавишу сайту (его `v` — тумблер камеры в лобби).
+  if (!peekRestoreHidden && !peekRestoreNative && !peekRestoreInline && !peekRestorePin) return false;
   peeking = true;
   if (peekRestoreHidden) showAllRolesCSS();
   if (peekRestoreInline) applyInlineRoleVisibility(roleElements, true);
@@ -739,9 +752,16 @@ function startPeek(): void {
       .filter(Boolean)
       .join("+"),
   );
+  return true;
 }
 
-function stopPeek(): void {
+/**
+ * teardown — выключение фичи: роли намеренно показываются (disable зовёт
+ * setRoleVisibility(true) следом), возвращать скрытие нельзя — D сайта,
+ * отправленный здесь, Vue применил бы ПОСЛЕ синхронной проверки показа, и
+ * роли оставались скрытыми (adversarial 21.10.2026, №5). Пин — всегда.
+ */
+function stopPeek(teardown = false): void {
   if (!peeking) return;
   const restoreCss = peekRestoreHidden;
   const restoreNative = peekRestoreNative;
@@ -755,36 +775,51 @@ function stopPeek(): void {
   // Пин возвращается владельцу ВСЕГДА, до остальных слоёв: если обс за
   // время удержания перепинил сам (смена фазы), restoreLiftedPins не мешает.
   if (restorePin) restoreLiftedPins();
-  if (restoreCss && shouldRehideAfterPeek(cfg, lastDetectedRolePhase)) {
+  if (teardown) return;
+  const showDue = nightShowDue();
+  const rehide = shouldRehideAfterPeek({
+    nightShowDue: showDue,
+    nightSceneSafe: nightSceneSafeForRoleShow(),
+  });
+  if (restoreCss && rehide) {
     hideAllRolesCSS();
     // Состояние могло «испортиться» за время удержания (сверка с DOM видела
     // показанные роли) — возвращаем его вместе со скрытием.
     trackedRolesVisible = false;
   }
-  // Inline подчиняется ТОЙ ЖЕ фазовой логике, что CSS (жалоба 03.09.2026:
+  // Inline подчиняется ТОМУ ЖЕ правилу, что CSS (жалоба 03.09.2026:
   // «ночью проверки нет, V не работает» — каждый отпуск клавиши возвращал
   // inline-скрытие, которое ночной автопоказ не снимал; роль ночью гасла
   // после каждого подсматривания, а D «помогал» со 2-3 раза только потому,
   // что нативный тумблер заставлял Vue пересоздать узел без наших стилей).
-  if (restoreInline && shouldRehideAfterPeek(cfg, lastDetectedRolePhase)) {
+  if (restoreInline && rehide) {
     applyInlineRoleVisibility(getRoleVisibilityTargets(), false);
   }
-  // Нативное скрытие возвращаем ВСЕГДА, без оглядки на настройки и фазу: до
-  // нажатия роль была скрыта, и «подсмотреть» не имеет права оставить её на
-  // экране. Ночной автопоказ, если он положен, покажет её сам.
+  // Нативное — по тому же правилу. Прежде ночью перевзвод показа шёл
+  // всегда, и «спрятал D → подсмотрел V → отпустил» роли через 0,6 с
+  // появлялись сами (случайные сценарии 21.10.2026).
   if (restoreNative) {
-    trackedRolesVisible = false;
-    peekRestoreAttempts = 0;
-    restoreNativeHide();
-    // V удержана через переход в ночь дольше ночного автопоказа: показ уже
-    // отработал ПОД клавишей, applyRolePhase его не перевзведёт (фаза не
-    // менялась) — и возвращённый натив прятал роль до ручного D
-    // (adversarial 03.09.2026, Н6). Натив возвращаем всё равно (fail-safe),
-    // но ночью с автосменой тут же перевзводим показ.
-    if (cfg.rolePhaseSwitch && lastDetectedRolePhase === "night") {
-      scheduleNightRoleAutoShow(600);
+    if (rehide) {
+      trackedRolesVisible = false;
+      peekRestoreAttempts = 0;
+      restoreNativeHide();
+    } else {
+      trackedRolesVisible = true;
     }
   }
+  // V удержана через переход в ночь дольше ночного автопоказа: показ уже
+  // отработал ПОД клавишей, applyRolePhase его не перевзведёт (фаза не
+  // менялась) — и возвращённое скрытие прятало роль до ручного D
+  // (adversarial 03.09.2026, Н6). Сцена ещё дневная — скрытие вернули
+  // (fail-safe), показ дождётся ночной сцены. Сцена ночная — показ
+  // идемпотентен и долечит сорванный ранее (D сайта глушила зажатая клавиша).
+  if (showDue && (restoreCss || restoreNative || restoreInline)) {
+    scheduleNightRoleAutoShow(600);
+  }
+  // Под V канал сцены молчит: если ночная сцена ВЕРНУЛАСЬ за удержание,
+  // её «сценовое» скрытие снимается здесь — иначе роли оставались скрытыми
+  // вопреки состоянию до ухода (случайные сценарии 21.10.2026).
+  syncRolesWithSceneGate();
 }
 
 /**
@@ -797,6 +832,16 @@ function restoreNativeHide(): void {
   const primary = getPrimaryOwnRoleElement();
   if (!primary) return;
   if (isNativeRoleHidden(primary)) return; // уже скрыта сайтом
+  // Первый D не доехал (Vue флашит за микрозадачу, 150 мс — с запасом).
+  // hotkeys-js сайта срабатывает, только если зажат РОВНО D: зажатая
+  // посторонняя клавиша (push-to-talk стримера) глушит все наши D, и
+  // ретраи сдавались с ролями в эфире (случайные сценарии 21.10.2026).
+  // Прячем сразу своим CSS — он не зависит от сайта и снимается любым
+  // путём показа (D, ночной показ); D сайту продолжаем слать.
+  if (peekRestoreAttempts === 1 && !isRolesHiddenByCSS()) {
+    hideAllRolesCSS();
+    log.warn(SCOPE, "сайт не вернул скрытие ролей после «подсмотреть» — спрятаны своим CSS");
+  }
   dispatchNativeRoleToggle();
   peekRestoreAttempts += 1;
   if (peekRestoreAttempts >= 5) {
@@ -881,6 +926,15 @@ function scheduleNightRoleAutoShow(delayMs: number) {
       // Пользователь только что сам управлял ролью — уступаем. Это решение,
       // а не шум: происходит раз за ночь и объясняет «роль ночью не показалась».
       log.info(SCOPE, "ночной показ роли пропущен: игрок только что действовал сам");
+      return;
+    }
+    // Игрок управлял ролями сам ПОСЛЕ наступления ночи (D/меню) — его
+    // решение на эту ночь главнее. Отложенный до ночной сцены показ иначе
+    // переигрывал ручное «спрятал»: эфир ушёл с ночной сцены, игрок
+    // показал-спрятал D, сцена вернулась — роли открывались сами
+    // (случайные сценарии 21.10.2026).
+    if (!nightShowDue()) {
+      log.info(SCOPE, "ночной показ роли отменён: этой ночью игрок управлял ролями сам");
       return;
     }
     // Эфир ещё НЕ на ночной сцене (жалоба 01.10.2026: OBS был отключён,
@@ -1054,6 +1108,7 @@ function applyRolePhase(phase: "day" | "night") {
   if (phase === lastDetectedRolePhase) return;
 
   lastDetectedRolePhase = phase;
+  nightShowSceneDeferredLogged = false;
 
   if (phase === "night") {
     nightAutoShowAttempts = 0;
@@ -1067,6 +1122,47 @@ function applyRolePhase(phase: "day" | "night") {
   if (hidesRolesByDay(cfg)) {
     hideAllRolesCSS();
     trackedRolesVisible = false;
+  }
+}
+
+/**
+ * Роли стола следуют за автосменой сцен OBS (adversarial 21.10.2026, №7).
+ * obs-panel пинит только СВОЮ роль; сокомандников прячет наш CSS по своей
+ * фазе — 150 мс–1 с спустя. Поэтому obs-panel зовёт нас (а) перед
+ * переключением на дневную сцену — догоняем фазу сейчас, иначе сокомандники
+ * успевали на дневную сцену; (б) на любой смене гейта ночной сцены.
+ *
+ * Эфир ушёл с ночной сцены посреди ночи (стример руками, разрыв OBS): своя
+ * роль спрятана пином ВСЕГДА, поэтому и сокомандников прячем всегда — иначе
+ * зеркало и состав в эфире. Вернулась ночная сцена: показ положен — его
+ * сделает ночной показ (он и так ждёт сцену); не положен (игрок этой ночью
+ * управлял ролями сам) — снимаем ТОЛЬКО наше «сценовое» скрытие, если игрок
+ * с тех пор ничего не трогал: всё возвращается ровно как было.
+ */
+let sceneHideManualMark: number | null = null;
+
+function syncRolesWithSceneGate(): void {
+  if (!cfg.rolePhaseSwitch || peeking) return;
+  applyRolePhase(detectRolePhase());
+  if (lastDetectedRolePhase !== "night") {
+    sceneHideManualMark = null;
+    return;
+  }
+  if (!nightSceneSafeForRoleShow()) {
+    if (isRolesHiddenByCSS()) return;
+    hideAllRolesCSS();
+    trackedRolesVisible = false;
+    sceneHideManualMark = lastManualRoleActionAt;
+    log.info(SCOPE, "эфир ушёл с ночной сцены — роли стола спрятаны до её возврата");
+    if (nightShowDue()) scheduleNightRoleAutoShow(2000);
+    return;
+  }
+  if (sceneHideManualMark === null) return;
+  const untouched = sceneHideManualMark === lastManualRoleActionAt;
+  sceneHideManualMark = null;
+  if (untouched && !nightShowDue() && isRolesHiddenByCSS()) {
+    showAllRolesCSS();
+    log.info(SCOPE, "ночная сцена вернулась — скрытие на время ухода снято");
   }
 }
 
@@ -1366,7 +1462,8 @@ function disableWebcams() {
 // ─────────────────────────── хоткей D/В и меню «показать/скрыть роли» ───────────────────────────
 
 function handleRoleKey(e?: KeyboardEvent) {
-  if (Date.now() < suppressRoleKeyHandlingUntil) return;
+  // Наш синтетический D (виден роутеру на window раньше сайта) — не игрок.
+  if (isOwnRoleToggleEvent(e)) return;
   // Пока подсматриваем, CSS снят — обычная ветка сочла бы роли показанными
   // игроком и перевернула бы учёт. Клавиша скрытия в этот момент не
   // действует, и человек должен понимать почему: нажал — ничего не
@@ -1428,10 +1525,44 @@ function handleRoleKey(e?: KeyboardEvent) {
   trackedRolesVisible = !trackedRolesVisible;
   log.debug(SCOPE, "role-hide toggle, trackedRolesVisible =", trackedRolesVisible);
 
-  // Если хоткей переназначен (не дефолтный D) — сайт сам по нему не реагирует,
-  // поэтому досылаем ему синтетический D, чтобы его собственный тоггл сработал.
-  if (roleHideKey !== "KeyD") dispatchNativeRoleToggle();
+  // Тумблер сайта переключаем САМИ и всегда, а нажатие игрока сайту не
+  // отдаём (21.10.2026): у игрока с опцией «хоткеи с модификатором» сайт
+  // слушает только Ctrl+D, и простой D молчал при перевёрнутом учёте; наш
+  // синтетический D шлёт обе пары. Переназначенный хоткей — тот же путь.
+  e?.stopPropagation();
+  dispatchNativeRoleToggle();
 }
+
+/**
+ * Ctrl/Cmd + клавиша скрытия — у игрока с опцией сайта «хоткеи с
+ * модификатором» это его собственный D (adversarial 21.10.2026, №2).
+ * Тумблер сайт переключит сам (сочетание не перехватываем: без опции это
+ * закладка браузера), но решение игрока обязаны знать: иначе nightShowDue
+ * считал, что ночью он ролей не трогал, и ночной показ / отпускание V
+ * открывали спрятанные им роли. Под «подсмотреть» — глушим, как простой D.
+ */
+function handleModifiedRoleKey(e: KeyboardEvent): void {
+  if (isOwnRoleToggleEvent(e)) return;
+  if (peeking || isRoleFaked()) {
+    e.stopPropagation();
+    e.preventDefault();
+    return;
+  }
+  lastManualRoleActionAt = Date.now();
+  if (peekRestoreTimer) {
+    clearTimeout(peekRestoreTimer);
+    peekRestoreTimer = null;
+  }
+  scheduleRoleStateSync(120);
+}
+
+const ROLE_KEY_OPTS = {
+  preventDefault: false,
+  // Автоповтор зажатого D сайту не отдаём: hotkeys-js переключал флаг на
+  // каждом повторе — роли мигали в эфире (adversarial 21.10.2026, №1).
+  swallowRepeat: true,
+  onModified: handleModifiedRoleKey,
+};
 
 function handleRoleMenuClick(event: MouseEvent) {
   const target = (event.target as HTMLElement | null)?.closest?.(SITE.roleMenuClickable);
@@ -1477,7 +1608,8 @@ function enableGamePage() {
   document.addEventListener("click", onUserClick, true);
   document.addEventListener("pointerdown", onUserClick, true);
 
-  unsubKeyboard = keyboard.register(roleHideKey, handleRoleKey, { preventDefault: false });
+  unsubKeyboard = keyboard.register(roleHideKey, handleRoleKey, ROLE_KEY_OPTS);
+  unsubSceneGate = setRoleSceneGateListener(syncRolesWithSceneGate);
 
   unsubGameDom = onDomChange((muts) => {
     if (muts.some((m) => m.addedNodes.length)) {
@@ -1504,9 +1636,11 @@ function disableGamePage() {
   unsubGameDom = null;
   unsubKeyboard?.();
   unsubKeyboard = null;
+  unsubSceneGate?.();
+  unsubSceneGate = null;
   // Подсматривание снимаем ПЕРВЫМ делом: если фичу выключили с зажатой
   // клавишей, роли остались бы на экране — на стриме это утечка.
-  stopPeek();
+  stopPeek(true);
   unsubPeek?.();
   unsubPeek = null;
   roleePeekKey = "";
@@ -1542,7 +1676,7 @@ function applyConfig(ctx: FeatureContext) {
     roleHideKey = newHideKey;
     if (unsubKeyboard) {
       unsubKeyboard();
-      unsubKeyboard = keyboard.register(roleHideKey, handleRoleKey, { preventDefault: false });
+      unsubKeyboard = keyboard.register(roleHideKey, handleRoleKey, ROLE_KEY_OPTS);
     }
   }
 
@@ -1638,7 +1772,6 @@ export const autoStartFeature: Feature = {
     lastDetectedRolePhase = null;
     nightAutoShowAttempts = 0;
     nightAutoShowStartedAt = 0;
-    suppressRoleKeyHandlingUntil = 0;
     lastManualRoleActionAt = 0;
     webcamDisabled = false;
     videoButtonClicked = false;

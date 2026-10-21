@@ -34,6 +34,35 @@ interface RoleStyleSnapshot {
 
 const PIN_ATTR = "data-pn-role-pin";
 
+/**
+ * Щит дневного пина (adversarial 21.10.2026, №8): inline-пин живёт на узле,
+ * и Vue-пересоздание плитки показывало НАСТОЯЩУЮ роль до heal-перепина
+ * (флаш наблюдателя + setTimeout, ≤ ~270 мс) — в эфире, если CSS-скрытия
+ * auto-start нет (автосцены без автосмены). Правило таблицы стилей по
+ * атрибуту на <html> прячет и свежий узел мгновенно; inline-пин остаётся
+ * правдой для pinHolds. Пока пин поднят «подсмотреть» или цель «visible» —
+ * щита нет.
+ */
+const SHIELD_ID = "pn-role-pin-shield";
+const SHIELD_ATTR = "data-pn-own-role-hidden";
+
+function setShield(on: boolean): void {
+  const root = document.documentElement;
+  if (!on) {
+    root.removeAttribute(SHIELD_ATTR);
+    return;
+  }
+  if (!document.getElementById(SHIELD_ID)) {
+    const style = document.createElement("style");
+    style.id = SHIELD_ID;
+    style.textContent =
+      SITE.ownRoleTargets.map((sel) => `html[${SHIELD_ATTR}] ${sel}`).join(", ") +
+      " { visibility: hidden !important; opacity: 0 !important; }";
+    (document.head || root).appendChild(style);
+  }
+  if (!root.hasAttribute(SHIELD_ATTR)) root.setAttribute(SHIELD_ATTR, "");
+}
+
 const snapshots = new WeakMap<HTMLElement, RoleStyleSnapshot>();
 const touched = new Set<HTMLElement>();
 /** Логическая цель пина (null — пина нет). */
@@ -148,6 +177,7 @@ export function pinOwnRole(target: PinTarget): boolean {
   for (const el of targets) applyToElement(el, target);
   pinTarget = target;
   lifted = false;
+  setShield(target === "hidden");
   return true;
 }
 
@@ -181,6 +211,7 @@ export function releasePins(): void {
   touched.clear();
   pinTarget = null;
   lifted = false;
+  setShield(false);
 }
 
 /**
@@ -210,6 +241,7 @@ export function liftPins(): boolean {
     if (el.style.opacity === "0") el.style.removeProperty("opacity");
     if (el.style.pointerEvents === "none") el.style.removeProperty("pointer-events");
   }
+  setShield(false);
   lifted = true;
   return true;
 }
@@ -222,6 +254,7 @@ export function restoreLiftedPins(): void {
   dropDisconnected();
   const targets = getRoleVisibilityTargets();
   for (const el of targets) applyToElement(el, target);
+  setShield(target === "hidden");
 }
 
 /** Тестовый шов: полное обнуление модульного состояния. */

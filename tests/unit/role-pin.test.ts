@@ -184,6 +184,26 @@ describe("пин своей роли", () => {
     expect(isNativeRoleHidden(null)).toBe(false);
   });
 
+  test("щит дневного пина: Vue-пересозданный узел скрыт сразу (adversarial 21.10.2026, №8)", () => {
+    // Inline-пин живёт на узле: до heal-перепина свежий узел показывал
+    // настоящую роль. Таблица стилей по атрибуту на <html> — мгновенно.
+    const vis = (el: Element) => getComputedStyle(el).visibility;
+    const el = mountRole();
+    pinOwnRole("hidden");
+    el.remove();
+    const fresh = mountRole();
+    expect(vis(fresh), "свежий узел скрыт до перепина").toBe("hidden");
+    liftPins();
+    expect(vis(fresh), "«подсмотреть» щит снимает").not.toBe("hidden");
+    restoreLiftedPins();
+    expect(vis(fresh)).toBe("hidden");
+    pinOwnRole("visible");
+    expect(vis(fresh), "ночной показ — без щита").toBe("visible");
+    pinOwnRole("hidden");
+    releasePins();
+    expect(vis(fresh), "teardown снимает щит").not.toBe("hidden");
+  });
+
   test("повторный lift без пина — false; restore после перепина владельцем — не мешает", () => {
     expect(liftPins(), "пина нет — поднимать нечего").toBe(false);
     mountRole();

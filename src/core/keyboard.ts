@@ -13,6 +13,10 @@ interface Binding {
   code: string;
   handler: HotkeyHandler;
   preventDefault: boolean;
+  /** Глушить автоповторы для сайта (обработчик на них и так не зовётся). */
+  swallowRepeat: () => boolean;
+  /** Ctrl/Cmd + клавиша — сайту, но фича хочет об этом знать. */
+  onModified?: HotkeyHandler;
 }
 
 /**
@@ -52,17 +56,33 @@ class KeyboardRouter {
     // снимала скрытие роли — то есть показывала её на стриме.
     if (isTypingContext(e) && producesText(e.code)) return;
     // Ctrl+F / Cmd+D и прочие сочетания принадлежат браузеру и сайту, не нам.
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    // Зажатая клавиша не должна гнать обработчик с частотой автоповтора.
-    if (e.repeat) return;
+    // Наблюдать можно (onModified): у игрока с опцией сайта «хоткеи с
+    // модификатором» Ctrl/Cmd+D — его ручное скрытие ролей.
+    if (e.altKey) return;
+    if (e.ctrlKey || e.metaKey) {
+      if (!e.repeat) this.call(b.onModified, e);
+      return;
+    }
+    // Зажатая клавиша не должна гнать обработчик с частотой автоповтора. А
+    // сайту — и подавно: у hotkeys-js нет защиты от повтора, и зажатый D
+    // переключал флаг ролей на КАЖДОМ повторе — мигание в эфире.
+    if (e.repeat) {
+      if (b.swallowRepeat()) e.stopPropagation();
+      return;
+    }
 
     if (b.preventDefault) e.preventDefault();
+    this.call(b.handler, e);
+  };
+
+  private call(handler: HotkeyHandler | undefined, e: KeyboardEvent): void {
+    if (!handler) return;
     try {
-      b.handler(e);
+      handler(e);
     } catch (err) {
       log.error("keyboard", "handler threw", e.code, err);
     }
-  };
+  }
 
   private ensureStarted() {
     if (this.started) return;
@@ -76,10 +96,13 @@ class KeyboardRouter {
 
   /** Клавиши-«зажатия», которые сейчас нажаты: чтобы отпуск был ровно один. */
   private held = new Set<string>();
-  private holds = new Map<string, { down: () => void; up: () => void }>();
+  /** Зажатия, чьё нажатие сайт не видел: отпускание и повторы — тоже. */
+  private swallowed = new Set<string>();
+  private holds = new Map<string, { down: () => boolean | void; up: () => void }>();
 
   private onKeyUp = (e: KeyboardEvent) => {
-    this.releaseHold(e.code);
+    const wasSwallowed = this.swallowed.has(e.code);
+    if (this.releaseHold(e.code) && wasSwallowed) e.stopPropagation();
   };
 
   /**
@@ -95,28 +118,45 @@ class KeyboardRouter {
     if (document.visibilityState === "hidden") this.onBlur();
   };
 
-  private releaseHold(code: string): void {
-    if (!this.held.delete(code)) return;
+  private releaseHold(code: string): boolean {
+    this.swallowed.delete(code);
+    if (!this.held.delete(code)) return false;
     try {
       this.holds.get(code)?.up();
     } catch (err) {
       log.error("keyboard", "hold release threw", code, err);
     }
+    return true;
   }
 
   /**
    * Клавиша-«зажатие»: `down` на нажатии, `up` на отпускании И на любой
    * потере фокуса. Нужна там, где показ чего-либо на экране должен жить
    * ровно столько, сколько человек держит палец (роли у стримера).
+   *
+   * Клавиша-«зажатие» сайту НЕ отдаётся (21.10.2026): hotkeys-js сайта
+   * срабатывает, только если множество зажатых клавиш совпадает с сочетанием
+   * ЦЕЛИКОМ. Пока V виден сайту зажатым, наш синтетический D для него —
+   * «V+D» и молча не срабатывает; alt-tab с зажатой V оставлял V «зажатой»
+   * у сайта до возврата фокуса, и возврат скрытия после «подсмотреть»
+   * сдавался — роли оставались в эфире. Но только когда `down` РЕАЛЬНО
+   * включил режим: вернул false (подсматривать нечего — например, лобби) —
+   * клавиша целиком отдаётся сайту, его `v` (тумблер камеры) работает.
    */
-  registerHold(code: string, down: () => void, up: () => void): () => void {
+  registerHold(code: string, down: () => boolean | void, up: () => void): () => void {
     this.ensureStarted();
     this.holds.set(code, { down, up });
-    const unregister = this.register(code, () => {
-      if (this.held.has(code)) return;
-      this.held.add(code);
-      down();
-    }, { preventDefault: true });
+    const unregister = this.register(
+      code,
+      (e) => {
+        if (this.held.has(code)) return;
+        this.held.add(code);
+        if (down() === false) return;
+        this.swallowed.add(code);
+        e.stopPropagation();
+      },
+      { preventDefault: true, swallowRepeat: () => this.swallowed.has(code) },
+    );
     return () => {
       this.releaseHold(code);
       this.holds.delete(code);
@@ -128,12 +168,30 @@ class KeyboardRouter {
    * Зарегистрировать хоткей по физической клавише (event.code, напр. "KeyF", "F8").
    * Возвращает функцию отписки.
    */
-  register(code: string, handler: HotkeyHandler, opts: { preventDefault?: boolean } = {}): () => void {
+  register(
+    code: string,
+    handler: HotkeyHandler,
+    opts: {
+      preventDefault?: boolean;
+      /** Глушить для сайта автоповторы (true или решение на момент повтора). */
+      swallowRepeat?: boolean | (() => boolean);
+      onModified?: HotkeyHandler;
+    } = {},
+  ): () => void {
     this.ensureStarted();
     // Одна клавиша — один обработчик: попап не мешает назначить двум фичам одну
     // и ту же клавишу, и тогда вторая молча вытесняла первую. Хотя бы фиксируем.
     if (this.bindings.has(code)) log.warn("keyboard", "hotkey collision, rebinding", code);
-    this.bindings.set(code, { code, handler, preventDefault: opts.preventDefault ?? false });
+    this.bindings.set(code, {
+      code,
+      handler,
+      preventDefault: opts.preventDefault ?? false,
+      swallowRepeat:
+        typeof opts.swallowRepeat === "function"
+          ? opts.swallowRepeat
+          : () => opts.swallowRepeat === true,
+      onModified: opts.onModified,
+    });
     return () => {
       if (this.bindings.get(code)?.handler === handler) this.bindings.delete(code);
     };

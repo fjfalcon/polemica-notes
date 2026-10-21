@@ -9,6 +9,7 @@ import { log } from "@core/log";
 import { showToast } from "@core/toast";
 import { SITE } from "@core/selectors";
 import type { Feature, FeatureContext } from "@core/feature";
+import { isOwnRoleToggleEvent } from "../native-role-toggle";
 
 interface RoleDef {
   name: string;
@@ -28,12 +29,43 @@ interface RoleDef {
  * НАСТОЯЩУЮ роль прямо посреди подмены.
  */
 export function shouldSwallowRoleKey(e: KeyboardEvent, hideKeyCode: string): boolean {
+  // Наш синтетический D — не игрок: глотая его, блокировщик срывал возврат
+  // скрытия после «подсмотреть» (adversarial 21.10.2026, №9). Под подменой
+  // он безопасен: чужие роли спрятаны visibility, свою держит фальшивка.
+  if (isOwnRoleToggleEvent(e)) return false;
   if (e.code !== hideKeyCode) return false;
   // Пока пользователь печатает (KeyD = «в» в русской раскладке) или жмёт
   // Cmd/Ctrl+D — не глотаем.
   if (isTypingContext(e) && producesText(e.code)) return false;
   if (e.ctrlKey || e.metaKey || e.altKey) return false;
   return true;
+}
+
+/**
+ * Щит подмены (adversarial 21.10.2026, №8): Vue пересоздаёт плитку роли, и
+ * до флаша наблюдателя (rAF, ≤ ~270 мс) свежий узел показывал НАСТОЯЩУЮ
+ * роль — свою или сокомандника — посреди подмены. Правило таблицы стилей
+ * действует на новый узел мгновенно: прячет любую роль без нашей
+ * фальшивки (data-original-role ставит changeRole на свою роль).
+ */
+const FAKE_SHIELD_ID = "pn-role-fake-shield";
+const FAKE_SHIELD_ATTR = "data-pn-role-faked";
+
+function setFakeShield(on: boolean): void {
+  const root = document.documentElement;
+  if (!on) {
+    root.removeAttribute(FAKE_SHIELD_ATTR);
+    return;
+  }
+  if (!document.getElementById(FAKE_SHIELD_ID)) {
+    const style = document.createElement("style");
+    style.id = FAKE_SHIELD_ID;
+    style.textContent =
+      `html[${FAKE_SHIELD_ATTR}] ${SITE.anyRole}:not([data-original-role]) ` +
+      `{ visibility: hidden !important; }`;
+    (document.head || root).appendChild(style);
+  }
+  if (!root.hasAttribute(FAKE_SHIELD_ATTR)) root.setAttribute(FAKE_SHIELD_ATTR, "");
 }
 
 class RoleFaker {
@@ -89,6 +121,7 @@ class RoleFaker {
     this.isFaked = v;
     if (v) this.attachDBlocker();
     else this.detachDBlocker();
+    setFakeShield(v);
   }
 
   /** Блокировка D/В пока подмена активна — отдельный capture-листенер (D занят auto-start). */

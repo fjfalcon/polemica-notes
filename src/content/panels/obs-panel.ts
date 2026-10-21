@@ -609,6 +609,29 @@ export function nightSceneSafeForRoleShow(): boolean {
   return nightRoleShowAllowed({ nightScene, currentScene });
 }
 
+let roleSceneGateListener: (() => void) | null = null;
+
+/**
+ * auto-start подписывается, чтобы роли СОКОМАНДНИКОВ (его CSS) шли вместе
+ * со своей ролью (наш пин): перед дневной сценой и на смене гейта ночной
+ * сцены (adversarial 21.10.2026, №7). Зовётся из healRolePin — он
+ * срабатывает на каждую смену сцены, (ре)коннект и разрыв OBS.
+ */
+export function setRoleSceneGateListener(fn: () => void): () => void {
+  roleSceneGateListener = fn;
+  return () => {
+    if (roleSceneGateListener === fn) roleSceneGateListener = null;
+  };
+}
+
+function notifyRoleSceneGate(): void {
+  try {
+    roleSceneGateListener?.();
+  } catch (err) {
+    log.error(SCOPE, "role scene gate listener threw", err);
+  }
+}
+
 /**
  * Желаемая видимость роли — ВЫВОДИТСЯ из фазы, а не хранится. Adversarial
  * 29.08.2026 (находка A): самолечение гейтилось на латч, а любой путь
@@ -637,6 +660,7 @@ function desiredRoleVisibility(): "visible" | "hidden" | null {
  * Без целей на странице молчит: ретраи в пустоту сжигали бюджет (наход. A).
  */
 function healRolePin(): void {
+  notifyRoleSceneGate();
   const want = desiredRoleVisibility();
   if (!want) return;
   if (pinHolds(want)) return;
@@ -703,6 +727,9 @@ async function hideRoleBeforeDaySceneSwitch(): Promise<void> {
     clearTimeout(pendingRoleVisibilityTimer);
     pendingRoleVisibilityTimer = null;
   }
+  // Сокомандников прячет auto-start (CSS по своей фазе) — пусть догонит
+  // фазу ДО смены сцены, а не через 150 мс–1 с после (adversarial №7).
+  notifyRoleSceneGate();
   const hidden = applyRoleVisibility(false);
   if (!hidden) {
     // Латч «скрыто» здесь НЕ ставим. Раньше он ставился безусловно, и

@@ -29,6 +29,7 @@ vi.mock("@core/log", () => ({
 
 import { isRoleFaked, roleFakerFeature, shouldSwallowRoleKey } from "@content/features/role-faker";
 import type { FeatureContext } from "@core/feature";
+import { dispatchNativeRoleToggle } from "@content/native-role-toggle";
 
 function keydown(init: KeyboardEventInit & { code: string }): KeyboardEvent {
   return new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
@@ -52,6 +53,17 @@ describe("shouldSwallowRoleKey (§4.5 gates of the D blocker)", () => {
     // Инвертированный гейт §4.5: пропустив повтор, мы отдали бы D сайту, и он
     // показал бы настоящую роль посреди подмены. Тест держит это решение.
     expect(shouldSwallowRoleKey(keydown({ code: "KeyD", repeat: true }), "KeyD")).toBe(true);
+  });
+
+  test("наш синтетический D не глотает (adversarial 21.10.2026, №9)", () => {
+    // Глотая его, блокировщик срывал возврат скрытия после «подсмотреть».
+    const seen: boolean[] = [];
+    const spy = (e: Event) => seen.push(shouldSwallowRoleKey(e as KeyboardEvent, "KeyD"));
+    document.addEventListener("keydown", spy);
+    dispatchNativeRoleToggle();
+    document.removeEventListener("keydown", spy);
+    expect(seen.length, "пара D и пара Ctrl+D").toBe(2);
+    expect(seen.every((v) => v === false)).toBe(true);
   });
 
   test.each(["KeyF", "KeyE", "Space"])("ignores unrelated key %s", (code) => {
@@ -190,6 +202,26 @@ describe("подмена переживает Vue-перерисовки (ауд
     expect(late.style.visibility, "E вернул исходное, а не бросил скрытым").toBe("");
     expect(late.style.display).toBe("inline-flex");
     expect(isRoleFaked()).toBe(false);
+  });
+
+  test("щит подмены: свежий узел роли скрыт ДО флаша наблюдателя (adversarial 21.10.2026, №8)", () => {
+    // До флаша (rAF, ≤ ~270 мс) пересозданный узел показывал НАСТОЯЩУЮ роль.
+    const { own } = mountTable();
+    enable();
+    pressF();
+    const late = document.createElement("div");
+    late.className = "player__role role";
+    (document.querySelector("#p2") as HTMLElement).appendChild(late);
+    const vis = (el: Element) => getComputedStyle(el).visibility;
+    expect(vis(late), "новый узел сокомандника скрыт таблицей стилей").toBe("hidden");
+    expect(vis(own), "своя роль с фальшивкой видна").not.toBe("hidden");
+    // Пересозданная СВОЯ роль без фальшивки — тоже скрыта, а не настоящая.
+    const fresh = document.createElement("div");
+    fresh.className = "player__role role my-role";
+    own.replaceWith(fresh);
+    expect(vis(fresh)).toBe("hidden");
+    pressE();
+    expect(vis(late), "E снимает щит").not.toBe("hidden");
   });
 
   test("21.10.2026: смена флага сайта (D) посреди подмены не раскрывает сокомандника", () => {
