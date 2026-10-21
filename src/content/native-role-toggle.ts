@@ -15,11 +15,11 @@
  * (adversarial 21.10.2026, №6); блокировщик подмены, наоборот, глотал наш
  * же D, и возврат скрытия после «подсмотреть» срывался (№9).
  */
-const own = new WeakSet<Event>();
+import { isSynthetic, markSynthetic } from "@core/synthetic-keys";
 
 /** Это наш синтетический D, а не нажатие игрока. */
 export function isOwnRoleToggleEvent(e: Event | undefined): boolean {
-  return !!e && own.has(e);
+  return isSynthetic(e);
 }
 
 function send(type: "keydown" | "keyup", ctrlKey: boolean): void {
@@ -32,7 +32,7 @@ function send(type: "keydown" | "keyup", ctrlKey: boolean): void {
     bubbles: true,
     cancelable: true,
   });
-  own.add(evt);
+  markSynthetic(evt);
   document.dispatchEvent(evt);
 }
 

@@ -152,6 +152,11 @@ export const SITE = {
   roleSymbols: "symbol#civilian, symbol#sheriff, symbol#mafia, symbol#godfather",
   myRole: ".player__role.role.role.my-role",
   anyRole: ".player__role.role.role",
+  /**
+   * Уведомление на плитке «Игрок является мафией» (сокет on_reveal_role;
+   * класс элемента = тип уведомления). То же знание, что значок роли.
+   */
+  roleRevealNotice: ".notifications-block .roleReveal",
   // Свои роли — все варианты разметки для скрытия/показа (auto-start)
   // Сверено с бандлом (аудит устойчивости 01.08.2026): класс my-role стоит
   // НА САМОМ элементе роли, отдельного предка .my-role сайт не создаёт —

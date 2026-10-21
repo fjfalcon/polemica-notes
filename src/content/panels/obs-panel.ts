@@ -32,7 +32,13 @@ import {
   SITE_CLASS,
 } from "@core/selectors";
 import { isGameRoomPath } from "@shared/routes";
-import { getRoleVisibilityTargets, pinHolds, pinOwnRole, releasePins } from "../role-pin";
+import {
+  getRoleVisibilityTargets,
+  pinHolds,
+  pinOwnRole,
+  releasePins,
+  sweepOrphanPins,
+} from "../role-pin";
 import { showToast } from "@core/toast";
 import type { Feature, FeatureContext } from "@core/feature";
 import type { ObsConnectionState, ObsScene } from "@shared/types";
@@ -347,6 +353,7 @@ let timeOfDayCheckQueued = false;
 let pendingTimeOfDay: TimeOfDay | null = null;
 let pendingTimeOfDayConfirmTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingRoleVisibilityTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingRoleVisibilityTarget: "visible" | "hidden" | null = null;
 
 let isVisible = false;
 
@@ -486,6 +493,10 @@ async function clearPersistedAutoState(resetRuntimeState = false): Promise<void>
     currentTimeOfDay = null;
     phaseConfirmedLive = false;
     lastAppliedRoleVisibility = null;
+    // Сброс выше гасил и СВЕЖЕЕ защитное скрытие, взведённое после разрыва
+    // OBS, — старый visible-пин держал роль (внешний аудит 21.10.2026, B06).
+    // Фаза теперь неизвестна → желаемое «скрыто» — применяем сразу.
+    healRolePin();
   }
 }
 
@@ -609,7 +620,8 @@ export function nightSceneSafeForRoleShow(): boolean {
   return nightRoleShowAllowed({ nightScene, currentScene });
 }
 
-let roleSceneGateListener: (() => void) | null = null;
+export type RoleSceneGateReason = "gate" | "beforeDayScene";
+let roleSceneGateListener: ((reason: RoleSceneGateReason) => void) | null = null;
 
 /**
  * auto-start подписывается, чтобы роли СОКОМАНДНИКОВ (его CSS) шли вместе
@@ -617,16 +629,18 @@ let roleSceneGateListener: (() => void) | null = null;
  * сцены (adversarial 21.10.2026, №7). Зовётся из healRolePin — он
  * срабатывает на каждую смену сцены, (ре)коннект и разрыв OBS.
  */
-export function setRoleSceneGateListener(fn: () => void): () => void {
+export function setRoleSceneGateListener(
+  fn: (reason: RoleSceneGateReason) => void,
+): () => void {
   roleSceneGateListener = fn;
   return () => {
     if (roleSceneGateListener === fn) roleSceneGateListener = null;
   };
 }
 
-function notifyRoleSceneGate(): void {
+function notifyRoleSceneGate(reason: RoleSceneGateReason): void {
   try {
-    roleSceneGateListener?.();
+    roleSceneGateListener?.(reason);
   } catch (err) {
     log.error(SCOPE, "role scene gate listener threw", err);
   }
@@ -660,13 +674,29 @@ function desiredRoleVisibility(): "visible" | "hidden" | null {
  * Без целей на странице молчит: ретраи в пустоту сжигали бюджет (наход. A).
  */
 function healRolePin(): void {
-  notifyRoleSceneGate();
+  notifyRoleSceneGate("gate");
   const want = desiredRoleVisibility();
   if (!want) return;
   if (pinHolds(want)) return;
   if (getRoleVisibilityTargets().length === 0) return; // узлов ещё/уже нет
   lastAppliedRoleVisibility = null; // латч мёртв вместе с прежним узлом
+  // Скрыть — СРАЗУ, не таймером: «в эфир» не ждёт даже одного кадра
+  // (внешний аудит 21.10.2026, B06).
+  if (want === "hidden" && applyRoleVisibility(false)) {
+    cancelPendingRoleVisibility();
+    return;
+  }
+  // Показ уже в пути к той же цели — не перевзводим: 2с-опрос сбрасывал
+  // 3с-задержку ночного показа, и своя роль ночью не показывалась НИКОГДА
+  // (внешний аудит 21.10.2026, H02).
+  if (pendingRoleVisibilityTimer && pendingRoleVisibilityTarget === want) return;
   scheduleRoleVisibility(currentTimeOfDay as TimeOfDay);
+}
+
+function cancelPendingRoleVisibility(): void {
+  if (pendingRoleVisibilityTimer) clearTimeout(pendingRoleVisibilityTimer);
+  pendingRoleVisibilityTimer = null;
+  pendingRoleVisibilityTarget = null;
 }
 
 function scheduleRoleVisibility(timeOfDay: TimeOfDay, attempt = 0): void {
@@ -697,8 +727,10 @@ function scheduleRoleVisibility(timeOfDay: TimeOfDay, attempt = 0): void {
       ? 0
       : 250;
   log.debug(SCOPE, "Scheduling role visibility change to", targetVisibility, "in", delayMs);
+  pendingRoleVisibilityTarget = targetVisibility;
   pendingRoleVisibilityTimer = setTimeout(() => {
     pendingRoleVisibilityTimer = null;
+    pendingRoleVisibilityTarget = null;
     // Страховка второй линии: сам таймер гасится в stopDOMMonitoring/disable,
     // но проверка здесь дешёвая и закрывает будущие пути взведения.
     if (!autoModeEnabled) return;
@@ -727,9 +759,11 @@ async function hideRoleBeforeDaySceneSwitch(): Promise<void> {
     clearTimeout(pendingRoleVisibilityTimer);
     pendingRoleVisibilityTimer = null;
   }
-  // Сокомандников прячет auto-start (CSS по своей фазе) — пусть догонит
-  // фазу ДО смены сцены, а не через 150 мс–1 с после (adversarial №7).
-  notifyRoleSceneGate();
+  // Сокомандников прячет auto-start (CSS) — ДО смены сцены, без оглядки на
+  // его собственное распознавание фазы: оно могло ещё видеть ночь (current
+  // ночной, next уже дневной), и напарники уезжали на дневную сцену
+  // (adversarial №7; внешний аудит 21.10.2026, B05).
+  notifyRoleSceneGate("beforeDayScene");
   const hidden = applyRoleVisibility(false);
   if (!hidden) {
     // Латч «скрыто» здесь НЕ ставим. Раньше он ставился безусловно, и
@@ -1553,6 +1587,9 @@ function applyAutoSettings(ctx: FeatureContext): void {
   nightScene = newNightScene;
 
   if (!changed) return;
+  // Гейт ночной сцены зависит от этих настроек: выключили автосцены —
+  // сценовое скрытие сокомандников должно сняться (внешний аудит, H04).
+  notifyRoleSceneGate("gate");
 
   // info: пользователь переключил тумблер или выбрал другие сцены — и ждёт,
   // что это сразу подействует. Раньше в файле не было ни самого изменения, ни
@@ -1608,6 +1645,7 @@ export const obsPanelFeature: Feature = {
   settingKey: null,
 
   async enable(ctx) {
+    sweepOrphanPins(); // следы прежней копии скрипта (внешний аудит, раздел E)
     panelEnabled = ctx.settings.obs_floating_panel_enabled === true;
     applyAutoSettings(ctx);
 

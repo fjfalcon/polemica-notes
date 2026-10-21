@@ -257,6 +257,25 @@ export function restoreLiftedPins(): void {
   setShield(target === "hidden");
 }
 
+/**
+ * Снять ЧУЖИЕ пины — следы прежней копии скрипта (внешний аудит 21.10.2026,
+ * раздел E). Обновление расширения посреди игры оставляет DOM, но не
+ * состояние модуля: «visible»-пин старой копии (!important) перебивал свежее
+ * CSS-скрытие, и своя роль светилась днём; «hidden»-пин с щитом не снимался
+ * подсматриванием (пустой pinTarget). Узлы, запиненные ЭТОЙ копией, не трогаем.
+ */
+export function sweepOrphanPins(): void {
+  document.querySelectorAll<HTMLElement>(`[${PIN_ATTR}]`).forEach((el) => {
+    if (touched.has(el)) return;
+    for (const prop of ["visibility", "opacity"]) {
+      if (el.style.getPropertyPriority(prop) === "important") el.style.removeProperty(prop);
+    }
+    if (el.style.pointerEvents === "none") el.style.removeProperty("pointer-events");
+    el.removeAttribute(PIN_ATTR);
+  });
+  if (pinTarget !== "hidden" || lifted) setShield(false);
+}
+
 /** Тестовый шов: полное обнуление модульного состояния. */
 export function resetRolePinForTest(): void {
   releasePins();

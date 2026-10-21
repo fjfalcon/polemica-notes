@@ -6,6 +6,7 @@
  * Поддерживает раскладко-независимость через event.code (KeyF == и F, и А).
  */
 import { log } from "./log";
+import { isSynthetic } from "./synthetic-keys";
 
 export type HotkeyHandler = (e: KeyboardEvent) => void;
 
@@ -15,8 +16,6 @@ interface Binding {
   preventDefault: boolean;
   /** Глушить автоповторы для сайта (обработчик на них и так не зовётся). */
   swallowRepeat: () => boolean;
-  /** Ctrl/Cmd + клавиша — сайту, но фича хочет об этом знать. */
-  onModified?: HotkeyHandler;
 }
 
 /**
@@ -47,22 +46,26 @@ class KeyboardRouter {
   private started = false;
 
   private onKeyDown = (e: KeyboardEvent) => {
+    // Наши синтетические события (D сайту) — не нажатия игрока.
+    if (isSynthetic(e)) return;
     const b = this.bindings.get(e.code);
-    if (!b) return;
+    const watchers = this.observers.get(e.code);
+    if (!b && !watchers) return;
 
     // Хоткеи привязаны к event.code (физической клавише) ради раскладко-независимости.
     // Обратная сторона: в русской раскладке KeyF — это «а», KeyD — «в», KeyE — «у».
     // Без этих проверок фраза в игровом чате перещёлкивала подменённую роль и
     // снимала скрытие роли — то есть показывала её на стриме.
     if (isTypingContext(e) && producesText(e.code)) return;
+    // Наблюдатели видят то, что НЕ забирает наш хоткей: клавишу без
+    // привязки и любые сочетания с Ctrl/Cmd — их получит сайт (у опции
+    // «хоткеи с модификатором» Ctrl/Cmd+D — его тумблер ролей), а фича
+    // обязана знать о ручном действии и может его заглушить.
+    const modified = e.ctrlKey || e.metaKey;
+    if (watchers && (!b || modified)) for (const w of watchers) this.call(w, e);
+    if (!b) return;
     // Ctrl+F / Cmd+D и прочие сочетания принадлежат браузеру и сайту, не нам.
-    // Наблюдать можно (onModified): у игрока с опцией сайта «хоткеи с
-    // модификатором» Ctrl/Cmd+D — его ручное скрытие ролей.
-    if (e.altKey) return;
-    if (e.ctrlKey || e.metaKey) {
-      if (!e.repeat) this.call(b.onModified, e);
-      return;
-    }
+    if (e.altKey || modified) return;
     // Зажатая клавиша не должна гнать обработчик с частотой автоповтора. А
     // сайту — и подавно: у hotkeys-js нет защиты от повтора, и зажатый D
     // переключал флаг ролей на КАЖДОМ повторе — мигание в эфире.
@@ -101,6 +104,7 @@ class KeyboardRouter {
   private holds = new Map<string, { down: () => boolean | void; up: () => void }>();
 
   private onKeyUp = (e: KeyboardEvent) => {
+    if (isSynthetic(e)) return;
     const wasSwallowed = this.swallowed.has(e.code);
     if (this.releaseHold(e.code) && wasSwallowed) e.stopPropagation();
   };
@@ -164,6 +168,24 @@ class KeyboardRouter {
     };
   }
 
+  private observers = new Map<string, Set<HotkeyHandler>>();
+
+  /**
+   * Наблюдать клавишу, которую наш хоткей НЕ забирает (нет привязки, или
+   * нажата с Ctrl/Cmd), — включая автоповторы (e.repeat): наблюдатель сам
+   * решает, глушить ли их для сайта. Гейт набора текста — как у хоткеев.
+   */
+  observe(code: string, handler: HotkeyHandler): () => void {
+    this.ensureStarted();
+    let set = this.observers.get(code);
+    if (!set) this.observers.set(code, (set = new Set()));
+    set.add(handler);
+    return () => {
+      set!.delete(handler);
+      if (set!.size === 0 && this.observers.get(code) === set) this.observers.delete(code);
+    };
+  }
+
   /**
    * Зарегистрировать хоткей по физической клавише (event.code, напр. "KeyF", "F8").
    * Возвращает функцию отписки.
@@ -175,7 +197,6 @@ class KeyboardRouter {
       preventDefault?: boolean;
       /** Глушить для сайта автоповторы (true или решение на момент повтора). */
       swallowRepeat?: boolean | (() => boolean);
-      onModified?: HotkeyHandler;
     } = {},
   ): () => void {
     this.ensureStarted();
@@ -190,7 +211,6 @@ class KeyboardRouter {
         typeof opts.swallowRepeat === "function"
           ? opts.swallowRepeat
           : () => opts.swallowRepeat === true,
-      onModified: opts.onModified,
     });
     return () => {
       if (this.bindings.get(code)?.handler === handler) this.bindings.delete(code);

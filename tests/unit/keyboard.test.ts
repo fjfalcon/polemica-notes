@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { markSynthetic } from "@core/synthetic-keys";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("@core/log", () => ({
@@ -170,13 +171,14 @@ describe("клавиша-«зажатие» (подсмотреть роли)", 
     document.removeEventListener("keyup", site);
   });
 
-  test("автоповтор обычного хоткея со swallowRepeat сайту не отдаётся; Ctrl+клавиша — в onModified", () => {
+  test("автоповтор хоткея со swallowRepeat сайту не отдаётся; наблюдатель видит только то, что хоткей не забрал", () => {
     // Зажатый D: hotkeys-js сайта переключал флаг ролей на каждом повторе.
     const site = vi.fn();
     document.addEventListener("keydown", site);
     const handler = vi.fn();
-    const onModified = vi.fn();
-    const offD = keyboard.register("KeyD", handler, { swallowRepeat: true, onModified });
+    const watcher = vi.fn();
+    const offD = keyboard.register("KeyD", handler, { swallowRepeat: true });
+    const offW = keyboard.observe("KeyD", watcher);
     const send = (init: KeyboardEventInit = {}) =>
       document.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD", bubbles: true, ...init }));
     send();
@@ -184,13 +186,38 @@ describe("клавиша-«зажатие» (подсмотреть роли)", 
     send({ repeat: true });
     expect(handler).toHaveBeenCalledTimes(1);
     expect(site, "первое нажатие — по решению обработчика, повторы — нет").toHaveBeenCalledTimes(1);
+    expect(watcher, "простой D забрал хоткей — наблюдателю не положено").not.toHaveBeenCalled();
     send({ ctrlKey: true });
     send({ metaKey: true, repeat: true });
-    expect(onModified, "Ctrl/Cmd+D замечен, повтор — нет").toHaveBeenCalledTimes(1);
+    expect(watcher, "Ctrl/Cmd+D — наблюдателю, включая повтор").toHaveBeenCalledTimes(2);
     expect(handler, "сочетание не зовёт обычный обработчик").toHaveBeenCalledTimes(1);
-    expect(site, "сочетания (и их повторы) принадлежат сайту/браузеру").toHaveBeenCalledTimes(3);
     offD();
+    // Без привязки (клавиша скрытия переназначена) — простой D тоже наблюдателю.
+    send();
+    expect(watcher).toHaveBeenCalledTimes(3);
+    offW();
     document.removeEventListener("keydown", site);
+  });
+
+  test("наши синтетические события роутер не видит (внешний аудит 21.10.2026, B02)", () => {
+    // Peek на D: синтетический keyup нашего D завершал ФИЗИЧЕСКОЕ удержание.
+    const on = vi.fn();
+    const off = vi.fn();
+    const unsub = keyboard.registerHold("KeyD", on, off);
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD", bubbles: true }));
+    const up = new KeyboardEvent("keyup", { code: "KeyD", bubbles: true });
+    markSynthetic(up);
+    window.dispatchEvent(up);
+    expect(off, "синтетический keyup не отпускает удержание").not.toHaveBeenCalled();
+    const down = new KeyboardEvent("keydown", { code: "KeyD", bubbles: true });
+    markSynthetic(down);
+    unsub();
+    expect(off).toHaveBeenCalledTimes(1);
+    const on2 = vi.fn();
+    const unsub2 = keyboard.registerHold("KeyD", on2, vi.fn());
+    window.dispatchEvent(down);
+    expect(on2, "синтетический keydown не начинает удержание").not.toHaveBeenCalled();
+    unsub2();
   });
 
   test("в поле ввода клавиша не срабатывает (KeyV — это «м» в русской раскладке)", () => {

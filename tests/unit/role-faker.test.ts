@@ -224,6 +224,85 @@ describe("подмена переживает Vue-перерисовки (ауд
     expect(vis(late), "E снимает щит").not.toBe("hidden");
   });
 
+  test("щит: Vue заменил только <use> в подменённой роли — настоящий значок скрыт сразу", () => {
+    const { own } = mountTable();
+    enable();
+    pressF();
+    own.querySelector("svg")!.innerHTML = '<use href="/sprite.svg#sheriff"></use>';
+    const use = own.querySelector("use")!;
+    expect(getComputedStyle(use).visibility, "до флаша наблюдателя").toBe("hidden");
+    // Сайт переписал href самого <use> (атрибут наблюдатель не видит).
+    fireDom();
+    expect(use.getAttribute("href"), "наблюдатель перекрасил").toContain("#godfather");
+    expect(getComputedStyle(use).visibility).not.toBe("hidden");
+    use.setAttribute("href", "/sprite.svg#sheriff");
+    // Переписанный href ловит само правило щита. jsdom сопоставляет
+    // [href$=…] и с атрибутом xlink:href (браузер — нет), поэтому сверяем
+    // текст правила: <use>, чей href не фальшивка, скрыт.
+    const rule = document.getElementById("pn-role-fake-shield")!.textContent!;
+    expect(rule).toContain('[data-original-role] use:not([href$="#godfather"])');
+    expect(use.getAttribute("href")!.endsWith("#godfather")).toBe(false);
+  });
+
+  test("подпись сверяется и при совпавшем значке; E снимает снимок настоящей роли", () => {
+    const { own } = mountTable();
+    enable();
+    pressF();
+    const tip = own.querySelector(".tooltip span")!;
+    tip.textContent = "Ваша роль - Шериф"; // сайт вернул настоящую подпись
+    fireDom();
+    expect(tip.textContent).toBe("Ваша роль - Дон");
+    pressE();
+    expect(own.hasAttribute("data-original-role"), "снимок живёт только до E").toBe(false);
+    // Сайт сменил роль в том же узле — следующий F→E возвращает НОВУЮ.
+    own.querySelector("use")!.setAttribute("href", "/sprite.svg#mafia");
+    tip.textContent = "Ваша роль - Мафия";
+    pressF();
+    pressE();
+    expect(own.querySelector("use")!.getAttribute("href")).toBe("/sprite.svg#mafia");
+  });
+
+  test("меню, появившееся во время подмены, E возвращает", () => {
+    mountTable();
+    enable();
+    pressF();
+    const menu = document.createElement("div");
+    menu.className = "player__menu with-role";
+    menu.style.right = "2rem";
+    document.querySelector("#p2")!.append(menu);
+    fireDom();
+    expect(menu.style.right).toBe("0.5rem");
+    pressE();
+    expect(menu.style.right).toBe("2rem");
+  });
+
+  test("уведомление «Игрок является …» под подменой скрыто щитом", () => {
+    mountTable();
+    enable();
+    pressF();
+    const block = document.createElement("div");
+    block.className = "notifications-block player__notifications-block";
+    block.innerHTML = '<div class="notification-element roleReveal"><span>Игрок является мафией</span></div>';
+    document.querySelector("#p2")!.append(block);
+    expect(getComputedStyle(block.firstElementChild!).visibility).toBe("hidden");
+    pressE();
+    expect(getComputedStyle(block.firstElementChild!).visibility).not.toBe("hidden");
+  });
+
+  test("следы подмены прежней копии скрипта снимаются при включении (обновление расширения)", () => {
+    const { own, foe } = mountTable();
+    own.setAttribute("data-original-role", "sheriff");
+    own.setAttribute("data-original-sprite-base", "/sprite.svg");
+    own.querySelector("use")!.setAttribute("href", "/sprite.svg#godfather");
+    foe.style.setProperty("visibility", "hidden", "important");
+    foe.setAttribute("data-pn-fake-hidden", "");
+    document.documentElement.setAttribute("data-pn-role-faked", "");
+    enable();
+    expect(own.querySelector("use")!.getAttribute("href")).toBe("/sprite.svg#sheriff");
+    expect(foe.style.visibility).toBe("");
+    expect(document.documentElement.hasAttribute("data-pn-role-faked")).toBe(false);
+  });
+
   test("21.10.2026: смена флага сайта (D) посреди подмены не раскрывает сокомандника", () => {
     // Сайт прячет/показывает роли v-show — пишет display всем ролям. Наш
     // прежний display:none Vue перезаписывал на первой же смене флага, и

@@ -39,7 +39,7 @@ vi.mock("@content/features/role-faker", () => ({
   isRoleFaked: () => fakerSeam.faked,
 }));
 vi.mock("@core/keyboard", () => ({
-  keyboard: { register: vi.fn(() => () => {}), registerHold: vi.fn(() => () => {}) },
+  keyboard: { register: vi.fn(() => () => {}), registerHold: vi.fn(() => () => {}), observe: vi.fn(() => () => {}) },
 }));
 
 import {
@@ -545,6 +545,16 @@ describe("сайт прячет роли общим флагом roleDisplay (v-
     expect(document.getElementById("polemica-role-hide")).toBeNull();
     releasePins();
     autoStartFeature.disable();
+  });
+
+  test("CSS-скрытие прячет и уведомление «Игрок является …» (внешний аудит 21.10.2026)", () => {
+    document.body.innerHTML = `<div class="player"><div class="notifications-block player__notifications-block">
+      <div class="notification-element roleReveal"><span>Игрок является мафией</span></div></div></div>`;
+    autoStartFeature.enable({ settings: { auto_hide_roles_enabled: true } } as never);
+    const note = document.querySelector(".roleReveal")!;
+    expect(getComputedStyle(note).visibility).toBe("hidden");
+    autoStartFeature.disable();
+    expect(getComputedStyle(note).visibility).not.toBe("hidden");
   });
 
   test("ночной автопоказ при скрытии сайтом отдаёт сайту D — видно всё вместе", () => {

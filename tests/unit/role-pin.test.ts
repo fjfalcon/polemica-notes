@@ -20,6 +20,7 @@ import {
   releasePins,
   resetRolePinForTest,
   restoreLiftedPins,
+  sweepOrphanPins,
 } from "@content/role-pin";
 
 function mountRole(): HTMLElement {
@@ -202,6 +203,23 @@ describe("пин своей роли", () => {
     pinOwnRole("hidden");
     releasePins();
     expect(vis(fresh), "teardown снимает щит").not.toBe("hidden");
+  });
+
+  test("чужие пины прежней копии скрипта снимаются; свои — нет (обновление расширения)", () => {
+    // «visible»-пин старой копии перебивал свежее CSS-скрытие — своя роль днём в эфире.
+    const orphan = mountRole();
+    orphan.setAttribute("data-pn-role-pin", "visible");
+    orphan.style.setProperty("visibility", "visible", "important");
+    orphan.style.setProperty("opacity", "1", "important");
+    document.documentElement.setAttribute("data-pn-own-role-hidden", "");
+    sweepOrphanPins();
+    expect(orphan.style.visibility).toBe("");
+    expect(orphan.hasAttribute("data-pn-role-pin")).toBe(false);
+    expect(document.documentElement.hasAttribute("data-pn-own-role-hidden")).toBe(false);
+    pinOwnRole("hidden");
+    sweepOrphanPins();
+    expect(orphan.style.visibility, "свой пин сохраняется").toBe("hidden");
+    expect(document.documentElement.hasAttribute("data-pn-own-role-hidden")).toBe(true);
   });
 
   test("повторный lift без пина — false; restore после перепина владельцем — не мешает", () => {
