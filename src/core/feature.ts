@@ -148,8 +148,12 @@ export class FeatureManager {
   }
 
   private async syncPass(): Promise<void> {
-    const ctx: FeatureContext = { settings: this.settings as Settings };
     for (const f of this.features) {
+      // Настройки — на момент обработки КАЖДОЙ фичи: проход мог ждать чужой
+      // enable, а патч за это время уже дошёл до фич немедленно
+      // (updateReadyNow). Снимок начала прохода откатывал их к старому
+      // (adversarial-ревью 9.67.0, L1).
+      const ctx: FeatureContext = { settings: this.settings as Settings };
       const shouldEnable = this.isEnabled(f);
       const isActive = this.active.has(f.id);
       if (shouldEnable && !isActive) {
