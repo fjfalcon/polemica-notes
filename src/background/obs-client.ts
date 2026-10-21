@@ -295,6 +295,11 @@ export class ObsClient {
   private teardownSocket(): void {
     this.isConnected = false;
     this.sessionId = null;
+    // Сцена прошлой сессии — не правда новой: пока связи нет, Program могли
+    // сменить руками. Новая сессия узнаёт сцену только из своего
+    // GetSceneList/события — иначе свежий статус до ответа списка
+    // подтверждал старую NIGHT (внешний аудит №4, B03).
+    this.currentScene = null;
     this.socket = null;
     this.stopHeartbeat();
   }
@@ -541,11 +546,18 @@ export class ObsClient {
   }
 
   async requestSceneList(): Promise<ObsScene[]> {
+    const seq = this.sceneEventSeq;
+    const session = this.sessionId;
     const res = await this.request<{ scenes: ObsScene[]; currentProgramSceneName: string }>(
       "GetSceneList",
     );
     this.scenes = res.scenes || [];
-    this.currentScene = res.currentProgramSceneName;
+    // Снимок списка старше пришедшего за время запроса события смены сцены
+    // (или другой сессии) — его текущая сцена устарела: старый список
+    // возвращал NIGHT поверх уже DAY (внешний аудит №4, C01).
+    if (seq === this.sceneEventSeq && session === this.sessionId) {
+      this.currentScene = res.currentProgramSceneName;
+    }
     this.notifyAll("obs_scenes_updated", this.sceneData());
     void this.saveConnectionState(true);
     return this.scenes;

@@ -437,7 +437,11 @@ async function requestOBSStatus(): Promise<void> {
         scenes = status.scenes || [];
         if (epoch === sceneInfoEpoch) currentScene = status.currentScene ?? null;
         panel?.setScenes(scenes, currentScene);
-      } else {
+      } else if (epoch === sceneInfoEpoch) {
+        // Отрицательный снимок старше принятого события сцены (реконнект и
+        // свежая NIGHT пришли, пока ответ был в пути) — устарел так же, как
+        // положительный: прежде он стирал новую NIGHT, и heal прятал стол
+        // навсегда (внешний аудит №4, H03).
         panel?.setConnectionStatus("Не подключено", "error");
         scenes = [];
         currentScene = null;
@@ -622,16 +626,18 @@ function setImportant(el: HTMLElement, prop: string, value: string): void {
  * уехала зрителям («ночь не включилась, роль видно было»). Показ и смена
  * сцены — одна рука, не две.
  *
- * Ночная сцена НЕ настроена — защищать нечего (стример не пользуется
- * автосценами, прежнее поведение сохраняется). currentScene обновляется
- * только подтверждённым switchScene или событием/статусом самого OBS — это
- * и есть подтверждение «эфир на ночной».
+ * Ночная сцена НЕ настроена при включённых автосценах — приватная сцена не
+ * подтверждена вовсе, показ запрещён (fail-closed; внешний аудит №4, B04:
+ * прежнее «защищать нечего» открывало стол на DAY при разрыве OBS). Без
+ * автосцен этот гейт не зовётся (nightSceneSafeForRoleShow). currentScene
+ * обновляется только подтверждённым switchScene или событием/статусом
+ * самого OBS — это и есть подтверждение «эфир на ночной».
  */
 export function nightRoleShowAllowed(input: {
   nightScene: string;
   currentScene: string | null;
 }): boolean {
-  return !input.nightScene || input.currentScene === input.nightScene;
+  return !!input.nightScene && input.currentScene === input.nightScene;
 }
 
 /** Целевая видимость роли для фазы С УЧЁТОМ сцены (живое состояние модуля). */
@@ -764,15 +770,24 @@ function scheduleRoleVisibility(timeOfDay: TimeOfDay, attempt = 0): void {
       : 250;
   log.debug(SCOPE, "Scheduling role visibility change to", targetVisibility, "in", delayMs);
   pendingRoleVisibilityTarget = targetVisibility;
+  const scheduledPath = location.pathname;
   pendingRoleVisibilityTimer = setTimeout(() => {
     pendingRoleVisibilityTimer = null;
     pendingRoleVisibilityTarget = null;
     // Страховка второй линии: сам таймер гасится в stopDOMMonitoring/disable,
     // но проверка здесь дешёвая и закрывает будущие пути взведения.
     if (!autoModeEnabled) return;
+    // Таймер прошлой комнаты (SPA) — не решение новой игры (аудит №4, S4).
+    if (location.pathname !== scheduledPath) {
+      checkPhaseRoute();
+      return;
+    }
     // Цель ПЕРЕсчитывается на срабатывании: за время задержки сцена могла
     // подтвердиться (или уйти) — применяем правду момента, не снимок.
-    const applied = applyRoleVisibility(roleTargetFor(timeOfDay) === "visible");
+    // И фазу — тоже: ночной таймер, взведённый поздним успехом смены сцены,
+    // не вправе открыть роль, если игра уже ушла в день (внешний аудит №4, H04).
+    const phaseNow = timeOfDay === "night" && currentTimeOfDay !== "night" ? "day" : timeOfDay;
+    const applied = applyRoleVisibility(roleTargetFor(phaseNow) === "visible");
     if (applied) return;
     if (attempt < 5) {
       scheduleRoleVisibility(timeOfDay, attempt + 1);
@@ -1340,7 +1355,9 @@ async function autoSwitchScene(timeOfDay: TimeOfDay): Promise<void> {
       log.info(SCOPE, "сцена переключена:", targetScene);
       // Ночь: показ роли ждал подтверждённой сцены (roleTargetFor) — теперь
       // сцена наша, перезапускаем показ (жалоба 01.10.2026).
-      if (timeOfDay === "night") scheduleRoleVisibility(timeOfDay);
+      // Но только если ночь ещё идёт: успех мог прийти после нового дня
+      // (внешний аудит №4, H04).
+      if (timeOfDay === "night" && currentTimeOfDay === "night") scheduleRoleVisibility(timeOfDay);
     }
   } catch (e) {
     log.error(SCOPE, "Failed to auto-switch scene", e, "(target:", targetScene, ")");
@@ -1356,6 +1373,36 @@ async function autoSwitchScene(timeOfDay: TimeOfDay): Promise<void> {
 }
 
 // ─────────────────────────── мониторинг DOM (день/ночь) ───────────────────────────
+
+/** Путь, на котором слежение за фазой видело страницу последний раз. */
+let lastPhaseRoutePath: string | null = null;
+
+/**
+ * Новая игра в том же документе (SPA): фаза, начало ночи и отложенный показ
+ * роли — от прошлой комнаты. Прежде старый ночной таймер открывал роль в
+ * новой игре с неизвестной фазой, а «та же ночь» не давала нового nightShow
+ * (внешний аудит №4, S4). Сбрасываем до живого распознавания: без фазы
+ * желаемое — скрыто.
+ */
+function checkPhaseRoute(): void {
+  const path = location.pathname;
+  if (path === lastPhaseRoutePath) return;
+  const previous = lastPhaseRoutePath;
+  lastPhaseRoutePath = path;
+  if (previous === null || !isGameRoomPath(path)) return;
+  log.info(SCOPE, "новая игра в том же документе — фаза автосцен сброшена");
+  cancelPendingRoleVisibility();
+  if (pendingTimeOfDayConfirmTimer) {
+    clearTimeout(pendingTimeOfDayConfirmTimer);
+    pendingTimeOfDayConfirmTimer = null;
+  }
+  pendingTimeOfDay = null;
+  currentTimeOfDay = null;
+  nightSince = null;
+  lastAppliedRoleVisibility = null;
+  healRolePin();
+  requestTimeOfDayCheck();
+}
 
 function startDOMMonitoring(): void {
   if (!autoModeEnabled) {
@@ -1374,7 +1421,9 @@ function startDOMMonitoring(): void {
   // его добирает редкий страховочный опрос ниже.
   const PHASE_SCOPE = SITE.phaseScope;
   const ROLE_SEL = SITE.ownRoleTargets.join(", ");
+  lastPhaseRoutePath = location.pathname;
   unsubDom = onDomChange((mutations) => {
+    checkPhaseRoute();
     let shouldCheckTime = false;
     let roleNodeAdded = false;
     // Break только когда найдено ОБА: ранний выход по phaseScope съедал
@@ -1419,6 +1468,7 @@ function startDOMMonitoring(): void {
   // самолечение пина (аудит №1): пересозданный Vue узел теряет пин, латч
   // сверяется с живым DOM и перенакладывает в пределах пары секунд.
   timeOfDayFallbackTimer = setInterval(() => {
+    checkPhaseRoute();
     healRolePin();
     requestTimeOfDayCheck();
   }, 2000);

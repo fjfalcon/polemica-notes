@@ -174,6 +174,13 @@ export const SITE = {
   ] as readonly string[],
   // Стадии игры (день/ночь/голосование)
   stage: ".stage, .substage",
+  /**
+   * Узлы, смена которых может сменить фазу для немедленного детектора ролей:
+   * этап, сам роллер (сайт ЗАМЕНЯЕТ DesktopRoller на RollerFixedState —
+   * «Промах», пауза, итог — мутациями с target `.roller`, ни одна не внутри
+   * `.stage`; внешний аудит №4, B01) и экран `.ended`.
+   */
+  rolePhaseHost: ".roller, .stage, .substage, .ended",
   substageCurrent: ".substage.current",
   /** МЁРТВЫЙ: сайт рендерит подстадии только как current/next/temp. */
   substageActive: ".substage.active",

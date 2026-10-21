@@ -136,24 +136,33 @@ class SharedDomObserver {
         }
       }
       if (this.subscribers.size === 0) return;
-      const room = MAX_PENDING - this.pending.length;
-      if (room > 0) {
+      // Текстовые тики (characterData) — только немедленным подписчикам:
+      // обычная очередь их не видит, как и прежде (см. observe() ниже).
+      let queued = 0;
+      for (let i = 0; i < muts.length; i++) {
+        if (muts[i].type === "characterData") continue;
         // Без spread: `push(...muts)` на большой пачке даёт RangeError.
-        for (let i = 0; i < muts.length && i < room; i++) this.pending.push(muts[i]);
+        if (this.pending.length < MAX_PENDING) this.pending.push(muts[i]);
+        else this.dropped++;
+        queued++;
       }
-      if (muts.length > room) this.dropped += muts.length - Math.max(room, 0);
-      this.schedule();
+      if (queued > 0) this.schedule();
     });
     // Набор опций — осознанный минимум (закреплён инвариантом в
     // tests/invariants/architecture.test.ts): childList + только атрибуты
-    // class/style. characterData НЕ включён намеренно — текстовые тики
-    // (таймеры, счётчики готовности) мутируют каждую секунду и затопили бы
-    // очередь; подписчики и так пересканируют DOM по батчу childList.
+    // class/style + characterData. Текстовые тики (таймеры, счётчики
+    // готовности) мутируют каждую секунду и затопили бы очередь — поэтому
+    // characterData получают ТОЛЬКО немедленные подписчики, в обычную
+    // очередь эти записи не попадают (фильтр выше). Немедленным он нужен:
+    // сайт меняет подпись этапа через Text-узел (Vue setText → nodeValue),
+    // без childList — смена дня иначе ждала секундного опроса (внешний
+    // аудит №4, §2.2).
     this.observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
       attributes: true,
       attributeFilter: ["class", "style"],
+      characterData: true,
     });
     // Если вкладку свернули после того, как rAF уже был запланирован, он
     // никогда не вызовется — подхватываем проход таймером.

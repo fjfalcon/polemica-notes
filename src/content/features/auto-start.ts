@@ -16,7 +16,7 @@
  * update(ctx) переприменяет настройки без выкл/вкл фичи.
  */
 import { onDomChange, safeClick, isVisible, onDomChangeImmediate } from "@core/dom";
-import { keyboard } from "@core/keyboard";
+import { keyboard, isModifierCode, isTypingContext } from "@core/keyboard";
 import { log } from "@core/log";
 import { showToast } from "@core/toast";
 import { isPinnedElement, liftPins, restoreLiftedPins, sweepOrphanPins } from "../role-pin";
@@ -583,6 +583,30 @@ let lastOurShowAt = 0;
 const USER_INITIATED_MS = 700;
 let onSiteCommandKey: ((e: Event) => void) | null = null;
 let onSiteCommandClick: ((e: Event) => void) | null = null;
+/**
+ * Зажатые сейчас не-модификаторы — как множество `lh` у hotkeys-js сайта:
+ * он принимает D только РОВНО с одной зажатой клавишей. Слушаем на window
+ * capture: stopPropagation роутера соседний listener на window не глушит,
+ * и отпускание не теряется.
+ */
+const heldKeys = new Set<string>();
+let onHeldKeyDown: ((e: KeyboardEvent) => void) | null = null;
+let onHeldKeyUp: ((e: KeyboardEvent) => void) | null = null;
+let onHeldReset: (() => void) | null = null;
+
+/**
+ * Примет ли сайт эту клавишу как свой тумблер ролей: фильтр hotkeys-js
+ * (поле ввода, IME) и точное множество зажатых. Печать «в» в заметке или
+ * Ctrl+D при другой зажатой клавише сайт отвергает — прежде они всё равно
+ * становились «командой», и первое скрытое монтирование отменяло более
+ * новый наш показ (внешний аудит №4, H05).
+ */
+function siteAcceptsRoleKey(k: KeyboardEvent): boolean {
+  if (k.code !== "KeyD" || k.altKey || k.shiftKey || k.repeat) return false;
+  if (isTypingContext(k) || k.isComposing || k.keyCode === 229) return false;
+  for (const code of heldKeys) if (code !== "KeyD") return false;
+  return true;
+}
 let unsubRoleDomImmediate: (() => void) | null = null;
 
 function readSiteFlag(): boolean | null {
@@ -658,39 +682,79 @@ function adoptSiteDecision(show: boolean, byUser: boolean): void {
  * ролями (внешний аудит №3, §4 п.7). Проверка — в немедленном подписчике,
  * до монтирования ролей новой игры.
  */
-let lastGamePath: string | null = null;
+let lastRoutePath: string | null = null;
 
 function checkGameRoute(): void {
   const path = location.pathname;
-  if (!isGameRoomPath(path) || path === lastGamePath) return;
-  const fresh = lastGamePath === null;
-  lastGamePath = path;
-  if (fresh) return;
+  if (path === lastRoutePath) return;
+  const fresh = lastRoutePath === null;
+  lastRoutePath = path;
+  // Любой вход в комнату после другого пути — новая игра: и первая комната
+  // после поиска, и возврат в ту же комнату (внешний аудит №4, S1).
+  if (fresh || !isGameRoomPath(path)) return;
   log.info(SCOPE, "новая игра в том же документе — состояние скрытия ролей сброшено");
   lastManualRoleActionAt = 0;
   lastSiteRoleCommandAt = 0;
   lastOurShowAt = 0;
   siteFlag = null;
   sceneHide = null;
-  obsNightSince = null;
-  pendingNightShowSince = null;
+  endObsNight();
+  lastDaySeenAt = 0;
+  nightAutoShowStartedAt = 0;
+  if (pendingNightRoleShowTimer) {
+    clearTimeout(pendingNightRoleShowTimer);
+    pendingNightRoleShowTimer = null;
+  }
   rolePhaseInitialized = false;
   lastDetectedRolePhase = null;
-  if (cfg.autoHideRoles) hideAllRolesCSS("auto");
+  // Новая игра — новое решение о приватности: ручное скрытие/показ и снимок
+  // V прошлой игры в неё не переезжают (S3). Скрывает только настройка —
+  // и под V тоже: V, зажатая в прошлой игре, не открывает стол новой.
+  if (cfg.autoHideRoles) {
+    cssReason = "auto";
+    peekRestoreHidden = false;
+    peekRestoreReason = "auto";
+    hideAllRolesCSS("auto");
+  } else if (peeking) {
+    peekRestoreHidden = false;
+  } else {
+    showAllRolesCSS();
+  }
+  // Фаза — сразу: новый стол без маркеров этапа считается днём (S2).
+  if (cfg.rolePhaseSwitch) applyRolePhase(detectRolePhase());
+}
+
+function hostsPhase(nodes: NodeList): boolean {
+  for (const n of Array.from(nodes)) {
+    if (n.nodeType !== 1) continue;
+    const el = n as Element;
+    if (el.matches(SITE.rolePhaseHost) || el.querySelector(SITE.rolePhaseHost)) return true;
+  }
+  return false;
+}
+
+/** Может ли мутация сменить распознаваемую фазу (см. detectRolePhase). */
+function touchesPhase(m: MutationRecord): boolean {
+  const t = m.target;
+  const el = t.nodeType === 1 ? (t as Element) : t.parentElement;
+  if (!el) return false;
+  if (m.type === "attributes" && (el === document.body || el === document.documentElement)) return true;
+  if (el.closest(SITE.rolePhaseHost)) return true;
+  return m.type === "childList" && (hostsPhase(m.addedNodes) || hostsPhase(m.removedNodes));
 }
 
 /** Немедленный подписчик (до кадра): смена display ролей или новые узлы. */
 function onRoleDomImmediate(muts: MutationRecord[]): void {
   checkGameRoute();
-  // Смена этапа (текст/класс .stage/.substage) — фаза сразу, до кадра:
-  // прежде её видел только тик интервала, и в начале дня роли до ~1,15 с
-  // оставались открытыми (случайные сценарии 21.10.2026).
+  // Смена этапа — фаза сразу, до кадра: прежде её видел только тик
+  // интервала, и в начале дня роли до ~1,15 с оставались открытыми
+  // (случайные сценарии 21.10.2026). Не только внутри `.stage`: подпись
+  // этапа — Text-узел (characterData), а «Промах» заменяет весь роллер
+  // (внешний аудит №4, B01/§2.2).
   // Под V — тоже (как тик интервала): день прячет и под клавишей (fail-safe).
   if (cfg.rolePhaseSwitch) {
     for (const m of muts) {
-      const t = m.target as Element;
-      const el = t.nodeType === 1 ? t : t.parentElement;
-      if (el?.closest?.(SITE.stage)) {
+      if (touchesPhase(m)) {
         applyRolePhase(detectRolePhase());
         break;
       }
@@ -1060,6 +1124,8 @@ function applyRolePhase(phase: "day" | "night") {
     return;
   }
   nightAutoShowStartedAt = 0;
+  lastDaySeenAt = Date.now();
+  endObsNight();
   hideAllRolesCSS("auto");
 }
 
@@ -1091,10 +1157,10 @@ function syncRolesWithSceneGate(
       pendingNightShowSince = info?.nightSince ?? Date.now();
       noteObsNight(pendingNightShowSince);
     }
-    if (reason === "beforeDayScene") obsNightSince = null;
+    if (reason === "beforeDayScene") endObsNight();
     return;
   }
-  if (reason === "beforeDayScene") obsNightSince = null;
+  if (reason === "beforeDayScene") endObsNight();
   if (cfg.rolePhaseSwitch) applyRolePhase(detectRolePhase());
   if (reason === "nightShow") {
     onObsNightShow(info?.nightSince ?? Date.now());
@@ -1152,7 +1218,25 @@ function releaseSceneHide(): void {
  * ручное решение этой ночи от этого не устаревает (внешний аудит №3, B02/B03).
  */
 function noteObsNight(nightSince: number): void {
-  obsNightSince = obsNightSince === null ? nightSince : Math.min(obsNightSince, nightSince);
+  // Ночь не могла начаться раньше дня, который мы видели сами: obs-panel с
+  // выключенными автосценами хранит начало ПРОШЛОЙ ночи, и D той ночи
+  // считался решением новой (внешний аудит №4, H01). Такое начало заменяем
+  // нашим распознаванием ночи после этого дня (или самим днём).
+  const ownNight = nightAutoShowStartedAt > lastDaySeenAt ? nightAutoShowStartedAt : lastDaySeenAt;
+  const since = nightSince < lastDaySeenAt ? ownNight : nightSince;
+  obsNightSince = obsNightSince === null ? since : Math.min(obsNightSince, since);
+}
+
+/** Начало дня, распознанное автосменой фаз (переход в день). */
+let lastDaySeenAt = 0;
+
+/**
+ * День закончил ночь OBS: и её эпоху ручных решений, и nightShow, ждущий
+ * отпускания V, — он был о прошедшей ночи (внешний аудит №4, H01/H02).
+ */
+function endObsNight(): void {
+  obsNightSince = null;
+  pendingNightShowSince = null;
 }
 
 function onObsNightShow(nightSince: number): void {
@@ -1521,7 +1605,7 @@ function enableGamePage() {
   // Одна власть: скрытие сайта нейтрализовано, его текущее «скрыто»
   // (зритель, прошлое нажатие) принимаем в наш слой сразу.
   installRoleDisplayOverride();
-  lastGamePath = null;
+  lastRoutePath = null;
   checkGameRoute();
   siteFlag = null;
   syncSiteFlag();
@@ -1529,9 +1613,20 @@ function enableGamePage() {
   // Команды ролей сайту от игрока (см. lastSiteRoleCommandAt). D, дошедший
   // до document, наш роутер не забрал — его получит сайт.
   onSiteCommandKey = (e: Event) => {
-    const k = e as KeyboardEvent;
-    if (k.code === "KeyD" && !k.altKey && !k.shiftKey && !k.repeat) lastSiteRoleCommandAt = Date.now();
+    if (siteAcceptsRoleKey(e as KeyboardEvent)) lastSiteRoleCommandAt = Date.now();
   };
+  heldKeys.clear();
+  onHeldKeyDown = (e: KeyboardEvent) => {
+    if (e.code && !isModifierCode(e.code)) heldKeys.add(e.code);
+  };
+  onHeldKeyUp = (e: KeyboardEvent) => {
+    heldKeys.delete(e.code);
+  };
+  onHeldReset = () => heldKeys.clear();
+  window.addEventListener("keydown", onHeldKeyDown, true);
+  window.addEventListener("keyup", onHeldKeyUp, true);
+  window.addEventListener("blur", onHeldReset);
+  window.addEventListener("focus", onHeldReset);
   onSiteCommandClick = (e: Event) => {
     const item = (e.target as Element | null)?.closest?.("li, button, [role=\"button\"]");
     const text = norm(item);
@@ -1594,6 +1689,16 @@ function disableGamePage() {
   if (onSiteCommandClick) document.removeEventListener("click", onSiteCommandClick, true);
   onSiteCommandKey = null;
   onSiteCommandClick = null;
+  if (onHeldKeyDown) window.removeEventListener("keydown", onHeldKeyDown, true);
+  if (onHeldKeyUp) window.removeEventListener("keyup", onHeldKeyUp, true);
+  if (onHeldReset) {
+    window.removeEventListener("blur", onHeldReset);
+    window.removeEventListener("focus", onHeldReset);
+  }
+  onHeldKeyDown = null;
+  onHeldKeyUp = null;
+  onHeldReset = null;
+  heldKeys.clear();
   // Флаг сайта снова его: без нашего слоя роли видны так, как решил сайт.
   removeRoleDisplayOverride();
   siteFlag = null;
@@ -1601,6 +1706,7 @@ function disableGamePage() {
   sceneHide = null;
   pendingNightShowSince = null;
   obsNightSince = null;
+  lastDaySeenAt = 0;
   obsWasActive = false;
   // Подсматривание снимаем ПЕРВЫМ делом: если фичу выключили с зажатой
   // клавишей, роли остались бы на экране — на стриме это утечка.

@@ -36,9 +36,10 @@ describe("nightRoleShowAllowed", () => {
     expect(nightRoleShowAllowed({ nightScene: "я", currentScene: null })).toBe(false);
   });
 
-  test("ночная сцена не настроена — защищать нечего, прежнее поведение", () => {
-    expect(nightRoleShowAllowed({ nightScene: "", currentScene: null })).toBe(true);
-    expect(nightRoleShowAllowed({ nightScene: "", currentScene: "что угодно" })).toBe(true);
+  test("ночная сцена не настроена при автосценах — приватная сцена не подтверждена, показ запрещён (аудит №4, B04)", () => {
+    expect(nightRoleShowAllowed({ nightScene: "", currentScene: null })).toBe(false);
+    expect(nightRoleShowAllowed({ nightScene: "", currentScene: "что угодно" })).toBe(false);
+    expect(nightRoleShowAllowed({ nightScene: "", currentScene: "" })).toBe(false);
   });
 });
 

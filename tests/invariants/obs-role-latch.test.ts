@@ -260,7 +260,10 @@ describe("жалоба 01.10.2026: ночной показ роли ждёт н�
     );
     expect(body).toMatch(/const shouldShowRoles = roleTargetFor\(timeOfDay\) === "visible";/);
     expect(body, "снимок цели в таймере — класс «отравленный снимок»").toMatch(
-      /applyRoleVisibility\(roleTargetFor\(timeOfDay\) === "visible"\)/,
+      /applyRoleVisibility\(roleTargetFor\(phaseNow\) === "visible"\)/,
+    );
+    expect(body, "ночной таймер после наступившего дня не открывает роль (аудит №4, H04)").toMatch(
+      /const phaseNow = timeOfDay === "night" && currentTimeOfDay !== "night" \? "day" : timeOfDay;/,
     );
   });
 
@@ -279,7 +282,7 @@ describe("жалоба 01.10.2026: ночной показ роли ждёт н�
       source.indexOf("function startDOMMonitoring"),
     );
     expect(body, "гейт закрыт при планировании — показ запускает сцена").toMatch(
-      /if \(timeOfDay === "night"\) scheduleRoleVisibility\(timeOfDay\);/,
+      /if \(timeOfDay === "night" && currentTimeOfDay === "night"\) scheduleRoleVisibility\(timeOfDay\);/,
     );
     expect(body, "молчаливый провал смены уже стоил роли в эфире").toMatch(/showToast\(/);
   });

@@ -213,6 +213,11 @@ class KeyboardRouter {
     };
   }
 
+  /** Занята ли клавиша нашим хоткеем (её не вправе забирать соседние фичи). */
+  isBound(code: string): boolean {
+    return this.bindings.has(code);
+  }
+
   /**
    * Зарегистрировать хоткей по физической клавише (event.code, напр. "KeyF", "F8").
    * Возвращает функцию отписки.
