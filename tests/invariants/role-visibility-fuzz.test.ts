@@ -621,7 +621,9 @@ async function runScenario(
           dayAt = {
             ms: Date.now(),
             nightStart: cfg.phaseSwitch ? spec.nightStartAuto : -1,
-            visible: !spec.hidden && !spec.peek,
+            // Ожидающий возврат стола переносится через второй переходный
+            // день: стол «был виден», хотя сейчас скрыт (восьмой аудит, §3).
+            visible: (!spec.hidden && !spec.peek) || (resumeShow !== null && resumeShow === spec.manualStep),
             manualStep: spec.manualStep,
           };
           if (cfg.phaseSwitch && !spec.peek) hideSpec("auto");
@@ -922,6 +924,11 @@ describe("скрытие ролей: найденные сценарии", () =>
       "день и ночь под V за 0,6 с, отпустил — ночной показ новой ночи",
       { useModifier: true, autoHide: false, phaseSwitch: true, initialFlag: true, phase: "night" },
       ["autoHideOn", "wait", { burst: ["Vdown", "day", "night"], gap: 288 }, "wait"],
+    ],
+    [
+      "аудит-8: ручной показ переживает ДВЕ переходные подписи дня подряд",
+      { autoHide: true, phaseSwitch: true, initialFlag: true, phase: "night" },
+      ["hide", "hide", { burst: ["day", "night", "day", "night"], gap: 100 }, "wait"],
     ],
     [
       "аудит-6 S02: ручной показ этой ночи переживает переходную подпись дня",

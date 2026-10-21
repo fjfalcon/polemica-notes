@@ -170,6 +170,10 @@ class KeyboardRouter {
    */
   private onBlur = () => {
     for (const code of Array.from(this.held)) this.releaseHold(code);
+    // Отпускание забранного D могло случиться в другом окне: прежняя запись
+    // съела бы keyup СЛЕДУЮЩЕГО Ctrl+D, ушедшего сайту, и D «залипла» бы в
+    // hotkeys-js (восьмой аудит, K01).
+    this.stoppedDown.clear();
   };
 
   private onVisibility = () => {

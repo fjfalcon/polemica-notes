@@ -146,3 +146,21 @@ test("однозначность наступила позже: день, нач
   await vi.advanceTimersByTimeAsync(3016);
   expect(snap(), "это был настоящий день — новая ночь показывает").toEqual([true, true]);
 });
+
+test("H01 с автосценами и автосменой: ручной показ возвращается после застрявшей подписи (восьмой аудит, §2.3)", async () => {
+  obs.active = true;
+  autoStartFeature.enable(ctx);
+  obs.listener?.("nightShow", { nightSince: Date.now() });
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(snap()).toEqual([true, true]);
+  press();
+  await vi.advanceTimersByTimeAsync(100);
+  press();
+  expect(snap(), "игрок показал").toEqual([true, true]);
+  stage("День | Речь игрока", "Ночь | Стрельба");
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(snap()).toEqual([false, false]);
+  stage("Ночь | Стрельба", "День | Речь игрока");
+  await vi.advanceTimersByTimeAsync(3016);
+  expect(snap(), "нового nightShow не будет — стол возвращаем сами").toEqual([true, true]);
+});

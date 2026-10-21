@@ -32,7 +32,20 @@ const key = (type: string, code: string, init: KeyboardEventInit = {}) => {
   document.dispatchEvent(e);
   return e;
 };
-const reloaded = () => vi.mocked(log.info).mock.calls.some((c) => c[0] === "f5-refresh");
+/**
+ * Перезагрузка — по самому переходу: jsdom сообщает о любой навигации
+ * событием jsdomError виртуальной консоли («Not implemented: navigation»), кто
+ * бы ни вызвал reload. Одна запись в лог фичи не годилась: тихий
+ * location.reload её обходил (восьмой аудит, §2.1).
+ */
+let navigations = 0;
+(globalThis as { jsdom?: { virtualConsole: { on(ev: string, fn: (e: Error) => void): void } } }).jsdom!.virtualConsole.on(
+  "jsdomError",
+  (e) => {
+    if (String(e.message).includes("navigation")) navigations++;
+  },
+);
+const reloaded = () => navigations > 0 || vi.mocked(log.info).mock.calls.some((c) => c[0] === "f5-refresh");
 const ctx = (peek: string) =>
   ({
     settings: {
@@ -46,6 +59,7 @@ const ctx = (peek: string) =>
   }) as never;
 
 beforeEach(() => {
+  navigations = 0;
   vi.useFakeTimers();
   vi.mocked(log.info).mockClear();
   document.body.innerHTML = `<div class="player my-player"><span class="player__role role my-role"></span></div>
@@ -57,6 +71,7 @@ afterEach(() => {
   f5RefreshFeature.disable();
   vi.clearAllTimers();
   vi.useRealTimers();
+  vi.restoreAllMocks();
   document.head.innerHTML = "";
 });
 
@@ -80,7 +95,7 @@ test("control: F5 not bound by us — the F5 fix still reloads", () => {
   f5RefreshFeature.enable({ settings: {} } as never);
   autoStartFeature.enable(ctx("KeyV"));
   key("keydown", "F5");
-  expect(reloaded()).toBe(true);
+  expect(navigations, "настоящая навигация видна тесту").toBeGreaterThan(0);
 });
 
 test("control: modified F5 (hard reload) is never touched", () => {

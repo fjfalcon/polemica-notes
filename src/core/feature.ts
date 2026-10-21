@@ -80,7 +80,23 @@ export class FeatureManager {
     if (!this.syncing) return;
     const ctx: FeatureContext = { settings: this.settings as Settings };
     for (const f of this.features) {
-      if (!this.ready.has(f.id) || !this.isEnabled(f) || !f.update) continue;
+      if (!this.ready.has(f.id)) continue;
+      // Выключенную фичу (или мастер-выключатель) — гасим сразу: прежде OFF
+      // ждал чужого enable, и очередь успевала кликнуть, а запись — не
+      // остановиться (восьмой аудит, F01). Очередной проход её уже не
+      // застанет активной.
+      if (!this.isEnabled(f)) {
+        this.ready.delete(f.id);
+        this.active.delete(f.id);
+        try {
+          f.disable();
+        } catch (e) {
+          log.error("feature", "disable failed", f.id, e);
+        }
+        log.info("feature", "disabled", f.id);
+        continue;
+      }
+      if (!f.update) continue;
       try {
         f.update(ctx);
       } catch (e) {
