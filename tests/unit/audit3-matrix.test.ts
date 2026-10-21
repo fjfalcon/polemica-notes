@@ -10,7 +10,7 @@ import { resolve } from "node:path";
 const seam = vi.hoisted(() => ({
   messages: new Set<(m: unknown) => unknown>(), scene: "night" as string | null,
   connected: true, sent: [] as string[], acceptSwitch: false,
-  atSend: [] as string[], readSnapshot: () => "",
+  atSend: [] as string[], readSnapshot: (() => "") as () => string,
 }));
 vi.mock("@core/env", () => ({ browser: {
   storage: {
