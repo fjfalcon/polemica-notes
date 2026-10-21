@@ -28,7 +28,7 @@ import {
   setRoleSceneGateListener,
   type RoleSceneGateReason,
 } from "../panels/obs-panel";
-import { SITE, TEXT, OWN, classifyPhaseText, endedScreenVisible, SITE_CLASS } from "@core/selectors";
+import { SITE, TEXT, OWN, classifyPhaseText, endedScreenVisible, staleDayLabel, SITE_CLASS } from "@core/selectors";
 import { isAutoAcceptSuppressed } from "../auto-accept-gate";
 import { noteAutoAcceptDispatched } from "./queue-requeue";
 import type { Feature, FeatureContext } from "@core/feature";
@@ -585,6 +585,7 @@ let lastOurShowAt = 0;
  */
 const USER_INITIATED_MS = 700;
 let onSiteCommandKey: ((e: Event) => void) | null = null;
+let onSiteCommandBubble: ((e: Event) => void) | null = null;
 let onSiteCommandClick: ((e: Event) => void) | null = null;
 /**
  * D, дошедший до document (наш роутер его не забрал), — кандидат в команду
@@ -595,7 +596,7 @@ let onSiteCommandClick: ((e: Event) => void) | null = null;
  * preventDefault не получает. Прежняя модель зажатых клавиш расходилась с
  * настоящим hotkeys-js в обе стороны (внешний аудит №5, B02/H01).
  */
-let pendingRoleKey: { e: KeyboardEvent; at: number } | null = null;
+let pendingRoleKey: { e: KeyboardEvent; at: number; reachedWindow: boolean } | null = null;
 
 /** Код клавиши так, как его видит hotkeys-js сайта. */
 function siteKeyCode(e: KeyboardEvent): number {
@@ -604,7 +605,10 @@ function siteKeyCode(e: KeyboardEvent): number {
 
 /** Последняя ПРИНЯТАЯ сайтом команда ролей (включая ещё не учтённую). */
 function siteRoleCommandAt(): number {
-  if (pendingRoleKey?.e.defaultPrevented) {
+  // Принятую команду обёртка сайта ещё и ОСТАНАВЛИВАЕТ (`return !1` →
+  // stopPropagation на document): D, всплывший до window, сайт не принял,
+  // чей бы preventDefault на нём ни стоял (внешний аудит №6, C03).
+  if (pendingRoleKey && pendingRoleKey.e.defaultPrevented && !pendingRoleKey.reachedWindow) {
     lastSiteRoleCommandAt = Math.max(lastSiteRoleCommandAt, pendingRoleKey.at);
     pendingRoleKey = null;
   }
@@ -709,7 +713,10 @@ function checkGameRoute(): void {
 let sawRunningGame = false;
 
 function checkNewRound(): void {
-  if (document.querySelector(SITE.pregameScreen)) {
+  // Экран набора — ВИДИМЫЙ: скрытый узел (переходный рендер) новой игрой не
+  // считается (аудит №6, §4).
+  const pregame = document.querySelector<HTMLElement>(SITE.pregameScreen);
+  if (pregame && isVisible(pregame)) {
     if (!sawRunningGame) return;
     sawRunningGame = false;
     resetForNewGame("новая игра в той же комнате");
@@ -723,14 +730,18 @@ function resetForNewGame(why: string): void {
   lastManualRoleActionAt = 0;
   lastSiteRoleCommandAt = 0;
   pendingRoleKey = null;
-  lastOurShowAt = 0;
+  // Решение о столе новой игры — наше и новее флага сайта: свой roleDisplay
+  // сайт на новой игре НЕ сбрасывает, и первая роль, смонтированная по
+  // старому «скрыто», иначе вносила решение прошлой игры (аудит №6, C01).
+  lastOurShowAt = Date.now();
   siteFlag = null;
   sceneHide = null;
   endObsNight();
   lastDaySeenAt = 0;
   nightAutoShowStartedAt = 0;
   cancelDayConfirm();
-  obsNightResume = false;
+  dayPending = false;
+  resumeShowMark = null;
   if (pendingNightRoleShowTimer) {
     clearTimeout(pendingNightRoleShowTimer);
     pendingNightRoleShowTimer = null;
@@ -892,8 +903,12 @@ function manualBeforeNight(nightStart: number): boolean {
  * нейтрализовано — снимать его не нужно. true — подсматривание включено
  * (клавиша наша, сайту не отдаётся).
  */
+/** Эфир был на безопасной сцене (или автосцен нет), когда V включилась. */
+let peekSceneSafe = false;
+
 function startPeek(): boolean {
   if (peeking) return true;
+  peekSceneSafe = !obsAutoScenesActive() || nightSceneSafeForRoleShow();
   peekRestoreHidden = isRolesHiddenByCSS();
   peekRestoreReason = cssReason ?? "auto";
   peekRestoreInline = isInlineHidden();
@@ -1027,28 +1042,33 @@ function scheduleNightRoleAutoShow(delayMs: number) {
   log.debug(SCOPE, "night-show scheduled in", delayMs);
   pendingNightRoleShowTimer = setTimeout(() => {
     pendingNightRoleShowTimer = null;
+    // Возврат стола после неподтверждённого дня — решение игрока (или показ)
+    // этой ночи, а не новый автопоказ: проверки «действовал сам» не к нему.
+    const resume = resumeShowMark !== null && resumeShowMark === lastManualRoleActionAt;
+    resumeShowMark = null;
 
-    // Игрок только что сам скрыл/показал роль (D-D «глянул и спрятал») —
-    // не переигрываем его решение принудительным показом.
-    if (Date.now() - lastManualRoleActionAt < 2000) {
-      log.info(SCOPE, "ночной показ роли пропущен: игрок только что действовал сам");
-      return;
-    }
-    // Игрок управлял ролями сам ПОСЛЕ наступления ночи — его решение на эту
-    // ночь главнее (случайные сценарии 21.10.2026).
-    if (!nightShowDue()) {
-      log.info(SCOPE, "ночной показ роли отменён: этой ночью игрок управлял ролями сам");
-      return;
+    if (!resume) {
+      // Игрок только что сам скрыл/показал роль (D-D «глянул и спрятал») —
+      // не переигрываем его решение принудительным показом.
+      if (Date.now() - lastManualRoleActionAt < 2000) {
+        log.info(SCOPE, "ночной показ роли пропущен: игрок только что действовал сам");
+        return;
+      }
+      // Игрок управлял ролями сам ПОСЛЕ наступления ночи — его решение на
+      // эту ночь главнее (случайные сценарии 21.10.2026).
+      if (!nightShowDue()) {
+        log.info(SCOPE, "ночной показ роли отменён: этой ночью игрок управлял ролями сам");
+        return;
+      }
     }
     // Автосцены OBS ведут ночной показ сами: obs-panel снимает пин своей
     // роли после подтверждённой ночной сцены и сообщает нам (nightShow) —
     // напарники открываются в тот же момент, без зеркала (внешний аудит
     // №2, H05). Исключение — возврат после переходного «дня» (B01 аудита №5).
     if (obsAutoScenesActive()) {
-      if (obsNightResume && nightSceneSafeForRoleShow()) {
-        obsNightResume = false;
+      if (resume && nightSceneSafeForRoleShow()) {
         showAllRoles();
-        log.info(SCOPE, "ночь продолжилась после переходной подписи дня — роли стола снова показаны");
+        log.info(SCOPE, "ночь продолжилась после застрявшей подписи дня — стол снова как был");
       }
       return;
     }
@@ -1058,12 +1078,13 @@ function scheduleNightRoleAutoShow(delayMs: number) {
         nightShowSceneDeferredLogged = true;
         log.info(SCOPE, "ночной показ роли отложен: эфир не на ночной сцене OBS");
       }
+      if (resume) resumeShowMark = lastManualRoleActionAt;
       scheduleNightRoleAutoShow(2000);
       return;
     }
     nightShowSceneDeferredLogged = false;
     showAllRoles();
-    log.info(SCOPE, "ночной показ: роли стола показаны");
+    log.info(SCOPE, resume ? "ночь продолжилась после застрявшей подписи дня — стол снова как был" : "ночной показ: роли стола показаны");
   }, delayMs);
 }
 
@@ -1156,21 +1177,27 @@ function applyRolePhase(phase: "day" | "night") {
     pendingNightRoleShowTimer = null;
   }
 
-  if (rolePhaseInitialized && phase === lastDetectedRolePhase) return;
+  if (rolePhaseInitialized && phase === lastDetectedRolePhase) {
+    // Тот же день: подпись могла стать однозначной (или застрявшей).
+    if (phase === "day" && dayPending) syncDayConfirm(Date.now());
+    return;
+  }
   rolePhaseInitialized = true;
   lastDetectedRolePhase = phase;
   nightShowSceneDeferredLogged = false;
 
   if (phase === "night") {
-    // «День», не продержавшийся DAY_CONFIRM_MS, — переходная разметка
-    // роллера (старая подпись дня при уже ночной игре), а не конец ночи:
-    // её начало и ручные решения этой ночи остаются (внешний аудит №5, B01).
-    const sameNight = dayConfirmTimer !== null && nightAutoShowStartedAt > 0;
+    // Неподтверждённый «день» — застрявшая подпись роллера (старый день при
+    // уже ночной игре), а не конец ночи: её начало и ручные решения этой
+    // ночи остаются (внешние аудиты №5 B01, №6 B03).
+    const sameNight = dayPending && nightAutoShowStartedAt > 0;
     cancelDayConfirm();
+    dayPending = false;
     if (!sameNight) nightAutoShowStartedAt = Date.now();
-    // Показ этой ночи вели автосцены — переходный «день» спрятал стол, а
-    // нового nightShow не будет (сцена не менялась): возвращаем сами.
-    obsNightResume = sameNight && obsAutoScenesActive() && obsNightSince !== null;
+    // Стол был виден до этого «дня» и игрок с тех пор ничего не решал —
+    // возвращаем ровно его, будь то ночной показ или ручной показ этой ночи
+    // (аудит №6, H01); при автосценах нового nightShow не будет.
+    resumeShowMark = sameNight && preDayVisible ? preDayManualMark : null;
     scheduleNightRoleAutoShow(3000);
     if (obsShowAwaitingNight !== null) {
       const since = obsShowAwaitingNight;
@@ -1180,34 +1207,52 @@ function applyRolePhase(phase: "day" | "night") {
     return;
   }
   // Скрыть — сразу (fail-safe), закончить ночь — только подтверждённым днём.
+  preDayVisible = peeking ? !peekRestoreHidden : !isRolesHiddenByCSS();
+  preDayManualMark = lastManualRoleActionAt;
   hideAllRolesCSS("auto");
-  const candidateAt = Date.now();
-  cancelDayConfirm();
-  dayConfirmTimer = setTimeout(() => {
-    dayConfirmTimer = null;
-    if (lastDetectedRolePhase !== "day") return;
-    nightAutoShowStartedAt = 0;
-    lastDaySeenAt = candidateAt;
-    obsNightResume = false;
-    endObsNight();
-  }, DAY_CONFIRM_MS);
+  dayPending = true;
+  syncDayConfirm(Date.now());
 }
 
 /**
- * Сколько распознанный день должен продержаться, чтобы закончить ночь.
- * Настоящий день длится минуты; переходная подпись роллера — до следующего
- * тика таймера сайта.
+ * Сколько ОДНОЗНАЧНЫЙ день должен продержаться, чтобы закончить ночь.
+ * Настоящий день длится минуты; застрявшая подпись роллера однозначной не
+ * бывает (следующий этап — ночь, staleDayLabel), и её не ограничивает
+ * никакой таймер.
  */
 const DAY_CONFIRM_MS = 2000;
 let dayConfirmTimer: ReturnType<typeof setTimeout> | null = null;
-/** Переходный «день» посреди ночи автосцен: показ вернуть самим. */
-let obsNightResume = false;
+/** Распознан день, но ночь ещё не закончена (не подтверждён). */
+let dayPending = false;
+/** Стол был виден перед распознанным днём, и метка ручных решений тогда. */
+let preDayVisible = false;
+let preDayManualMark = 0;
+/** Вернуть стол после неподтверждённого дня, если ручных решений не было. */
+let resumeShowMark: number | null = null;
 /** nightShow OBS, пришедший, пока автосмена фаз видит день (§4.2 аудита №5). */
 let obsShowAwaitingNight: number | null = null;
 
 function cancelDayConfirm(): void {
   if (dayConfirmTimer) clearTimeout(dayConfirmTimer);
   dayConfirmTimer = null;
+}
+
+/** Взвести/снять подтверждение дня по однозначности подписи. */
+function syncDayConfirm(candidateAt: number): void {
+  if (staleDayLabel()) {
+    cancelDayConfirm();
+    return;
+  }
+  if (dayConfirmTimer) return;
+  dayConfirmTimer = setTimeout(() => {
+    dayConfirmTimer = null;
+    if (lastDetectedRolePhase !== "day" || !dayPending || staleDayLabel()) return;
+    dayPending = false;
+    nightAutoShowStartedAt = 0;
+    lastDaySeenAt = candidateAt;
+    resumeShowMark = null;
+    endObsNight();
+  }, DAY_CONFIRM_MS);
 }
 
 /**
@@ -1239,14 +1284,25 @@ function syncRolesWithSceneGate(
       noteObsNight(pendingNightShowSince);
     }
     if (reason === "beforeDayScene") {
-      endObsNight();
+      if (!cfg.rolePhaseSwitch) endObsNight();
       // Эфир уходит на дневную сцену — прячем и под V, как день автосмены
       // (fail-safe); отпускание вернёт скрытым.
       hideAllRolesCSS("auto");
     }
+    // Эфир УШЁЛ с ночной сцены уже под V (хоткей OBS, Stream Deck, разрыв) —
+    // то же: прежде пин прятал только свою, напарники уезжали на DAY
+    // (внешний аудит №6, B01). V, начатая на уже небезопасной сцене, —
+    // осознанный выбор игрока, её не трогаем.
+    if (reason === "gate" && peekSceneSafe && obsAutoScenesActive() && !nightSceneSafeForRoleShow()) {
+      peekSceneSafe = false;
+      hideAllRolesCSS("auto");
+    }
     return;
   }
-  if (reason === "beforeDayScene") endObsNight();
+  // Конец ночи при автосмене фаз решает её ПОДТВЕРЖДЁННЫЙ день: панель
+  // подтверждает свой за ~0,5 с и по застрявшей подписи роллера стирала
+  // эпоху ручных решений этой ночи (внешний аудит №6, B03).
+  if (reason === "beforeDayScene" && !cfg.rolePhaseSwitch) endObsNight();
   if (cfg.rolePhaseSwitch) applyRolePhase(detectRolePhase());
   if (reason === "nightShow") {
     onObsNightShow(info?.nightSince ?? Date.now());
@@ -1714,7 +1770,10 @@ function enableGamePage() {
   onSiteCommandKey = (e: Event) => {
     const k = e as KeyboardEvent;
     if (siteKeyCode(k) !== 68) return; // «d» для hotkeys-js — по keyCode
-    const entry = { e: k, at: Date.now() };
+    // Прежний кандидат уже отдиспатчен — учесть его ДО замены: два нажатия
+    // подряд раньше нулевого таймера теряли принятое первое (аудит №6, C04).
+    siteRoleCommandAt();
+    const entry = { e: k, at: Date.now(), reachedWindow: false };
     pendingRoleKey = entry;
     // Принял ли сайт — известно после диспатча; без ролей на столе смены
     // флага не будет, поэтому досматриваем и отдельно (правило первой роли).
@@ -1730,6 +1789,10 @@ function enableGamePage() {
     }
   };
   document.addEventListener("keydown", onSiteCommandKey, true);
+  onSiteCommandBubble = (e: Event) => {
+    if (pendingRoleKey?.e === e) pendingRoleKey.reachedWindow = true;
+  };
+  window.addEventListener("keydown", onSiteCommandBubble);
   document.addEventListener("click", onSiteCommandClick, true);
 
   startInitialAutoHideRole();
@@ -1789,6 +1852,8 @@ function disableGamePage() {
   unsubRoleDomImmediate?.();
   unsubRoleDomImmediate = null;
   if (onSiteCommandKey) document.removeEventListener("keydown", onSiteCommandKey, true);
+  if (onSiteCommandBubble) window.removeEventListener("keydown", onSiteCommandBubble);
+  onSiteCommandBubble = null;
   if (onSiteCommandClick) document.removeEventListener("click", onSiteCommandClick, true);
   onSiteCommandKey = null;
   onSiteCommandClick = null;
@@ -1802,7 +1867,8 @@ function disableGamePage() {
   obsNightSince = null;
   lastDaySeenAt = 0;
   cancelDayConfirm();
-  obsNightResume = false;
+  dayPending = false;
+  resumeShowMark = null;
   obsShowAwaitingNight = null;
   obsWasActive = false;
   // Подсматривание снимаем ПЕРВЫМ делом: если фичу выключили с зажатой
@@ -1973,7 +2039,8 @@ export const autoStartFeature: Feature = {
     pendingRoleKey = null;
     lastOurShowAt = 0;
     cancelDayConfirm();
-    obsNightResume = false;
+    dayPending = false;
+    resumeShowMark = null;
     obsShowAwaitingNight = null;
     webcamDisabled = false;
     videoButtonClicked = false;

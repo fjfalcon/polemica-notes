@@ -159,8 +159,10 @@ function installSite(initialFlag: boolean, useModifier: boolean): SiteModel {
     const pressed = [...downKeys].sort().join(",");
     for (const h of handlers) {
       if (h.keys.some((k) => [...k].sort().join(",") === pressed)) {
-        // Обёртка хоткеев сайта: `return event.preventDefault(),n(),!1`.
+        // Обёртка хоткеев сайта: `return event.preventDefault(),n(),!1` —
+        // hotkeys-js на `false` ещё и останавливает всплытие.
         e.preventDefault();
+        e.stopPropagation();
         h.fn();
       }
     }
@@ -459,7 +461,9 @@ async function runScenario(
   };
   let obsNightShowPendingUnderPeek = false;
   /** Последний переход в день: для «переходного дня» (аудит №5, B01). */
-  let dayAt: { ms: number; nightStart: number } | null = null;
+  let dayAt: { ms: number; nightStart: number; visible: boolean; manualStep: number } | null = null;
+  /** Метка ручных решений, при которой стол вернётся после переходного дня. */
+  let resumeShow: number | null = null;
 
   // Включение: решение сайта «скрыто» принимается сразу; авто-скрытие прячет.
   autoStartFeature.enable(settings());
@@ -606,10 +610,20 @@ async function runScenario(
           // начало и ручные решения остаются (внешний аудит №5, B01).
           const transient = cfg.phaseSwitch && dayAt !== null && Date.now() - dayAt.ms < 2_000 && dayAt.nightStart >= 0;
           if (cfg.phaseSwitch && !transient) spec.nightStartAuto = step;
-          spec.nightStartObs = step;
+          // Конец ночи OBS при автосмене фаз решает её подтверждённый день
+          // (аудит №6, B03): переходный день ночь OBS не заканчивает.
+          if (!transient) spec.nightStartObs = step;
+          // Стол был виден до переходного дня, игрок с тех пор не решал —
+          // возвращается (аудит №6, H01).
+          resumeShow = transient && dayAt!.visible ? dayAt!.manualStep : null;
           dayAt = null;
         } else {
-          dayAt = { ms: Date.now(), nightStart: cfg.phaseSwitch ? spec.nightStartAuto : -1 };
+          dayAt = {
+            ms: Date.now(),
+            nightStart: cfg.phaseSwitch ? spec.nightStartAuto : -1,
+            visible: !spec.hidden && !spec.peek,
+            manualStep: spec.manualStep,
+          };
           if (cfg.phaseSwitch && !spec.peek) hideSpec("auto");
         }
         obsPhase(action);
@@ -690,6 +704,9 @@ async function runScenario(
         obsNightKnown = true;
       } else specNightShow();
     }
+    const resumeDue = t.has("night") && phase === "night" && resumeShow !== null && resumeShow === spec.manualStep;
+    resumeShow = null;
+    if (resumeDue && !spec.peek && (!obs.auto || obs.safe)) showSpec();
     // Ночной показ автосмены (без автосцен) — РАЗОВОЕ событие: начало ночи,
     // включение автосмены ночью, перевзвод на отпускании V.
     const trigger = t.has("night") || t.has("phaseOn") || t.has("release");
@@ -807,7 +824,8 @@ describe("скрытие ролей: случайные сценарии на м
       if (only) return runScenario(only, 25);
       for (let seed = 1; seed <= SEEDS; seed++) await runScenario(seed * 7919, 25);
     },
-    600_000,
+    // 5000 сценариев на медленной машине не укладывались в 600 с (аудит №6, F).
+    1_800_000,
   );
 });
 
@@ -904,6 +922,11 @@ describe("скрытие ролей: найденные сценарии", () =>
       "день и ночь под V за 0,6 с, отпустил — ночной показ новой ночи",
       { useModifier: true, autoHide: false, phaseSwitch: true, initialFlag: true, phase: "night" },
       ["autoHideOn", "wait", { burst: ["Vdown", "day", "night"], gap: 288 }, "wait"],
+    ],
+    [
+      "аудит-6 S02: ручной показ этой ночи переживает переходную подпись дня",
+      { autoHide: true, phaseSwitch: true, initialFlag: true, phase: "night" },
+      ["hide", "hide", { burst: ["day", "night"], gap: 100 }, "wait"],
     ],
     // ─── второй внешний аудит ───
     [

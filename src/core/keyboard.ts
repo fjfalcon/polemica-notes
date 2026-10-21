@@ -50,6 +50,16 @@ export function editsText(code: string): boolean {
  */
 const SITE_ROLE_TOGGLE_CODE = "KeyD";
 
+/**
+ * Тумблер ролей сайта: hotkeys-js сайта узнаёт `d` по keyCode, не по
+ * физической клавише. В раскладке, где keyCode 68 даёт другая клавиша, её
+ * нажатие — тоже D сайта: защита (под V, под подменой, автоповтор) обязана
+ * ловить и её (внешний аудит №6, C02).
+ */
+function isSiteRoleToggle(e: KeyboardEvent): boolean {
+  return e.code === SITE_ROLE_TOGGLE_CODE || (e.keyCode || e.which) === 68;
+}
+
 /** Пользователь печатает — в поле ввода, в textarea или в contenteditable. */
 export function isTypingContext(e: KeyboardEvent): boolean {
   const candidates: Array<EventTarget | null> = [e.target, document.activeElement];
@@ -68,7 +78,9 @@ class KeyboardRouter {
 
   private onKeyDown = (e: KeyboardEvent) => {
     const b = this.bindings.get(e.code);
-    const watchers = this.observers.get(e.code);
+    const watchers =
+      this.observers.get(e.code) ??
+      (isSiteRoleToggle(e) ? this.observers.get(SITE_ROLE_TOGGLE_CODE) : undefined);
     if (!b && !watchers) return;
 
     // Хоткеи привязаны к event.code (физической клавише) ради раскладко-независимости.
@@ -92,7 +104,7 @@ class KeyboardRouter {
     if (!b) return;
     // Ctrl+F / Cmd+D и прочие сочетания принадлежат браузеру и сайту, не нам.
     if (e.altKey || modified) return;
-    if (e.code === SITE_ROLE_TOGGLE_CODE) e.stopPropagation();
+    if (isSiteRoleToggle(e)) e.stopPropagation();
     // Зажатая клавиша не должна гнать обработчик с частотой автоповтора. А
     // сайту — и подавно: у hotkeys-js нет защиты от повтора, и зажатый D
     // переключал флаг ролей на КАЖДОМ повторе — мигание в эфире.
@@ -131,7 +143,7 @@ class KeyboardRouter {
   private holds = new Map<string, { down: () => boolean | void; up: () => void }>();
 
   private onKeyUp = (e: KeyboardEvent) => {
-    if (e.code === SITE_ROLE_TOGGLE_CODE && this.bindings.has(e.code)) e.stopPropagation();
+    if (isSiteRoleToggle(e) && this.bindings.has(e.code)) e.stopPropagation();
     const wasSwallowed = this.swallowed.has(e.code);
     if (this.releaseHold(e.code) && wasSwallowed) e.stopPropagation();
   };

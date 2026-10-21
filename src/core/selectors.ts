@@ -742,3 +742,16 @@ export function classifyPhaseText(text: string): "day" | "night" | null {
   if (night) return "night";
   return null;
 }
+
+/**
+ * Подпись этапа «день», когда следующий этап — «ночь». Так выглядит и
+ * последний этап дня, и ЗАСТРЯВШАЯ подпись роллера: на `toNight` с отсчётом
+ * сайт после отсчёта не вызывает setStage (`case"evening":return`), и до
+ * следующего пакета `current` остаётся старым днём при уже ночной игре —
+ * сколько угодно дольше двух секунд (внешний аудит №6, §2.2/B03). Прятать по
+ * такой подписи можно (fail-safe), заканчивать ночь — нельзя.
+ */
+export function staleDayLabel(): boolean {
+  const text = (sel: string) => (document.querySelector(sel)?.textContent ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+  return classifyPhaseText(text(SITE.substageCurrent)) === "day" && classifyPhaseText(text(SITE.substageNext)) === "night";
+}

@@ -28,6 +28,7 @@ import {
   SITE,
   classifyPhaseText,
   endedScreenVisible,
+  staleDayLabel,
   matchFinishedVisible,
   SITE_CLASS,
 } from "@core/selectors";
@@ -523,13 +524,18 @@ async function clearPersistedAutoState(resetRuntimeState = false): Promise<void>
   }
 }
 
-async function restorePersistedAutoState(status: any = null, epoch = sceneInfoEpoch): Promise<boolean> {
+async function restorePersistedAutoState(
+  status: any = null,
+  epoch = sceneInfoEpoch,
+  // Эпохи снимаются ДО первого ожидания вызывателя (get_status): живая фаза,
+  // распознанная, пока он шёл, тоже делает снимок устаревшим (аудит №6, M01).
+  phaseAt = phaseEpoch,
+  routeAt = routeEpoch,
+): Promise<boolean> {
   if (!autoModeEnabled) return false;
   // Снимок фазы из storage — только пока живого знания о фазе нет и комната
   // та же: прежде поздний ответ ставил прошлую фазу поверх живой и сам слал
   // дневную сцену без защиты напарников (внешний аудит №5, B03/C06).
-  const phaseAt = phaseEpoch;
-  const routeAt = routeEpoch;
   const stale = () => !autoModeEnabled || phaseEpoch !== phaseAt || routeEpoch !== routeAt;
 
   try {
@@ -749,7 +755,9 @@ function healRolePin(): void {
     // считался «уже сделано», и nightShow терялся до конца ночи (внешний
     // аудит №5, H02).
     if (lastAppliedRoleVisibility !== want) lastAppliedRoleVisibility = null;
-    return;
+    // Прятать нечего; показ же — это и nightShow для стола: своей плитки
+    // может не быть вовсе (зритель), напарники ждут его (аудит №6, H02).
+    if (want === "hidden") return;
   }
   lastAppliedRoleVisibility = null; // латч мёртв вместе с прежним узлом
   // Скрыть — СРАЗУ, не таймером: «в эфир» не ждёт даже одного кадра
@@ -833,7 +841,18 @@ function scheduleRoleVisibility(timeOfDay: TimeOfDay, attempt = 0): void {
   }, delayMs);
 }
 
+/** Когда стол последний раз прятали перед дневной сценой. */
+let lastPreDayAt = 0;
+const PRE_DAY_FRESH_MS = 100;
+/**
+ * Поколение настроек автосцен: растёт на каждой их смене. Продолжение после
+ * 30-мс ожидания pre-day из прошлого поколения (выкл/вкл, другая комната)
+ * старую команду не шлёт (аудит №6, §4).
+ */
+let autoGeneration = 0;
+
 async function hideRoleBeforeDaySceneSwitch(): Promise<void> {
+  lastPreDayAt = Date.now();
   if (pendingRoleVisibilityTimer) {
     clearTimeout(pendingRoleVisibilityTimer);
     pendingRoleVisibilityTimer = null;
@@ -1210,7 +1229,11 @@ function requestTimeOfDayCheck(): void {
 }
 
 function evaluateTimeOfDay(): void {
-  const newTimeOfDay = detectTimeOfDay();
+  let newTimeOfDay = detectTimeOfDay();
+  // Застрявшая подпись роллера: после ночи «день» с ночным следующим этапом —
+  // ещё ночь (сайт не обновил current). Эфир на приватной сцене остаётся, а
+  // новой ночи (и стёртых решений этой) не начинается (внешний аудит №6, B03).
+  if (newTimeOfDay === "day" && currentTimeOfDay === "night" && staleDayLabel()) newTimeOfDay = "night";
   const previousTimeOfDay = currentTimeOfDay;
 
   log.debug(SCOPE, "Time-of-day result:", newTimeOfDay, "(previous:", previousTimeOfDay, ")");
@@ -1257,11 +1280,14 @@ function evaluateTimeOfDay(): void {
         pendingTimeOfDay = null;
         nightSince = confirmedTimeOfDay === "night" ? Date.now() : null;
         longNightWarned = false;
+        const gen = autoGeneration;
+        const route = routeEpoch;
         if (confirmedTimeOfDay === "day") await hideRoleBeforeDaySceneSwitch();
         // Перепроверка ПОСЛЕ await: в его 30-мс окно автомод могли выключить,
         // teardown уже вернул стили роли — хвост этого колбэка не имеет права
-        // прятать её заново (арх-аудит швов 29.08.2026, SEAM-04).
-        if (!autoModeEnabled) return;
+        // прятать её заново (арх-аудит швов 29.08.2026, SEAM-04). И поколение:
+        // выкл/вкл или другая комната за эти 30 мс — уже не наша команда.
+        if (!autoModeEnabled || gen !== autoGeneration || route !== routeEpoch) return;
         scheduleRoleVisibility(confirmedTimeOfDay);
         void savePersistedAutoState();
         await autoSwitchScene(confirmedTimeOfDay);
@@ -1370,6 +1396,17 @@ async function autoSwitchScene(timeOfDay: TimeOfDay): Promise<void> {
   if (currentScene === targetScene) {
     log.info(SCOPE, "смена не требуется: нужная сцена уже активна —", targetScene);
     return;
+  }
+  // Дневная сцена — ТОЛЬКО через защиту «перед дневной сценой», каким бы
+  // путём ни пришла команда: повтор после списка сцен (SceneCreated и т. п.)
+  // шёл мимо неё, и показанный на приватной ночи стол уезжал в DAY (внешний
+  // аудит №6, B02). Вызыватель, только что сделавший её сам, второй кадр не ждёт.
+  if (timeOfDay === "day" && Date.now() - lastPreDayAt > PRE_DAY_FRESH_MS) {
+    const gen = autoGeneration;
+    const route = routeEpoch;
+    await hideRoleBeforeDaySceneSwitch();
+    if (gen !== autoGeneration || route !== routeEpoch || !autoModeEnabled) return;
+    if (currentScene === targetScene) return;
   }
 
   log.info(SCOPE, "автосмена сцены:", timeOfDay, "→", targetScene, "(было:", currentScene, ")");
@@ -1742,11 +1779,13 @@ function applyAutoSettings(ctx: FeatureContext): void {
     newDayScene !== dayScene ||
     newNightScene !== nightScene;
 
+  const wasAuto = autoModeEnabled;
   autoModeEnabled = newAutoMode;
   dayScene = newDayScene;
   nightScene = newNightScene;
 
   if (!changed) return;
+  autoGeneration++;
   // Гейт ночной сцены зависит от этих настроек: выключили автосцены —
   // сценовое скрытие сокомандников должно сняться (внешний аудит, H04).
   notifyRoleSceneGate("gate");
@@ -1777,13 +1816,26 @@ function applyAutoSettings(ctx: FeatureContext): void {
     // есть без памяти «не понял — оставь как было» превращается в «считай,
     // что день», и смена пары сцен ночью могла выдать дневную сцену в эфир
     // (ревью 02.08.2026).
+    // Автосцены были ВЫКЛЮЧЕНЫ: фаза, запомненная до выключения, могла
+    // смениться без нас — берём живую, если она распознаётся (аудит №6, §4:
+    // выкл → ночь → вкл слал старую дневную сцену).
+    if (wasInitialized && !wasAuto && currentTimeOfDay) {
+      const live = detectTimeOfDay();
+      if (lastDetectWasLive && live !== currentTimeOfDay) {
+        currentTimeOfDay = live;
+        nightSince = live === "night" ? Date.now() : null;
+        phaseEpoch++;
+      }
+    }
     if (wasInitialized && currentTimeOfDay) {
       // Повторное включение днём — через ту же защиту, что смена фазы:
       // роли стола прячутся ДО команды дневной сцены (внешний аудит №3, B06).
       const known = currentTimeOfDay;
+      const gen = autoGeneration;
+      const route = routeEpoch;
       void (async () => {
         if (known === "day") await hideRoleBeforeDaySceneSwitch();
-        if (!autoModeEnabled) return;
+        if (!autoModeEnabled || gen !== autoGeneration || route !== routeEpoch) return;
         await autoSwitchScene(known);
       })();
       // Симметрия teardown/enable (§4 п.7): выключение возвращает стили роли
@@ -1870,9 +1922,11 @@ export const obsPanelFeature: Feature = {
     // Запрос статуса OBS + восстановление состояния авто-сцены.
     if (autoModeEnabled) {
       const epoch = sceneInfoEpoch;
+      const phaseAt = phaseEpoch;
+      const routeAt = routeEpoch;
       const response = await obsCommand("get_status");
       const status = response?.success ? response.data : null;
-      await restorePersistedAutoState(status, epoch);
+      await restorePersistedAutoState(status, epoch, phaseAt, routeAt);
     }
 
     syncPanelVisibilityWithGameState();
@@ -1897,6 +1951,7 @@ export const obsPanelFeature: Feature = {
   },
 
   disable() {
+    autoGeneration++; // продолжения прошлой жизни фичи — не наши
     // Снять подписки.
     unsubMessage?.();
     unsubMessage = null;
