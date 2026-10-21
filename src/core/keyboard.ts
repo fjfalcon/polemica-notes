@@ -66,6 +66,10 @@ export function isTypingContext(e: KeyboardEvent): boolean {
   for (const c of candidates) {
     if (!(c instanceof HTMLElement)) continue;
     const tag = c.tagName;
+    // Поле только для чтения текст не принимает — как и у фильтра hotkeys-js
+    // сайта: иначе D в таком поле доходил до сайта мимо защит V/F/повтора
+    // (внешний аудит №7, C02).
+    if ((tag === "INPUT" || tag === "TEXTAREA") && (c as HTMLInputElement).readOnly) continue;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
     if (c.isContentEditable) return true;
   }
@@ -104,7 +108,10 @@ class KeyboardRouter {
     if (!b) return;
     // Ctrl+F / Cmd+D и прочие сочетания принадлежат браузеру и сайту, не нам.
     if (e.altKey || modified) return;
-    if (isSiteRoleToggle(e)) e.stopPropagation();
+    if (isSiteRoleToggle(e)) {
+      e.stopPropagation();
+      this.stoppedDown.add(e.code);
+    }
     // Зажатая клавиша не должна гнать обработчик с частотой автоповтора. А
     // сайту — и подавно: у hotkeys-js нет защиты от повтора, и зажатый D
     // переключал флаг ролей на КАЖДОМ повторе — мигание в эфире.
@@ -142,8 +149,16 @@ class KeyboardRouter {
   private swallowed = new Set<string>();
   private holds = new Map<string, { down: () => boolean | void; up: () => void }>();
 
+  /**
+   * D, нажатие которого мы забрали у сайта. Отпускание забираем только у
+   * них: Ctrl/Cmd+D уходит сайту целиком, и проглоченный его keyup оставлял
+   * D «зажатой» в hotkeys-js — следующие команды сайта не срабатывали
+   * (внешний аудит №7, §4).
+   */
+  private stoppedDown = new Set<string>();
+
   private onKeyUp = (e: KeyboardEvent) => {
-    if (isSiteRoleToggle(e) && this.bindings.has(e.code)) e.stopPropagation();
+    if (isSiteRoleToggle(e) && this.stoppedDown.delete(e.code)) e.stopPropagation();
     const wasSwallowed = this.swallowed.has(e.code);
     if (this.releaseHold(e.code) && wasSwallowed) e.stopPropagation();
   };

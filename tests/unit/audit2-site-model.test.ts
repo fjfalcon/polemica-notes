@@ -48,11 +48,13 @@ test.each(["hint", "text"])("AUDIT: menu %s click is a manual hide, V should res
   console.log("AUDIT menu after V", { part, flag, visible: visible() });
   expect(visible()).toEqual([false, false]);
 });
-test("AUDIT: readonly-input native D is a manual hide, V should restore it", async () => {
+test("AUDIT: readonly-input D is a manual hide, V should restore it", async () => {
   enable(); await vi.advanceTimersByTimeAsync(12_000);
   const input = document.createElement("input"); input.readOnly = true; document.body.append(input); input.focus();
   key("keydown", "KeyD", {}, input); key("keyup", "KeyD", {}, input); await vi.advanceTimersByTimeAsync(200);
-  expect(flag).toBe(false); expect(visible()).toEqual([false, false]); input.blur();
+  // Поле только для чтения — не ввод (как у фильтра сайта): D в нём — наша
+  // клавиша скрытия, сайту не уходит (аудит №7, C02).
+  expect(flag).toBe(true); expect(visible()).toEqual([false, false]); input.blur();
   key("keydown", "KeyV", { keyCode: 86, which: 86 }); await vi.advanceTimersByTimeAsync(100);
   key("keyup", "KeyV", { keyCode: 86, which: 86 }); await vi.advanceTimersByTimeAsync(2_000);
   console.log("AUDIT readonly after V", { flag, visible: visible() });

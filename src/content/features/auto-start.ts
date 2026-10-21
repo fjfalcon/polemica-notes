@@ -1207,7 +1207,11 @@ function applyRolePhase(phase: "day" | "night") {
     return;
   }
   // Скрыть — сразу (fail-safe), закончить ночь — только подтверждённым днём.
-  preDayVisible = peeking ? !peekRestoreHidden : !isRolesHiddenByCSS();
+  // Возврат стола после прошлой застрявшей подписи ещё не наступил — стол
+  // «был виден», хотя DOM сейчас скрыт: второй такой «день» подряд не
+  // стирает намерение (аудит №7, C01).
+  const resumePending = resumeShowMark !== null && resumeShowMark === lastManualRoleActionAt;
+  preDayVisible = resumePending || (peeking ? !peekRestoreHidden : !isRolesHiddenByCSS());
   preDayManualMark = lastManualRoleActionAt;
   hideAllRolesCSS("auto");
   dayPending = true;
@@ -1293,9 +1297,17 @@ function syncRolesWithSceneGate(
     // то же: прежде пин прятал только свою, напарники уезжали на DAY
     // (внешний аудит №6, B01). V, начатая на уже небезопасной сцене, —
     // осознанный выбор игрока, её не трогаем.
-    if (reason === "gate" && peekSceneSafe && obsAutoScenesActive() && !nightSceneSafeForRoleShow()) {
-      peekSceneSafe = false;
-      hideAllRolesCSS("auto");
+    if (reason === "gate" && obsAutoScenesActive()) {
+      if (!nightSceneSafeForRoleShow()) {
+        if (peekSceneSafe) {
+          peekSceneSafe = false;
+          hideAllRolesCSS("auto");
+        }
+      } else {
+        // Эфир вернулся на ночную сцену под той же V — следующий уход снова
+        // уход «после начала V» (внешний аудит №7, B03).
+        peekSceneSafe = true;
+      }
     }
     return;
   }

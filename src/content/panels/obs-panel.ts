@@ -1228,12 +1228,21 @@ function requestTimeOfDayCheck(): void {
   }, 150);
 }
 
+/**
+ * Распознать фазу с поправкой на застрявшую подпись роллера: после ночи
+ * «день» с ночным следующим этапом — ещё ночь (сайт не обновил current). Эфир
+ * на приватной сцене остаётся, а новой ночи (и стёртых решений этой) не
+ * начинается (внешний аудит №6, B03). Все чтения фазы — через неё: сырое
+ * распознавание в подтверждении и при повторном включении обходило поправку
+ * (аудит №7, H01).
+ */
+function detectPhaseAfter(known: TimeOfDay | null): TimeOfDay {
+  const phase = detectTimeOfDay();
+  return phase === "day" && known === "night" && staleDayLabel() ? "night" : phase;
+}
+
 function evaluateTimeOfDay(): void {
-  let newTimeOfDay = detectTimeOfDay();
-  // Застрявшая подпись роллера: после ночи «день» с ночным следующим этапом —
-  // ещё ночь (сайт не обновил current). Эфир на приватной сцене остаётся, а
-  // новой ночи (и стёртых решений этой) не начинается (внешний аудит №6, B03).
-  if (newTimeOfDay === "day" && currentTimeOfDay === "night" && staleDayLabel()) newTimeOfDay = "night";
+  const newTimeOfDay = detectPhaseAfter(currentTimeOfDay);
   const previousTimeOfDay = currentTimeOfDay;
 
   log.debug(SCOPE, "Time-of-day result:", newTimeOfDay, "(previous:", previousTimeOfDay, ")");
@@ -1267,7 +1276,7 @@ function evaluateTimeOfDay(): void {
       if (!autoModeEnabled) return;
       if (pendingTimeOfDay !== newTimeOfDay) return;
 
-      const confirmedTimeOfDay = detectTimeOfDay();
+      const confirmedTimeOfDay = detectPhaseAfter(currentTimeOfDay);
       // Подтверждение — тоже только живым распознанием: фолбэк в окне
       // подтверждения не имеет права финализировать смену (жалоба 31.08.2026).
       if (!lastDetectWasLive) return;
@@ -1401,12 +1410,19 @@ async function autoSwitchScene(timeOfDay: TimeOfDay): Promise<void> {
   // путём ни пришла команда: повтор после списка сцен (SceneCreated и т. п.)
   // шёл мимо неё, и показанный на приватной ночи стол уезжал в DAY (внешний
   // аудит №6, B02). Вызыватель, только что сделавший её сам, второй кадр не ждёт.
-  if (timeOfDay === "day" && Date.now() - lastPreDayAt > PRE_DAY_FRESH_MS) {
-    const gen = autoGeneration;
-    const route = routeEpoch;
-    await hideRoleBeforeDaySceneSwitch();
-    if (gen !== autoGeneration || route !== routeEpoch || !autoModeEnabled) return;
-    if (currentScene === targetScene) return;
+  if (timeOfDay === "day") {
+    if (Date.now() - lastPreDayAt > PRE_DAY_FRESH_MS) {
+      const gen = autoGeneration;
+      const route = routeEpoch;
+      await hideRoleBeforeDaySceneSwitch();
+      if (gen !== autoGeneration || route !== routeEpoch || !autoModeEnabled) return;
+      if (currentScene === targetScene) return;
+    }
+    // Последнее слово перед командой — синхронно: D или V, нажатые за время
+    // кадра pre-day, отменяли его результат, а отметка «свежо» заставляла
+    // поверить старому скрытию (внешний аудит №7, B01).
+    notifyRoleSceneGate("beforeDayScene");
+    applyRoleVisibility(false);
   }
 
   log.info(SCOPE, "автосмена сцены:", timeOfDay, "→", targetScene, "(было:", currentScene, ")");
@@ -1820,7 +1836,7 @@ function applyAutoSettings(ctx: FeatureContext): void {
     // смениться без нас — берём живую, если она распознаётся (аудит №6, §4:
     // выкл → ночь → вкл слал старую дневную сцену).
     if (wasInitialized && !wasAuto && currentTimeOfDay) {
-      const live = detectTimeOfDay();
+      const live = detectPhaseAfter(currentTimeOfDay);
       if (lastDetectWasLive && live !== currentTimeOfDay) {
         currentTimeOfDay = live;
         nightSince = live === "night" ? Date.now() : null;

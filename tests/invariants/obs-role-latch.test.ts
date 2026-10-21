@@ -173,7 +173,7 @@ describe("смена сцены только по живому распозна�
     expect(gateIdx).toBeLessThan(equalIdx);
     expect(gateIdx).toBeLessThan(armIdx);
     // Второй гейт — в окне подтверждения, между повторным детектом и логом.
-    const confirmDetect = source.indexOf("const confirmedTimeOfDay = detectTimeOfDay();");
+    const confirmDetect = source.indexOf("const confirmedTimeOfDay = detectPhaseAfter(currentTimeOfDay);");
     const confirmLog = source.indexOf("фаза подтверждена", confirmDetect);
     expect(confirmDetect).toBeGreaterThan(-1);
     const confirmGate = source.indexOf("if (!lastDetectWasLive) return;", confirmDetect);

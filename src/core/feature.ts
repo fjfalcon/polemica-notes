@@ -29,6 +29,10 @@ export interface Feature {
 export class FeatureManager {
   private features: Feature[] = [];
   private active = new Set<string>();
+  /** Фичи, чей enable() уже завершился (active резервируется ДО него). */
+  private ready = new Set<string>();
+  /** Идёт проход sync() — патч настроек может ждать его в очереди. */
+  private syncing = false;
   private settings: Settings | null = null;
   /** Хвост очереди: sync() никогда не выполняется параллельно сам с собой. */
   private queue: Promise<void> = Promise.resolve();
@@ -46,8 +50,10 @@ export class FeatureManager {
 
   async start(): Promise<void> {
     this.settings = await getSettings();
-    await this.enqueueSync();
-    this.logSkippedAtBoot();
+    // Подписка — ДО первого прохода: он ждёт enable каждой фичи (заметки
+    // читают storage), и изменение, сохранённое в это окно, прежде терялось
+    // навсегда — включённое в попапе авто-скрытие не применялось до F5
+    // (внешний аудит №7, B02). Патч в окне ставит ещё один проход в очередь.
     onSettingsChanged((patch) => {
       this.settings = { ...(this.settings as Settings), ...patch };
       // Сохранение настроек пишет в sync и local раздельно → два события подряд.
@@ -55,9 +61,32 @@ export class FeatureManager {
       if (this.coalesceTimer) clearTimeout(this.coalesceTimer);
       this.coalesceTimer = setTimeout(() => {
         this.coalesceTimer = null;
+        this.updateReadyNow();
         void this.enqueueSync();
       }, 50);
     });
+    await this.enqueueSync();
+    this.logSkippedAtBoot();
+  }
+
+  /**
+   * Проход в очереди может долго ждать enable() другой фичи (заметки читают
+   * storage). Уже включённые фичи получают новые настройки сразу, не в
+   * хвосте очереди: включённое посреди запуска авто-скрытие прячет роли
+   * немедленно (внешний аудит №7, B02). update() и так зовётся на каждый
+   * проход — повтор в очередном проходе безвреден.
+   */
+  private updateReadyNow(): void {
+    if (!this.syncing) return;
+    const ctx: FeatureContext = { settings: this.settings as Settings };
+    for (const f of this.features) {
+      if (!this.ready.has(f.id) || !this.isEnabled(f) || !f.update) continue;
+      try {
+        f.update(ctx);
+      } catch (e) {
+        log.error("feature", "update failed", f.id, e);
+      }
+    }
   }
 
   /** Ставит проход в очередь; параллельных enable() для одной фичи не будет. */
@@ -94,6 +123,15 @@ export class FeatureManager {
   }
 
   private async sync(): Promise<void> {
+    this.syncing = true;
+    try {
+      await this.syncPass();
+    } finally {
+      this.syncing = false;
+    }
+  }
+
+  private async syncPass(): Promise<void> {
     const ctx: FeatureContext = { settings: this.settings as Settings };
     for (const f of this.features) {
       const shouldEnable = this.isEnabled(f);
@@ -104,6 +142,7 @@ export class FeatureManager {
         this.active.add(f.id);
         try {
           await f.enable(ctx);
+          this.ready.add(f.id);
           log.info("feature", "enabled", f.id);
         } catch (e) {
           this.active.delete(f.id);
@@ -124,6 +163,7 @@ export class FeatureManager {
           log.error("feature", "disable failed", f.id, e);
         }
         this.active.delete(f.id);
+        this.ready.delete(f.id);
         log.info("feature", "disabled", f.id);
       } else if (shouldEnable && isActive && f.update) {
         try {
