@@ -353,6 +353,18 @@ export function mergeNickKeysIntoId(
   // Ничья по времени (обе легаси, ts=0) с РАЗНЫМ текстом — не уничтожаем
   // проигравший текст молча, а дописываем его в запись.
   const winner: NoteRecord = { ...best };
+  // Победитель БЕЗ текста (u:-запись из «Заметок и цветов»: только цвет ника)
+  // берёт текст самого свежего проигравшего. Иначе старая заметка по нику
+  // исчезала навсегда: координатор удаляет ник-ключ после слияния
+  // (ревью PR #15, 22.10.2026) — как и в combineNotes, пустое поле
+  // победителя заполняется из проигравшего.
+  if (!winner.text) {
+    let source: NoteRecord | undefined;
+    for (const loser of losers) {
+      if (loser.text && (!source || ts(loser) > ts(source))) source = loser;
+    }
+    if (source) winner.text = source.text;
+  }
   for (const loser of losers) {
     if (
       loser.text &&

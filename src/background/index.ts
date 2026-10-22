@@ -65,7 +65,11 @@ const OBS_AUTO_RECORD_KEY = "obs_auto_record_started";
  * Пустой пароль привязки не требует: уносить нечего.
  */
 const OBS_PASSWORD_HOST_KEY = "obs_password_host";
-/** Длина буфера повторов, которую последний раз выставляли МЫ (секунды). */
+/**
+ * Длина буфера повторов, которую последний раз выставляли МЫ (секунды). Для
+ * живого буфера — «применена» (пишется после перезапуска), для выключенного —
+ * «записана в профиль».
+ */
 const OBS_CLIP_RB_SET_KEY = "obs_clip_rb_set";
 /** Последняя попытка редкого режима (бюджет исчерпан). В storage: SW смертен. */
 const OBS_DEGRADED_ATTEMPT_KEY = "obs_degraded_attempt_at";
@@ -677,11 +681,17 @@ async function handleObsQuery(
         }
         const active = await obs.isReplayBufferActive();
         if (active && changed) {
-          // Новая длина применяется только перезапуском буфера.
+          // Новая длина применяется только перезапуском буфера. Метка — ПОСЛЕ
+          // перезапуска: для живого буфера она значит «длина применена».
+          // Записанная до него, она после сорванной остановки убеждала повтор,
+          // что всё сделано, и буфер жил со старой длиной (PR #14).
           await obs.stopReplayBuffer();
           await obs.startReplayBuffer();
           await browser.storage.local.set({ [OBS_CLIP_RB_SET_KEY]: seconds });
         } else if (!active) {
+          // Выключенный буфер возьмёт длину при старте. Метка — ДО него: старт,
+          // отказанный из-за выключенного в OBS буфера, нашу запись всё равно
+          // помнит, и бут не перетрёт длину, выставленную потом руками (OBS-6).
           if (changed) await browser.storage.local.set({ [OBS_CLIP_RB_SET_KEY]: seconds });
           // Буфер выключен в настройках OBS — StartReplayBuffer скажет об этом.
           await obs.startReplayBuffer();

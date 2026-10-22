@@ -19,6 +19,7 @@ import {
   isSafeNoteKey,
   isSafeTag,
   MAX_NICK_HISTORY,
+  mergeNickKeysIntoId,
   mergeNickLists,
   mergeNotes,
   nickColorFrom,
@@ -537,5 +538,37 @@ describe("честность счётчиков слияния (adversarial 27.0
     } as unknown as NotesMap);
     expect(added).toBe(1);
     expect(skipped, "две записи выброшены — молчать нельзя").toBe(2);
+  });
+});
+
+describe("mergeNickKeysIntoId: пустой текст победителя", () => {
+  test("цвет ника из «Заметок и цветов» не стирает старую заметку по нику", () => {
+    // u:-запись создана окном цветов (текст пуст, время свежее), заметка по
+    // нику старше. Координатор удалит ник-ключ — текст обязан переехать.
+    const notes: NotesMap = {
+      "u:42": rec("", NOW - 5, { nickColor: "#00ff00" }),
+      Аня: rec("важная заметка", NOW - 86_400_000, { tag: "#ff0000" }),
+    };
+    const merged = mergeNickKeysIntoId(notes, "Аня", 42);
+    expect(merged?.record.text).toBe("важная заметка");
+    expect(merged?.record.nickColor).toBe("#00ff00");
+    expect(merged?.record.tag).toBe("#ff0000");
+  });
+
+  test("из нескольких проигравших берётся текст самого свежего", () => {
+    const notes: NotesMap = {
+      "u:42": rec("", NOW - 5, { nickColor: "#00ff00" }),
+      Аня: rec("старая", NOW - 3_000),
+      АНЯ: rec("свежая", NOW - 1_000),
+    };
+    expect(mergeNickKeysIntoId(notes, "Аня", 42)?.record.text).toBe("свежая");
+  });
+
+  test("непустой текст победителя не перезаписывается (свежее побеждает)", () => {
+    const notes: NotesMap = {
+      "u:42": rec("новая", NOW - 5),
+      Аня: rec("старая", NOW - 86_400_000),
+    };
+    expect(mergeNickKeysIntoId(notes, "Аня", 42)?.record.text).toBe("новая");
   });
 });
