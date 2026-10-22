@@ -12,12 +12,16 @@
  */
 import { browser } from "./env";
 import { log } from "./log";
+import { isContextInvalidated } from "./context";
 
 export const SEEN_PLAYERS_KEY = "pn_seen_players";
 /** Потолок записей: ~3000 × ~60 байт ≈ 180 КБ — мелочь для storage.local. */
 export const MAX_ENTRIES = 3000;
 /** Склейка записей: стол из 10 игроков — одна запись на диск, не десять. */
 const FLUSH_DELAY_MS = 2000;
+const MAX_RETRY_DELAY_MS = 60_000;
+const STORAGE_TIMEOUT_MS = 10_000;
+const STORAGE_TIMEOUT = new Error("storage timeout");
 
 export interface SeenPlayer {
   /** Ник в исходном регистре (последний виденный). */
@@ -59,51 +63,114 @@ export function mergeSeen(
   return out;
 }
 
+/** Строгое чтение: битое содержимое — пустой справочник, отказ хранилища — исключение. */
+async function loadSeenPlayers(): Promise<SeenMap> {
+  const res = (await browser.storage.local.get({ [SEEN_PLAYERS_KEY]: {} })) as Record<
+    string,
+    unknown
+  >;
+  const raw = res[SEEN_PLAYERS_KEY];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: SeenMap = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const e = v as Partial<SeenPlayer> | null;
+    if (e && typeof e.nick === "string" && typeof e.id === "string" && typeof e.at === "number") {
+      out[k] = { nick: e.nick, id: e.id, at: e.at };
+    }
+  }
+  return out;
+}
+
 /** Прочитать справочник. Битое содержимое — пустой справочник, не исключение. */
 export async function readSeenPlayers(): Promise<SeenMap> {
   try {
-    const res = (await browser.storage.local.get({ [SEEN_PLAYERS_KEY]: {} })) as Record<
-      string,
-      unknown
-    >;
-    const raw = res[SEEN_PLAYERS_KEY];
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-    const out: SeenMap = {};
-    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-      const e = v as Partial<SeenPlayer> | null;
-      if (e && typeof e.nick === "string" && typeof e.id === "string" && typeof e.at === "number") {
-        out[k] = { nick: e.nick, id: e.id, at: e.at };
-      }
-    }
-    return out;
+    return await loadSeenPlayers();
   } catch (e) {
     log.warn("seen-players", "справочник не прочитан", e);
     return {};
   }
 }
 
-let pending: Array<{ nick: string; id: string }> = [];
-let flushTimer: ReturnType<typeof setTimeout> | null = null;
+type Entry = { nick: string; id: string };
 
-async function flush(): Promise<void> {
+let pending = new Map<string, Entry>();
+let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let flushChain: Promise<void> = Promise.resolve();
+let failures = 0;
+let stalledWrite: Promise<void> | null = null;
+
+function enqueue(entries: Iterable<Entry>): void {
+  for (const e of entries) {
+    const key = e.nick.trim().toLowerCase();
+    if (!key || !e.id) continue;
+    pending.delete(key);
+    pending.set(key, e);
+  }
+  for (const key of pending.keys()) {
+    if (pending.size <= MAX_ENTRIES) break;
+    pending.delete(key);
+  }
+}
+
+function scheduleFlush(delay = FLUSH_DELAY_MS): void {
+  if (!flushTimer) flushTimer = setTimeout(() => void flush(), delay);
+}
+
+function withTimeout<T>(p: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(STORAGE_TIMEOUT), STORAGE_TIMEOUT_MS);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+}
+
+function flush(): Promise<void> {
   flushTimer = null;
+  flushChain = flushChain.then(writeBatch, writeBatch);
+  return flushChain;
+}
+
+async function writeBatch(): Promise<void> {
+  if (stalledWrite) return;
   const batch = pending;
-  pending = [];
-  if (batch.length === 0) return;
+  pending = new Map();
+  if (batch.size === 0 || isContextInvalidated()) return;
   try {
     // Чтение прямо перед записью: другая вкладка могла дописать своё.
-    const merged = mergeSeen(await readSeenPlayers(), batch, Date.now());
-    await browser.storage.local.set({ [SEEN_PLAYERS_KEY]: merged });
+    const merged = mergeSeen(await withTimeout(loadSeenPlayers()), [...batch.values()], Date.now());
+    const write = browser.storage.local.set({ [SEEN_PLAYERS_KEY]: merged });
+    try {
+      await withTimeout(write);
+    } catch (e) {
+      if (e !== STORAGE_TIMEOUT) throw e;
+      stalledWrite = write
+        .catch(() => undefined)
+        .finally(() => {
+          stalledWrite = null;
+          scheduleFlush();
+        });
+      throw e;
+    }
+    failures = 0;
   } catch (e) {
-    log.warn("seen-players", "справочник не сохранён", e);
+    if (isContextInvalidated()) {
+      pending.clear();
+      return;
+    }
+    const newer = pending;
+    pending = batch;
+    enqueue(newer.values());
+    failures++;
+    scheduleFlush(Math.min(FLUSH_DELAY_MS * 2 ** (failures - 1), MAX_RETRY_DELAY_MS));
+    if (failures === 1) log.warn("seen-players", "справочник не сохранён", e);
   }
 }
 
 /** Запомнить игроков стола. Запись склеивается и уходит одним set(). */
 export function rememberSeenPlayers(entries: ReadonlyArray<{ nick: string; id: string }>): void {
-  if (entries.length === 0) return;
-  pending.push(...entries);
-  if (!flushTimer) flushTimer = setTimeout(() => void flush(), FLUSH_DELAY_MS);
+  if (entries.length === 0 || isContextInvalidated()) return;
+  enqueue(entries);
+  scheduleFlush();
 }
 
 /** Тестовый шов: немедленно записать накопленное. */
