@@ -278,16 +278,24 @@
    шрифтом самого узла, а он нулевой. */
 .info__name[data-pn-alias] {
   font-size: 0 !important;
+  /* Строку держит ::before: схлопнутый текст сайта со своей «опорой»
+     строки делал узел выше (18 px вместо 13.5) и сдвигал ник в плашке
+     относительно соседей — жалоба 22.10.2026, «1 3 5 не ровно стоят». */
+  line-height: 0 !important;
 }
 .info__name[data-pn-alias]::before {
   content: attr(data-pn-alias);
+  display: inline-block;
+  vertical-align: top;
   font-size: .875rem;
+  line-height: 1.1875rem;
 }
 .player.desktop-version .info__name[data-pn-alias]::before {
   font-size: 1rem;
 }
 .player.mobile-version .info__name[data-pn-alias]::before {
   font-size: .8125rem;
+  line-height: 1.125rem;
 }
 /* «Ник (свой)»: списки, профиль, таблица разбора. */
 [data-pn-alias-suffix]::after {

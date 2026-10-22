@@ -169,6 +169,15 @@ describe("отрисовка: текст сайта не меняется", () =
     expect(el.hasAttribute("title")).toBe(false);
   });
 
+  test("CSS: свой ник на плитке стоит по той же линии, что ник сайта (строку держит ::before)", async () => {
+    // Замер на CSS комнаты: без этого узел со своим ником был 18 px вместо
+    // 13.5 и сдвигал ник в плашке (жалоба 22.10.2026, «1 3 5 не ровно»).
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync("src/static/notes.css", "utf8");
+    expect(css).toMatch(/\.info__name\[data-pn-alias\]\s*\{[^}]*line-height:\s*0\s*!important/);
+    expect(css).toMatch(/\.info__name\[data-pn-alias\]::before\s*\{[^}]*display:\s*inline-block[^}]*vertical-align:\s*top/);
+  });
+
   test("CSS: свой ник в «Участниках» держится одной строкой, колонка ника сжимается", async () => {
     const { readFileSync } = await import("node:fs");
     const css = readFileSync("src/static/notes.css", "utf8");
