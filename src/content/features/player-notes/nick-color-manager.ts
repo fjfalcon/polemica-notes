@@ -11,7 +11,7 @@
  * а не подстановкой в innerHTML.
  */
 import { log } from "@core/log";
-import { idKey, isIdKey, MAX_OWN_NOTE_TEXT, nickWithAlias } from "@core/notes-store";
+import { idKey, isIdKey, MAX_ALIAS, MAX_OWN_NOTE_TEXT, nickWithAlias } from "@core/notes-store";
 import { redactNick } from "@shared/redact";
 import { TAG_PRESETS } from "./tag-palette";
 import type { ModalPort } from "./modal-port";
@@ -212,6 +212,10 @@ export function openNickColorManager(port: ModalPort): void {
         expandedKey = expandedKey === `n:${entry.key}` ? null : `n:${entry.key}`;
         render();
       };
+      const openAlias = () => {
+        expandedKey = expandedKey === `a:${entry.key}` ? null : `a:${entry.key}`;
+        render();
+      };
 
       const swatch = document.createElement("button");
       swatch.title = entry.color ? "Сменить цвет" : "Назначить цвет";
@@ -254,6 +258,16 @@ export function openNickColorManager(port: ModalPort): void {
         "font-size:12px;background:rgba(99,102,241,.3);flex:0 0 auto;";
       noteBtn.addEventListener("click", openNote);
 
+      // Свой ник (22.10.2026): как ты называешь игрока — правится и здесь,
+      // не только в окне заметки на плитке.
+      const aliasBtn = document.createElement("button");
+      aliasBtn.textContent = entry.alias ? "Ник" : "+ ник";
+      aliasBtn.title = "Свой ник — в игре вместо ника сайта, в списках «Ник (свой)»";
+      aliasBtn.style.cssText =
+        "padding:4px 10px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
+        "font-size:12px;background:rgba(99,102,241,.3);flex:0 0 auto;";
+      aliasBtn.addEventListener("click", openAlias);
+
       const colorBtn = document.createElement("button");
       colorBtn.textContent = "Цвет";
       colorBtn.style.cssText =
@@ -288,7 +302,7 @@ export function openNickColorManager(port: ModalPort): void {
         saved.style.cssText = "color:#22c55e;font-size:11px;flex:0 0 auto;";
         row.appendChild(saved);
       }
-      row.append(noteBtn, colorBtn, del);
+      row.append(aliasBtn, noteBtn, colorBtn, del);
       list.appendChild(row);
 
       // ── раскрытая палитра ──
@@ -332,6 +346,63 @@ export function openNickColorManager(port: ModalPort): void {
           palette.appendChild(sw);
         }
         list.appendChild(palette);
+      }
+
+      // ── раскрытый редактор своего ника ──
+      if (expandedKey === `a:${entry.key}`) {
+        const editor = document.createElement("div");
+        editor.style.cssText =
+          "display:flex;gap:8px;align-items:center;padding:8px 0 12px;" +
+          "border-bottom:1px solid rgba(255,255,255,.08);";
+        const input = document.createElement("input");
+        input.type = "text";
+        input.maxLength = MAX_ALIAS;
+        input.value = entry.alias;
+        input.placeholder = `Свой ник для ${entry.nick}`;
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        input.style.cssText = `
+          flex: 1 1 auto; min-width: 0; box-sizing: border-box;
+          background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2);
+          border-radius: 6px; color: #fff; padding: 6px 8px; font: 13px system-ui, sans-serif;
+        `;
+        const cancel = document.createElement("button");
+        cancel.textContent = "Отмена";
+        cancel.style.cssText =
+          "padding:5px 12px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
+          "font-size:12px;background:rgba(255,255,255,.12);flex:0 0 auto;";
+        const close = () => {
+          expandedKey = null;
+          render();
+        };
+        cancel.addEventListener("click", close);
+        const save = document.createElement("button");
+        save.textContent = "Сохранить";
+        save.style.cssText =
+          "padding:5px 12px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
+          "font-size:12px;background:rgba(99,102,241,.6);flex:0 0 auto;";
+        const doSave = () => {
+          void port.model.setAlias(entry.key, input.value).then((ok) => {
+            if (ok) {
+              expandedKey = null;
+              flashSaved(entry.key);
+              render();
+            } else save.textContent = "не сохранилось";
+          });
+        };
+        save.addEventListener("click", doSave);
+        // Хоткеи расширения не должны срабатывать при наборе; Enter — сохранить.
+        input.addEventListener("keydown", (e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") {
+            e.preventDefault();
+            doSave();
+          }
+        });
+        editor.append(input, cancel, save);
+        list.appendChild(editor);
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
       }
 
       // ── раскрытый редактор заметки ──

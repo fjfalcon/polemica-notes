@@ -972,7 +972,9 @@ describe("§4.7 lifecycle heuristic", () => {
     // (keydown capture) снимается там же явно. Числа точные: новый
     // несимметричный слушатель здесь уронит инвариант.
     "src/content/features/player-notes/nick-color-manager.ts": {
-      listeners: 17,
+      // 17 → 21 (22.10.2026): кнопка «Ник» и редактор своего ника (поле,
+      // «Отмена», «Сохранить») — узлы окна, умирают вместе с overlay.
+      listeners: 21,
       timers: 0,
       reason: "modal handlers die with the overlay; the document keydown capture is removed in close()",
     },

@@ -24,6 +24,7 @@ import {
   isSafeNoteKey,
   loadNotes as loadNotesFromStore,
   MAX_NICK_HISTORY,
+  normalizeAlias,
   TAGS_KEY,
   NOTES_VERSION,
   saveCustomTags as saveCustomTagsToStore,
@@ -551,6 +552,34 @@ export class NotesModel {
         return false;
       }
       this.ctx.onIndicatorsChanged();
+      this.ctx.onTooltipsChanged();
+      return true;
+    });
+  }
+
+  /**
+   * Записать свой ник по ключу (правка из «Заметок и цветов»). Только для
+   * существующей записи — строки окна строятся из неё. Пустой свой ник у
+   * записи без текста, цвета и метки удаляет её — не копим пустышки.
+   */
+  setAlias(key: string, alias: string): Promise<boolean> {
+    return this.enqueue(async (): Promise<boolean> => {
+      const prev = ownRecord(this.map, key);
+      // Записи нет — гонка с удалением в другой вкладке: не воскрешаем.
+      if (prev === undefined) return true;
+      const clean = normalizeAlias(alias);
+      const base: NoteRecord =
+        typeof prev === "string" ? { text: prev, timestamp: Date.now(), version: VERSION } : prev;
+      const next: NoteRecord = { ...base, alias: clean, timestamp: Date.now(), version: VERSION };
+      if (!clean && !next.text && !next.tag && !next.nickColor) delete this.map[key];
+      else this.map[key] = next;
+
+      if (!(await this.saveNotes([key]))) {
+        this.map[key] = prev; // откат памяти под состояние диска
+        return false;
+      }
+      // Свой ник рисуется вместе с цветом ника — тот же проход перерисовки.
+      this.ctx.onColorsChanged();
       this.ctx.onTooltipsChanged();
       return true;
     });
