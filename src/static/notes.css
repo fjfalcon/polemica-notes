@@ -289,6 +289,8 @@
   vertical-align: top;
   font-size: .875rem;
   line-height: 1.1875rem;
+  /* Как у ника сайта: от схлопнутого узла ::before наследовал бы 0. */
+  letter-spacing: -.005em;
 }
 .player.desktop-version .info__name[data-pn-alias]::before {
   font-size: 1rem;
