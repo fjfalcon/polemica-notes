@@ -53,8 +53,26 @@ const QUEUE_GUARD_DELAY_MIN = 1;
  */
 const STALE_ALARM_CUTOFF_MS = 90_000;
 const OBS_MANUAL_DISCONNECT_KEY = "obs_manual_disconnect";
-/** Запись начата НАМИ (автозапись игр): только такую имеем право останавливать. */
+/**
+ * Запись начата НАМИ (автозапись игр): только такую имеем право останавливать.
+ * Значение — AutoRecordMark. Метка, которую нельзя проверить (`true` от прежних
+ * версий, битая, из другого соединения OBS), владения не даёт.
+ */
 const OBS_AUTO_RECORD_KEY = "obs_auto_record_started";
+/**
+ * Нашу запись остановили НЕ МЫ (стример руками или сбой вывода — событие OBS
+ * их не различает): до следующего входа в комнату реконнект её не возобновляет.
+ */
+const OBS_AUTO_RECORD_MANUAL_STOP_KEY = "obs_auto_record_manual_stop";
+/**
+ * Допуск сверки длительности записи с временем от нашего старта (мс): не меньше
+ * 5 с, на длинной записи 1% от прошедшего: outputDuration считается по кадрам и под
+ * нагрузкой кодировщика за несколько часов расходится с часами больше чем на 5 с.
+ */
+const OWNERSHIP_DURATION_TOLERANCE_MS = 5_000;
+function ownershipToleranceMs(elapsedMs: number): number {
+  return Math.max(OWNERSHIP_DURATION_TOLERANCE_MS, elapsedMs / 100);
+}
 /**
  * АДРЕС, ДЛЯ КОТОРОГО ВВЕДЁН ТЕКУЩИЙ ПАРОЛЬ (ревью 27.08.2026, финальная
  * модель). Прежние попытки ловили «чужой адрес» событиями и флагом-запретом
@@ -164,11 +182,12 @@ async function countRoomTabs(excludeTabId?: number): Promise<number> {
  */
 async function reconcileAutoRecord(): Promise<void> {
   await enqueueRecord(async () => {
-    const st = (await browser.storage.local.get({ [OBS_AUTO_RECORD_KEY]: false })) as Record<
+    const st = (await browser.storage.local.get({ [OBS_AUTO_RECORD_KEY]: null })) as Record<
       string,
       unknown
     >;
-    if (st[OBS_AUTO_RECORD_KEY] !== true) return;
+    const mark = st[OBS_AUTO_RECORD_KEY];
+    if (mark == null || mark === false) return;
     if (!obs.getStatus().connected) return; // без связи судить не о чем
     if (!(await obs.isRecording())) {
       // Запись уже не идёт (стример остановил сам / OBS перезапущен) —
@@ -177,12 +196,74 @@ async function reconcileAutoRecord(): Promise<void> {
       log.info("background", "автозапись: флаг протух (записи нет) — снят");
       return;
     }
+    if (!(await confirmOwnership(mark))) {
+      await browser.storage.local.remove(OBS_AUTO_RECORD_KEY);
+      log.info("background", "автозапись: владение не подтверждено — флаг снят, запись не трогаем");
+      return;
+    }
     if ((await countRoomTabs()) > 0) return; // игра ещё идёт где-то
     const path = await obs.stopRecord();
     await browser.storage.local.remove(OBS_AUTO_RECORD_KEY);
     log.info("background", "автозапись: осиротевшая запись остановлена", path ?? "");
   }).catch((e) => log.warn("background", "сверка автозаписи не удалась", e));
 }
+
+interface AutoRecordMark {
+  startedAt: number;
+  session: string;
+}
+
+function parseAutoRecordMark(mark: unknown): AutoRecordMark | null {
+  if (!mark || typeof mark !== "object") return null;
+  const m = mark as Record<string, unknown>;
+  if (typeof m.startedAt !== "number" || !Number.isFinite(m.startedAt) || m.startedAt <= 0) return null;
+  if (typeof m.session !== "string" || m.session === "") return null;
+  return { startedAt: m.startedAt, session: m.session };
+}
+
+/**
+ * Наша ли идущая запись. Длительность сверяем всегда, и в том же соединении
+ * тоже: событие остановки нашей записи ждёт очереди, а стример за это время
+ * мог начать свою, и метка той же сессии её бы присвоила. Запись, которая
+ * идёт столько же, сколько прошло от нашего старта (в пределах допуска),
+ * наша; после реконнекта или рестарта воркера метка переходит в новое
+ * соединение. Пауза или расхождение длительности владения не дают: запись
+ * остаётся стримеру (своя на паузе тоже: тост дешевле чужой остановки).
+ */
+async function confirmOwnership(mark: unknown): Promise<boolean> {
+  const m = parseAutoRecordMark(mark);
+  const session = obs.getStatus().sessionId;
+  if (m === null || session == null) return false;
+  const status = await obs.getRecordStatus();
+  if (!status.active || status.paused || status.durationMs === null) return false;
+  const elapsed = Date.now() - m.startedAt;
+  if (Math.abs(status.durationMs - elapsed) > ownershipToleranceMs(elapsed)) return false;
+  if (m.session !== session) {
+    const moved: AutoRecordMark = { startedAt: m.startedAt, session };
+    await browser.storage.local.set({ [OBS_AUTO_RECORD_KEY]: moved });
+  }
+  return true;
+}
+
+// Событие обрабатывается в очереди записи, после всех команд, поставленных раньше
+// него. record_stop снимает метку в своей задаче, а живой вывод значит, что событие
+// относится к прежней записи, и метка остаётся.
+obs.onRecordStopped(() => {
+  const session = obs.getStatus().sessionId;
+  void enqueueRecord(async () => {
+    if (await obs.isRecording()) return;
+    const st = (await browser.storage.local.get({ [OBS_AUTO_RECORD_KEY]: null })) as Record<
+      string,
+      unknown
+    >;
+    const mark = st[OBS_AUTO_RECORD_KEY];
+    if (mark == null) return;
+    await browser.storage.local.remove(OBS_AUTO_RECORD_KEY);
+    if (session == null || parseAutoRecordMark(mark)?.session !== session) return;
+    await browser.storage.local.set({ [OBS_AUTO_RECORD_MANUAL_STOP_KEY]: true });
+    log.info("background", "автозапись: нашу запись остановили не мы — флаг снят");
+  }).catch((e) => log.warn("background", "событие остановки записи не обработано", e));
+});
 
 async function setManualDisconnect(value: boolean): Promise<void> {
   await browser.storage.local.set({ [OBS_MANUAL_DISCONNECT_KEY]: value });
@@ -611,29 +692,65 @@ async function handleObsQuery(
     case "record_start":
       return enqueueRecord(async () => {
         if (!obs.getStatus().connected) throw new Error("OBS не подключён");
+        if (data?.reconnect === true) {
+          const st = (await browser.storage.local.get({
+            [OBS_AUTO_RECORD_MANUAL_STOP_KEY]: false,
+          })) as Record<string, unknown>;
+          if (st[OBS_AUTO_RECORD_MANUAL_STOP_KEY] === true) {
+            return { ignored: "manual_stop" };
+          }
+        } else {
+          await browser.storage.local.remove(OBS_AUTO_RECORD_MANUAL_STOP_KEY);
+        }
         if (await obs.isRecording()) {
-          // Запись уже идёт. НАША (флаг стоит — например, F5 посреди игры
-          // или комната→комната) — просто продолжается. Чужая (флага нет —
-          // стример пишет сам) — не присваиваем и не трогаем.
+          // Запись уже идёт. НАША (метка подтверждена длительностью — например, F5
+          // посреди игры, комната→комната или реконнект) — просто продолжается,
+          // и метка переходит в текущее соединение: иначе её остановка стримером
+          // не поставила бы подавление, и следующий реконнект запустил бы запись снова.
+          // Чужая (метки нет или она не подтвердилась — стример пишет сам) — не
+          // присваиваем и не трогаем; неподтверждённую метку снимаем и ставим
+          // подавление: когда стример её остановит, реконнект в этой комнате не
+          // должен запускать новую. Обычный вход в комнату подавление снимает.
+          const st = (await browser.storage.local.get({ [OBS_AUTO_RECORD_KEY]: null })) as Record<
+            string,
+            unknown
+          >;
+          const mark = st[OBS_AUTO_RECORD_KEY];
+          if (mark == null || !(await confirmOwnership(mark))) {
+            if (mark != null) await browser.storage.local.remove(OBS_AUTO_RECORD_KEY);
+            await browser.storage.local.set({ [OBS_AUTO_RECORD_MANUAL_STOP_KEY]: true });
+          }
           return { already: true };
         }
+        // Сессия ДО StartRecord: обрыв сразу после ответа оставил бы запись без метки.
+        const session = obs.getStatus().sessionId;
         await obs.startRecord();
-        await browser.storage.local.set({ [OBS_AUTO_RECORD_KEY]: true });
+        if (session) {
+          const mark: AutoRecordMark = { startedAt: Date.now(), session };
+          await browser.storage.local.set({ [OBS_AUTO_RECORD_KEY]: mark });
+        }
         return { started: true };
       });
     case "record_stop":
       return enqueueRecord(async () => {
-        const st = (await browser.storage.local.get({ [OBS_AUTO_RECORD_KEY]: false })) as Record<
+        const st = (await browser.storage.local.get({ [OBS_AUTO_RECORD_KEY]: null })) as Record<
           string,
           unknown
         >;
+        const mark = st[OBS_AUTO_RECORD_KEY];
         // Останавливаем ТОЛЬКО начатое нами: ручную запись стримера не трогаем.
-        if (st[OBS_AUTO_RECORD_KEY] !== true) return { ignored: "not_ours" };
+        if (mark == null) return { ignored: "not_ours" };
         if (!obs.getStatus().connected) throw new Error("OBS не подключён");
         if (!(await obs.isRecording())) {
           // Стример остановил сам — флаг протух, чистим.
           await browser.storage.local.remove(OBS_AUTO_RECORD_KEY);
           return { ignored: "not_active" };
+        }
+        if (!(await confirmOwnership(mark))) {
+          // Владение не подтвердить (длительность не сошлась, пауза, старая или битая метка):
+          // запись не трогаем, вкладка предупредит стримера.
+          await browser.storage.local.remove(OBS_AUTO_RECORD_KEY);
+          return { ignored: "unconfirmed" };
         }
         // Другая вкладка ещё в комнате (стример смотрит две игры) — её игра
         // пишется тем же файлом. Комнатность спрашиваем у самих вкладок
