@@ -28,9 +28,13 @@ vi.mock("@core/messaging", () => ({
   }),
 }));
 vi.mock("@core/dom", () => ({ onDomChangeImmediate: vi.fn(() => () => undefined) }));
-vi.mock("@core/env", () => ({
-  browser: { storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) } } },
+const env = vi.hoisted(() => ({
+  browser: {
+    storage: { local: { get: async () => ({}), set: async () => {} } },
+    runtime: { id: "x" as string | undefined },
+  },
 }));
+vi.mock("@core/env", () => env);
 
 import { aliasPolicy } from "@shared/alias-policy";
 import { aliasFrom, buildAliasIndex, mergeNotes, normalizeNoteRecord, type NotesMap } from "@core/notes-store";
@@ -173,6 +177,20 @@ describe("состояние эфира во вкладке", () => {
     await flush();
     expect(isStreaming(true)).toBe(true);
     off();
+  });
+
+  test("осиротевшая вкладка (расширение обновили) — эфир неизвестен, осуждёнку прячем", async () => {
+    h.status = { streaming: false };
+    const off = watchStreamState(() => undefined, () => true);
+    await flush();
+    expect(isStreaming(true)).toBe(false);
+    env.browser.runtime.id = undefined;
+    try {
+      expect(isStreaming(true)).toBe(true);
+    } finally {
+      env.browser.runtime.id = "x";
+      off();
+    }
   });
 
   test("без интеграции OBS фон не спрашивается", async () => {

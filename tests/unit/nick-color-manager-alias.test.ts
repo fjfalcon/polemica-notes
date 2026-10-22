@@ -279,3 +279,32 @@ describe("осуждёнка на эфире в «Заметках и цвета
     expect(win().querySelector<HTMLInputElement>("input[placeholder^='Свой ник']")!.type).toBe("password");
   });
 });
+
+describe("эфир начался при открытом редакторе (Н10)", () => {
+  test("строки перемаскируются на месте, черновик в редакторе цел", async () => {
+    let live = false;
+    let cb: (() => void) | null = null;
+    const start: NotesMap = {
+      "u:42": { text: "x", timestamp: 1, nick: "Азарт", alias: "Грубость", aliasCondemned: true },
+      "u:7": { text: "y", timestamp: 1, nick: "Бемби" },
+    };
+    const { port, model } = makePort(start, {
+      maskCondemned: () => live,
+      onStreamChange: (fn) => {
+        cb = fn;
+        return () => undefined;
+      },
+    });
+    h.saved = structuredClone(start);
+    await model.load();
+    openNickColorManager(port);
+    btn("+ заметка")?.click() ?? [...win().querySelectorAll("button")].find((b) => b.textContent === "Заметка")!.click();
+    const area = win().querySelector("textarea")!;
+    area.value = "черновик";
+    live = true;
+    cb!();
+    expect(win().textContent).not.toContain("Грубость");
+    expect(win().querySelector("textarea")).toBe(area);
+    expect(area.value).toBe("черновик");
+  });
+});

@@ -401,3 +401,12 @@ describe("эфир при обрыве связи (контрольный рау
     expect(await new ObsClient().getStreaming()).toBeNull();
   });
 });
+
+describe("новый SW и сохранённое «эфира нет» (Н8)", () => {
+  test("из storage.session берётся только «эфир идёт»", async () => {
+    store.session.obs_streaming = false;
+    expect(await new ObsClient().getStreaming(), "у нового SW связи нет — «нет» не знание").toBeNull();
+    store.session.obs_streaming = true;
+    expect(await new ObsClient().getStreaming()).toBe(true);
+  });
+});

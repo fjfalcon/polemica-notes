@@ -169,6 +169,8 @@ export function openNickColorManager(port: ModalPort): void {
   const list = document.createElement("div");
   /** Ключ записи с раскрытой палитрой (одна за раз). */
   let expandedKey: string | null = null;
+  /** Перемаскировка строк на месте — когда пересоздавать список нельзя (открыт редактор). */
+  let relabelRows: Array<() => void> = [];
   /**
    * Ключ записи, которую только что сохранили: рядом с ней на пару секунд
    * появляется «Сохранено ✓». Кнопки «Сохранить» здесь нет намеренно —
@@ -194,6 +196,7 @@ export function openNickColorManager(port: ModalPort): void {
 
   const render = () => {
     list.replaceChildren();
+    relabelRows = [];
     const entries = port.model.playerEntries();
     if (entries.length === 0) {
       const empty = document.createElement("div");
@@ -236,8 +239,14 @@ export function openNickColorManager(port: ModalPort): void {
       who.style.cssText = "flex:1 1 auto;min-width:0;";
       const nick = document.createElement("div");
       // Идёт эфир и осуждёнку прячут: в кадре вместо неё — «🙈» (Б4).
-      const masked = entry.condemned && port.maskCondemned?.() === true;
-      nick.textContent = masked ? `${entry.nick} (🙈)` : nickWithAlias(entry.nick, entry.alias) + (entry.condemned ? " 🙈" : "");
+      const relabel = () => {
+        const masked = entry.condemned && port.maskCondemned?.() === true;
+        nick.textContent = masked
+          ? `${entry.nick} (🙈)`
+          : nickWithAlias(entry.nick, entry.alias) + (entry.condemned ? " 🙈" : "");
+      };
+      relabel();
+      relabelRows.push(relabel);
       if (entry.condemned) nick.title = "Осуждёнка — на эфире этот свой ник не показывается";
       nick.style.cssText =
         "color:#fff;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
@@ -558,7 +567,9 @@ export function openNickColorManager(port: ModalPort): void {
   // Эфир начался/кончился при открытом окне — строки перемаскируются (Н5).
   // Открытый редактор не пересоздаём: это стёрло бы черновик.
   const offStream = port.onStreamChange?.(() => {
-    if (expandedKey === null && overlay.isConnected) render();
+    if (!overlay.isConnected) return;
+    if (expandedKey === null) render();
+    else relabelRows.forEach((f) => f()); // редактор с черновиком не трогаем (Н10)
   }) ?? null;
   const close = () => {
     offStream?.();

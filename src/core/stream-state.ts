@@ -12,6 +12,7 @@
  * эфире прячут. Без интеграции эфира не видно — его нет (сказано в попапе).
  */
 import { onMessage, sendRuntime } from "./messaging";
+import { isContextInvalidated } from "./context";
 
 let state: boolean | null = null;
 /** Счётчик рассылок: ответ get_status, запрошенный до свежей рассылки, устарел. */
@@ -30,7 +31,11 @@ function set(value: boolean | null): void {
  * @param obsEnabled включена ли интеграция OBS (настройка obs_enabled)
  */
 export function isStreaming(obsEnabled: boolean): boolean {
-  return obsEnabled && state !== false;
+  if (!obsEnabled) return false;
+  // Осиротевшая вкладка (расширение обновили) рассылок фона больше не
+  // получит — её «эфира нет» заморожено: считаем неизвестным (ревью, Н9).
+  if (isContextInvalidated()) return true;
+  return state !== false;
 }
 
 /** Спросить фон. Ответ без данных — «неизвестно», а не «эфира нет». */

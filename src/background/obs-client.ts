@@ -455,8 +455,10 @@ export class ObsClient {
         try {
           const got = (await browser.storage.session?.get(OBS_STREAMING_KEY)) as Record<string, unknown> | undefined;
           const saved = got?.[OBS_STREAMING_KEY];
-          // Свежее знание текущего SW важнее сохранённого.
-          if (this.streaming === null && typeof saved === "boolean") this.streaming = saved;
+          // Свежее знание текущего SW важнее сохранённого. Берём только «эфир
+          // идёт»: у нового SW связи с OBS нет, и «эфира нет» от прошлого SW
+          // знанием уже не является (ревью, Н8).
+          if (this.streaming === null && saved === true) this.streaming = true;
         } catch {
           /* нет storage.session */
         }
