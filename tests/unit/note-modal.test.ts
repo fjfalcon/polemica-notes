@@ -165,7 +165,7 @@ describe("сохранение", () => {
 });
 
 describe("свой ник", () => {
-  const aliasInput = () => modal().querySelector("input[type=text]") as HTMLInputElement;
+  const aliasInput = () => modal().querySelector("input[maxlength='32']") as HTMLInputElement;
   const flush = async () => {
     for (let i = 0; i < 12; i++) await Promise.resolve();
   };
@@ -221,6 +221,31 @@ describe("свой ник", () => {
     buttonByText("Сохранить")?.click();
     await flush();
     expect(h.saved["u:42"]).toMatchObject({ alias: "Грубость", aliasCondemned: true });
+  });
+
+  test("на эфире осуждёнка не видна в кадре: заголовок без неё, поле точками, «показать» раскрывает", async () => {
+    const { port, model } = makePort(
+      { "u:42": { text: "", timestamp: 1, nick: "Аня", alias: "Грубость", aliasCondemned: true } },
+      { maskCondemned: () => true },
+    );
+    await model.load();
+    showNoteModal(port, "Аня");
+    expect(modal().querySelector("h3")?.textContent).toBe("Заметка для игрока Аня");
+    expect(modal().textContent).not.toContain("Грубость");
+    expect(aliasInput().type).toBe("password");
+    buttonByText("показать")!.click();
+    expect(aliasInput().type).toBe("text");
+  });
+
+  test("вне эфира — как обычно", async () => {
+    const { port, model } = makePort(
+      { "u:42": { text: "", timestamp: 1, nick: "Аня", alias: "Грубость", aliasCondemned: true } },
+      { maskCondemned: () => false },
+    );
+    await model.load();
+    showNoteModal(port, "Аня");
+    expect(modal().querySelector("h3")?.textContent).toBe("Заметка для игрока Аня (Грубость)");
+    expect(aliasInput().type).toBe("text");
   });
 
   test("свой ник не подставляется в разметку сырым", async () => {

@@ -52,12 +52,18 @@ vi.mock("@core/env", () => ({ browser: browserMock }));
 vi.mock("@core/log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-const msgSeam = vi.hoisted(() => ({ handler: null as ((m: unknown) => void) | null }));
+const msgSeam = vi.hoisted(() => ({
+  handler: null as ((m: unknown) => void) | null,
+  /** Все подписчики: в браузере сообщение получают все, а не последний. */
+  all: new Set<(m: unknown) => void>(),
+}));
 vi.mock("@core/messaging", () => ({
   onMessage: vi.fn((cb: (m: unknown) => void) => {
     msgSeam.handler = cb;
+    msgSeam.all.add(cb);
     return () => {
-      msgSeam.handler = null;
+      msgSeam.all.delete(cb);
+      if (msgSeam.handler === cb) msgSeam.handler = null;
     };
   }),
   sendRuntime: vi.fn(async () => ({ success: true })),
@@ -1132,5 +1138,38 @@ describe("свой ник на плитке (22.10.2026)", () => {
     const tile = mountTile();
     fire([rec({ target: document.body, added: [tile] })]);
     expect(document.querySelector(".info__name")!.hasAttribute("data-pn-alias")).toBe(false);
+  });
+});
+
+describe("осуждёнка на плитке и эфир (ревью 22.10.2026)", () => {
+  const mountTile = () => {
+    document.body.innerHTML = `
+      <div class="players"><div class="player desktop-version" id="p1"><div class="player__botleftmenu">
+        <div class="player__info info"><div class="player-number player-0">1</div>
+        <span class="info__name">fj</span></div></div></div></div>`;
+    return document.querySelector("#p1") as HTMLElement;
+  };
+
+  afterEach(() => {
+    browserMock.storage.local.get.mockImplementation((async () => ({})) as never);
+  });
+
+  test("интеграция OBS включена, эфир неизвестен — осуждёнку не ставим; «эфира нет» — ставим без прохода", async () => {
+    playerNotesFeature.disable();
+    browserMock.storage.local.get.mockImplementation((async () => ({
+      playerNotes: { fj: { text: "", timestamp: 1, alias: "Грубость", aliasCondemned: true } },
+      notes_migrated_to_local: true,
+    })) as never);
+    await playerNotesFeature.enable({ settings: { ...ctx.settings, obs_enabled: true } as unknown as Settings });
+    await vi.advanceTimersByTimeAsync(0);
+    const tile = mountTile();
+    fire([rec({ target: document.body, added: [tile] })]);
+    const name = document.querySelector<HTMLElement>(".info__name")!;
+    expect(name.hasAttribute("data-pn-alias"), "первый кадр при неизвестном эфире").toBe(false);
+    const broadcast = (m: unknown) => [...msgSeam.all].forEach((cb) => cb(m));
+    broadcast({ type: "obs_event", eventType: "obs_stream_state", data: { streaming: false } });
+    expect(name.getAttribute("data-pn-alias"), "эфира нет — сразу, не ждём прохода").toBe("Грубость");
+    broadcast({ type: "obs_event", eventType: "obs_stream_state", data: { streaming: true } });
+    expect(name.hasAttribute("data-pn-alias"), "эфир начался — сразу прячем").toBe(false);
   });
 });

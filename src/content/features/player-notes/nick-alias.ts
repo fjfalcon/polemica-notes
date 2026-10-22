@@ -18,7 +18,9 @@ import { onDomChangeImmediate } from "@core/dom";
 import { watchStreamState } from "@core/stream-state";
 import { SITE } from "@core/selectors";
 import { aliasFrom, buildAliasIndex, type AliasIndex, type NotesMap } from "@core/notes-store";
-import type { AliasPolicy } from "@shared/alias-policy";
+import { aliasPolicy, type AliasPolicy } from "@shared/alias-policy";
+import { isStreaming } from "@core/stream-state";
+import type { Settings } from "@shared/types";
 
 export const ALIAS_ATTR = "data-pn-alias";
 export const ALIAS_SUFFIX_ATTR = "data-pn-alias-suffix";
@@ -95,7 +97,19 @@ export class AliasResolver {
   constructor(
     private readonly notes: () => NotesMap,
     readonly policy: () => AliasPolicy = () => "all",
+    private readonly live: () => boolean = () => false,
   ) {}
+
+  /** Политика из настроек и эфира OBS (неизвестный эфир при интеграции — эфир). */
+  static forSettings(notes: () => NotesMap, settings: () => Partial<Settings>): AliasResolver {
+    const live = () => isStreaming(settings().obs_enabled === true);
+    return new AliasResolver(notes, () => aliasPolicy(settings(), live()), live);
+  }
+
+  /** Окнам в кадре: прятать ли осуждёнку (эфир и страницы её не показывают). */
+  maskCondemned(): boolean {
+    return this.live() && this.policy() !== "all";
+  }
 
   reset(): void {
     this.cache = null;
@@ -169,4 +183,23 @@ export function watchAliasSources(onStreamChange: () => void, obsEnabled: () => 
     offText();
     offStream();
   };
+}
+
+/**
+ * Свой ник на ВСЕХ плитках стола — и на тех, где наших кнопок нет (все
+ * выключены, камеры нет): обход по кнопкам их пропускал до прохода в 2 с
+ * (ревью 22.10.2026, Н1). Замена — только при уверенной привязке
+ * (displayAlias), на эфире осуждёнка не показывается.
+ */
+export function applyTileAliases(
+  resolver: AliasResolver,
+  keys: { displayAlias(nick: string, hideCondemned: boolean): string },
+): void {
+  const policy = resolver.policy();
+  document.querySelectorAll<HTMLElement>(SITE.player).forEach((tile) => {
+    const el = tile.querySelector<HTMLElement>(SITE.playerName);
+    const nick = el?.textContent?.trim() || "";
+    if (!el || !nick) return;
+    setNickAlias(el, policy === "none" ? "" : keys.displayAlias(nick, policy === "safe"), nick, "replace");
+  });
 }

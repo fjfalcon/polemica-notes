@@ -265,3 +265,17 @@ describe("«Осуждёнка» в «Заметках и цветах»", () =>
     expect((h.saved["u:42"] as { aliasCondemned?: boolean }).aliasCondemned).toBeUndefined();
   });
 });
+
+describe("осуждёнка на эфире в «Заметках и цветах»", () => {
+  test("в кадре — «Ник (🙈)», поле редактора точками", async () => {
+    const start: NotesMap = { "u:42": { text: "x", timestamp: 1, nick: "Азарт", alias: "Грубость", aliasCondemned: true } };
+    const { port, model } = makePort(start, { maskCondemned: () => true });
+    h.saved = structuredClone(start);
+    await model.load();
+    openNickColorManager(port);
+    expect(rowText().some((t) => t === "Азарт (🙈)")).toBe(true);
+    expect(win().textContent).not.toContain("Грубость");
+    btn("Ник")!.click();
+    expect(win().querySelector<HTMLInputElement>("input[placeholder^='Свой ник']")!.type).toBe("password");
+  });
+});

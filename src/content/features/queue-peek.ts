@@ -42,7 +42,7 @@ import {
   nickWithAlias,
 } from "@core/notes-store";
 import type { AliasIndex, NickColorIndex } from "@core/notes-store";
-import { refreshStreamState } from "@core/stream-state";
+import { isStreamStateWatched, isStreaming, refreshStreamState, watchStreamState } from "@core/stream-state";
 import { aliasPolicy } from "@shared/alias-policy";
 import { setAutoAcceptSuppressed, registerPeekAbort } from "../auto-accept-gate";
 import type { Feature, FeatureContext } from "@core/feature";
@@ -516,8 +516,9 @@ async function loadNoteIndexes(): Promise<NoteIndexes | null> {
   try {
     const { notes, loadFailed } = await loadNotes();
     if (loadFailed) return null;
-    // Эфир спрашиваем у фона прямо перед показом: панель — снимок момента.
-    const policy = aliasPolicy(settings, await refreshStreamState(settings?.obs_enabled === true));
+    // Эфир: есть живая подписка вкладки — берём её; нет — спрашиваем фон.
+    const obs = settings?.obs_enabled === true;
+    const policy = aliasPolicy(settings, isStreamStateWatched() ? isStreaming(obs) : await refreshStreamState(obs));
     return {
       colors: settings?.nick_colors_enabled === false ? null : buildNickColorIndex(notes),
       aliases: policy === "none" ? null : buildAliasIndex(notes, policy === "safe"),
@@ -525,6 +526,35 @@ async function loadNoteIndexes(): Promise<NoteIndexes | null> {
   } catch {
     return null;
   }
+}
+
+/** Поимённый состав, показанный последним, — для перерисовки при смене эфира. */
+let lastNamed: Record<string, QueueInfo> | null = null;
+let unwatchStream: (() => void) | null = null;
+
+/**
+ * Пока открыта панель с поимённым составом, она следит за эфиром: начался —
+ * свои ники пересобираются по политике (осуждёнка прячется), а не висят
+ * снимком момента открытия (ревью 22.10.2026, С2).
+ */
+function watchStreamWhileOpen(): void {
+  if (unwatchStream) return;
+  unwatchStream = watchStreamState(() => {
+    if (!panel?.isConnected || !lastNamed) {
+      stopStreamWatch();
+      return;
+    }
+    const queues = lastNamed;
+    void loadNoteIndexes().then((indexes) => {
+      if (panel?.isConnected && lastNamed === queues) renderPanel(queues, undefined, true, true, indexes);
+    });
+  }, () => settings?.obs_enabled === true);
+}
+
+function stopStreamWatch(): void {
+  unwatchStream?.();
+  unwatchStream = null;
+  lastNamed = null;
 }
 
 /** Инлайн-стиль цвета ника. Значение прошло isSafeTag (см. buildNickColorIndex) —
@@ -740,6 +770,8 @@ async function runPeek(auto = false): Promise<void> {
       try {
         const queues = await peekOnce(creds, mode);
         renderPanel(queues, undefined, true, true, await loadNoteIndexes());
+        lastNamed = queues;
+        watchStreamWhileOpen();
         log.info(SCOPE, "снимок очередей получен через", mode);
         return;
       } catch (e) {
@@ -987,6 +1019,7 @@ export const queuePeekFeature: Feature = {
   disable() {
     // Сначала выйти из очереди, потом всё остальное.
     cancelPeek("фича выключена");
+    stopStreamWatch();
     cancelAutoPeek();
     autoPeekDone = false;
     registerPeekAbort(null);

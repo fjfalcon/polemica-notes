@@ -979,7 +979,9 @@ describe("§4.7 lifecycle heuristic", () => {
       reason: "modal handlers die with the overlay; the document keydown capture is removed in close()",
     },
     "src/content/features/player-notes/note-modal.ts": {
-      listeners: 7,
+      // 7 → 8 (22.10.2026): кнопка «показать» замаскированного на эфире
+      // своего ника — узел окна, умирает вместе с overlay.
+      listeners: 8,
       timers: 0,
       reason: "modal handlers die with the overlay; the document keydown capture is removed in close()",
     },

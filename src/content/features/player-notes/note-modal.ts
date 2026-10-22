@@ -54,8 +54,14 @@ export function showNoteModal(port: ModalPort, username: string): void {
     box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
   `;
 
+  // Идёт эфир и осуждёнку прячут: окно в кадре тоже её не показывает (Б4).
+  const mask = port.maskCondemned?.() === true;
+  const titleFor = (alias: string | undefined, condemned: boolean): string =>
+    `Заметка для игрока ${mask && condemned ? username : nickWithAlias(username, alias)}`;
+  const opened = port.model.keys.get(username);
+  const openedCondemned = !!opened && typeof opened !== "string" && opened.aliasCondemned === true;
   const title = document.createElement("h3");
-  title.textContent = `Заметка для игрока ${nickWithAlias(username, port.model.keys.alias(username))}`;
+  title.textContent = titleFor(port.model.keys.alias(username), openedCondemned);
   title.style.cssText = "margin: 0 0 15px 0; color: white; font-size: 16px;";
 
   // Прежние ники: заметка живёт на вечном id, а человек мог переименоваться
@@ -74,7 +80,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
   aliasLabel.textContent = "Свой ник (видно только вам)";
   aliasLabel.style.cssText = "color: rgba(255,255,255,.7); font-size: 12px; margin-bottom: 6px;";
   const aliasInput = document.createElement("input");
-  aliasInput.type = "text";
+  aliasInput.type = mask && openedCondemned ? "password" : "text";
   aliasInput.maxLength = MAX_ALIAS;
   aliasInput.placeholder = username;
   aliasInput.value = port.model.keys.alias(username);
@@ -82,16 +88,28 @@ export function showNoteModal(port: ModalPort, username: string): void {
   aliasInput.spellcheck = false;
   // «Осуждёнка»: свой ник не для эфира — на трансляции прячется (если в
   // попапе включено «не показывать осуждёнку на эфире»), вне её виден.
-  const condemnedNote = port.model.keys.get(username);
   const condemnedBox = document.createElement("input");
   condemnedBox.type = "checkbox";
-  condemnedBox.checked = !!condemnedNote && typeof condemnedNote !== "string" && condemnedNote.aliasCondemned === true;
+  condemnedBox.checked = openedCondemned;
   const condemnedLabel = document.createElement("label");
-  condemnedLabel.title = "Не показывать этот ник на эфире (вне эфира он виден)";
+  condemnedLabel.title =
+    "Не показывать этот ник на эфире (вне эфира он виден). Эфир расширение узнаёт от OBS — нужна интеграция OBS";
   condemnedLabel.style.cssText =
     "display:flex;align-items:center;gap:6px;color:rgba(255,255,255,.75);font-size:12px;" +
     "margin:-6px 0 12px;cursor:pointer;user-select:none;";
-  condemnedLabel.append(condemnedBox, document.createTextNode("Осуждёнка — не показывать на эфире"));
+  condemnedLabel.append(condemnedBox, document.createTextNode("Осуждёнка — не показывать на эфире (через интеграцию OBS)"));
+  // На эфире само поле — точками; «показать» — осознанное действие стримера.
+  const revealBtn = document.createElement("button");
+  revealBtn.type = "button";
+  revealBtn.textContent = "показать";
+  revealBtn.hidden = !(mask && openedCondemned);
+  revealBtn.style.cssText =
+    "margin:-6px 0 12px;padding:2px 8px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
+    "font-size:11px;background:rgba(255,255,255,.12);";
+  revealBtn.addEventListener("click", () => {
+    aliasInput.type = "text";
+    revealBtn.hidden = true;
+  });
   aliasInput.style.cssText = `
     width: 100%; margin-bottom: 12px; box-sizing: border-box;
     background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2);
@@ -346,7 +364,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
     const savedAlias = savedRec && typeof savedRec !== "string" ? savedRec.alias ?? "" : "";
     aliasInput.value = savedAlias;
     condemnedBox.checked = !!savedRec && typeof savedRec !== "string" && savedRec.aliasCondemned === true;
-    title.textContent = `Заметка для игрока ${nickWithAlias(username, savedAlias)}`;
+    title.textContent = titleFor(savedAlias, condemnedBox.checked);
     // Сохранённый ключ теперь «виден» пользователю — следующие сохранения
     // в этой же модалке работают с ним как со своим.
     openedKey = key;
@@ -424,7 +442,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
     if (e.target === overlay) close();
   });
 
-  modal.append(title, former, aliasLabel, aliasInput, condemnedLabel, textarea, tagLabel, tagRow, nickColorLabel, nickColorRow, buttons);
+  modal.append(title, former, aliasLabel, aliasInput, condemnedLabel, revealBtn, textarea, tagLabel, tagRow, nickColorLabel, nickColorRow, buttons);
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 

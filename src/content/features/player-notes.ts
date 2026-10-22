@@ -66,13 +66,12 @@ import { openNickColorManager } from "./player-notes/nick-color-manager";
 import {
   AliasResolver,
   applyMatchAliases,
+  applyTileAliases,
   clearAllAliases,
   setNickAlias,
   sweepStaleAliases,
   watchAliasSources,
 } from "./player-notes/nick-alias";
-import { isStreaming } from "@core/stream-state";
-import { aliasPolicy } from "@shared/alias-policy";
 import { showNoteModal } from "./player-notes/note-modal";
 import { NotesModel } from "./player-notes/notes-model";
 import { TAG_PRESETS } from "./player-notes/tag-palette";
@@ -684,6 +683,7 @@ class PlayerNotesManager {
     refreshIndicators: () => this.active && this.refreshNoteIndicators(),
     refreshTags: () => this.active && this.refreshPlayerTags(),
     refreshPlayer: (username) => this.active && this.updatePlayerTooltips(username),
+    maskCondemned: () => this.aliases.maskCondemned(),
   };
 
   /** Контекст тумблера «⋯» (модуль collapse-toggle; правда — в settings). */
@@ -928,10 +928,6 @@ class PlayerNotesManager {
   private applyNickColor(container: HTMLElement, username: string): void {
     const el = container.querySelector<HTMLElement>(SITE.playerName);
     if (el) paintNickEl(el, this.getNickColor(username), username);
-    // Свой ник в игре — вместо ника сайта, только при уверенной привязке.
-    const policy = this.aliases.policy();
-    const alias = policy === "none" ? "" : this.model.keys.displayAlias(username, policy === "safe");
-    if (el) setNickAlias(el, alias, username, "replace");
   }
 
   /**
@@ -972,7 +968,7 @@ class PlayerNotesManager {
 
   /** Кэш индекса цветов (byId/byNick), TTL 1с — см. комментарий idKeyByNick. */
   private colorIndexCache: { at: number; index: NickColorIndex } | null = null;
-  private aliases = new AliasResolver(() => this.model.notes, () => aliasPolicy(this.settings, isStreaming()));
+  private aliases = AliasResolver.forSettings(() => this.model.notes, () => this.settings);
 
   private colorIndex(): NickColorIndex {
     const now = Date.now();
@@ -1108,6 +1104,7 @@ class PlayerNotesManager {
 
   private refreshNickColors(): void {
     this.aliases.reset(); // правка в диалоге видна сразу, а не через TTL индекса
+    applyTileAliases(this.aliases, this.model.keys);
     document
       .querySelectorAll<HTMLElement>(`.${OWN.playerIcons} > [data-username]`)
       .forEach((btn) => {
@@ -2055,6 +2052,7 @@ class PlayerNotesManager {
       // Пересечения — тем же принципом «заранее», но ночью и по одному.
       this.history.pumpWarm(names);
       tiles.forEach((el) => this.processElement(el));
+      applyTileAliases(this.aliases, this.model.keys); // свой ник — на всех плитках
       // Сайтовый список «Участники» — не плитки, обходится отдельно.
       this.applyParticipantColors();
       // Страница профиля — тоже отдельно (плиток .player там нет).

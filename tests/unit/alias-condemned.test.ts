@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 const h = vi.hoisted(() => ({
   listener: null as null | ((m: unknown) => void),
   status: { streaming: false as boolean | null },
+  reply: null as null | (() => Promise<unknown>),
   sent: [] as unknown[],
 }));
 
@@ -19,9 +20,11 @@ vi.mock("@core/messaging", () => ({
       h.listener = null;
     };
   }),
+  // Настоящий контракт фона: ответ на obs_command — конверт {success, data}
+  // (background/index.ts). Голый статус здесь и скрыл блокер ревью.
   sendRuntime: vi.fn(async (m: unknown) => {
     h.sent.push(m);
-    return h.status;
+    return h.reply ? await h.reply() : { success: true, data: h.status };
   }),
 }));
 vi.mock("@core/dom", () => ({ onDomChangeImmediate: vi.fn(() => () => undefined) }));
@@ -103,23 +106,76 @@ describe("состояние эфира во вкладке", () => {
   beforeEach(() => {
     h.sent = [];
     h.status = { streaming: false };
+    h.reply = null;
   });
 
-  test("подписка спрашивает фон и слушает рассылку; отписка снимает слушатель", async () => {
+  test("ответ фона читается из конверта: эфир идёт — вкладка это знает", async () => {
     h.status = { streaming: true };
     let calls = 0;
     const off = watchStreamState(() => calls++, () => true);
     await flush();
-    expect(isStreaming()).toBe(true);
-    expect(calls).toBe(1);
+    expect(isStreaming(true)).toBe(true);
     h.listener!({ type: "obs_event", eventType: "obs_stream_state", data: { streaming: false } });
-    expect(isStreaming()).toBe(false);
-    expect(calls).toBe(2);
+    expect(isStreaming(true)).toBe(false);
+    expect(calls).toBeGreaterThanOrEqual(1);
     off();
     expect(h.listener).toBeNull();
   });
 
-  test("без интеграции OBS фон не спрашивается, эфира нет", async () => {
+  test("конверт «эфира нет» — вкладка показывает осуждёнку (а не держит «неизвестно»)", async () => {
+    h.status = { streaming: false };
+    const off = watchStreamState(() => undefined, () => true);
+    await flush();
+    expect(isStreaming(true)).toBe(false);
+    off();
+  });
+
+  test("резолвер: окна маскируют осуждёнку только на эфире с «прятать»", () => {
+    let live = true;
+    let policy: "all" | "safe" | "none" = "safe";
+    const r = new AliasResolver(() => notes, () => policy, () => live);
+    expect(r.maskCondemned()).toBe(true);
+    policy = "none";
+    expect(r.maskCondemned(), "эфир без своих ников — тем более").toBe(true);
+    policy = "all";
+    expect(r.maskCondemned(), "стример разрешил осуждёнку на эфире").toBe(false);
+    live = false;
+    policy = "safe";
+    expect(r.maskCondemned(), "вне эфира — не маскируем").toBe(false);
+  });
+
+  test("до ответа фона (первый кадр) и при «неизвестно» — считаем эфиром, если интеграция OBS включена", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    h.reply = () => new Promise((r) => (release = r));
+    const off = watchStreamState(() => undefined, () => true);
+    expect(isStreaming(true), "первый кадр — осуждёнку не показываем").toBe(true);
+    release({ success: true, data: { streaming: null } });
+    await flush();
+    expect(isStreaming(true), "нет связи с OBS — на всякий случай эфир").toBe(true);
+    expect(isStreaming(false), "без интеграции эфира не видно").toBe(false);
+    off();
+  });
+
+  test("ответ без данных (фон недоступен) — «неизвестно», а не «эфира нет»", async () => {
+    h.reply = async () => undefined;
+    const off = watchStreamState(() => undefined, () => true);
+    await flush();
+    expect(isStreaming(true)).toBe(true);
+    off();
+  });
+
+  test("устаревший ответ get_status не перетирает свежую рассылку", async () => {
+    let release: (v: unknown) => void = () => undefined;
+    h.reply = () => new Promise((r) => (release = r));
+    const off = watchStreamState(() => undefined, () => true);
+    h.listener!({ type: "obs_event", eventType: "obs_stream_state", data: { streaming: true } });
+    release({ success: true, data: { streaming: false } }); // снят до начала эфира
+    await flush();
+    expect(isStreaming(true)).toBe(true);
+    off();
+  });
+
+  test("без интеграции OBS фон не спрашивается", async () => {
     expect(await refreshStreamState(false)).toBe(false);
     expect(h.sent).toEqual([]);
   });

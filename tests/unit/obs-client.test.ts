@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const store = vi.hoisted(() => ({ data: {} as Record<string, unknown> }));
+const store = vi.hoisted(() => ({ data: {} as Record<string, unknown>, session: {} as Record<string, unknown> }));
 
 vi.mock("@core/env", () => ({
   browser: {
@@ -15,6 +15,12 @@ vi.mock("@core/env", () => ({
         }),
         set: vi.fn(async (patch: Record<string, unknown>) => {
           Object.assign(store.data, patch);
+        }),
+      },
+      session: {
+        get: vi.fn(async (key: string) => (key in store.session ? { [key]: store.session[key] } : {})),
+        set: vi.fn(async (patch: Record<string, unknown>) => {
+          Object.assign(store.session, patch);
         }),
       },
     },
@@ -107,6 +113,7 @@ function infoLines(): string {
 
 beforeEach(() => {
   store.data = {};
+  store.session = {};
   FakeSocket.last = null;
   FakeSocket.created = 0;
   FakeSocket.autoRespondAll = false;
@@ -348,5 +355,32 @@ describe("состояние эфира (осуждёнка, 22.10.2026)", () =>
     expect(client.getStatus().streaming, "осуждёнка не всплывает на обрыве").toBe(true);
     client.disconnect();
     expect(client.getStatus().streaming).toBeNull();
+  });
+});
+
+describe("эфир: переподключение и выгрузка SW (ревью 22.10.2026)", () => {
+  const event = (eventType: string, eventData: unknown) =>
+    FakeSocket.last!.onmessage?.({ data: JSON.stringify({ op: 5, d: { eventType, eventData } }) });
+
+  test("RECONNECTING (outputActive:false) — всё ещё эфир; эфир кончается только на STOPPED", async () => {
+    const client = new ObsClient();
+    await connectOk(client);
+    event("StreamStateChanged", { outputActive: true, outputState: "OBS_WEBSOCKET_OUTPUT_STARTED" });
+    event("StreamStateChanged", { outputActive: false, outputState: "OBS_WEBSOCKET_OUTPUT_RECONNECTING" });
+    expect(client.getStatus().streaming, "задержка трансляции унесёт эти кадры").toBe(true);
+    event("StreamStateChanged", { outputActive: false, outputState: "OBS_WEBSOCKET_OUTPUT_STARTING" });
+    expect(client.getStatus().streaming).toBe(true);
+    event("StreamStateChanged", { outputActive: false, outputState: "OBS_WEBSOCKET_OUTPUT_STOPPED" });
+    expect(client.getStatus().streaming).toBe(false);
+  });
+
+  test("эфир сохраняется в storage.session, новый SW без связи его помнит", async () => {
+    const client = new ObsClient();
+    await connectOk(client);
+    event("StreamStateChanged", { outputActive: true, outputState: "OBS_WEBSOCKET_OUTPUT_STARTED" });
+    await Promise.resolve();
+    expect(store.session.obs_streaming).toBe(true);
+    const fresh = new ObsClient(); // SW выгрузился и поднялся заново
+    expect(await fresh.getStreaming()).toBe(true);
   });
 });

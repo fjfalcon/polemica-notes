@@ -53,4 +53,9 @@ export interface ModalPort {
   refreshTags(): void;
   /** Тултипы конкретного игрока (обе плитки + портал). */
   refreshPlayer(username: string): void;
+  /**
+   * Идёт эфир и осуждёнку на нём прячут: окна в кадре маскируют такие свои
+   * ники (ревью 22.10.2026, Б4). Нет метода — эфира не знаем, не маскируем.
+   */
+  maskCondemned?(): boolean;
 }

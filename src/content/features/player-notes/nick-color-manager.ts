@@ -235,7 +235,9 @@ export function openNickColorManager(port: ModalPort): void {
       const who = document.createElement("div");
       who.style.cssText = "flex:1 1 auto;min-width:0;";
       const nick = document.createElement("div");
-      nick.textContent = nickWithAlias(entry.nick, entry.alias) + (entry.condemned ? " 🙈" : "");
+      // Идёт эфир и осуждёнку прячут: в кадре вместо неё — «🙈» (Б4).
+      const masked = entry.condemned && port.maskCondemned?.() === true;
+      nick.textContent = masked ? `${entry.nick} (🙈)` : nickWithAlias(entry.nick, entry.alias) + (entry.condemned ? " 🙈" : "");
       if (entry.condemned) nick.title = "Осуждёнка — на эфире этот свой ник не показывается";
       nick.style.cssText =
         "color:#fff;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
@@ -362,7 +364,7 @@ export function openNickColorManager(port: ModalPort): void {
           "display:flex;gap:8px;align-items:center;padding:8px 0 12px;" +
           "border-bottom:1px solid rgba(255,255,255,.08);";
         const input = document.createElement("input");
-        input.type = "text";
+        input.type = entry.condemned && port.maskCondemned?.() === true ? "password" : "text";
         input.maxLength = MAX_ALIAS;
         input.value = entry.alias;
         input.placeholder = `Свой ник для ${entry.nick}`;
@@ -415,7 +417,8 @@ export function openNickColorManager(port: ModalPort): void {
         box.type = "checkbox";
         box.checked = entry.condemned;
         const boxLabel = document.createElement("label");
-        boxLabel.title = "Осуждёнка — не показывать этот ник на эфире (вне эфира он виден)";
+        boxLabel.title =
+          "Осуждёнка — не показывать этот ник на эфире (вне эфира он виден). Эфир — через интеграцию OBS";
         boxLabel.style.cssText =
           "display:flex;align-items:center;gap:4px;color:rgba(255,255,255,.75);font-size:12px;" +
           "flex:0 0 auto;cursor:pointer;user-select:none;";

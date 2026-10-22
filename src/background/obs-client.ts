@@ -78,6 +78,9 @@ async function sha256b64(text: string): Promise<string> {
   return btoa(bin);
 }
 
+/** storage.session: идёт ли эфир — переживает выгрузку SW, не переживает браузер. */
+export const OBS_STREAMING_KEY = "obs_streaming";
+
 export class ObsClient {
   private socket: WebSocket | null = null;
   private sessionId: string | null = null;
@@ -88,11 +91,14 @@ export class ObsClient {
   private currentScene: string | null = null;
   /**
    * Идёт ли трансляция в OBS (22.10.2026, «осуждёнка»: свои ники с пометкой
-   * прячутся на эфире). null — неизвестно (нет связи и эфира не видели).
-   * Обрыв связи посреди эфира оставляет true до нового ответа OBS: обрыв на
-   * трансляции не должен показать то, что на ней прятали (fail-closed).
+   * прячутся на эфире). null — неизвестно. Обрыв связи посреди эфира
+   * оставляет true до нового ответа OBS: обрыв на трансляции не должен
+   * показать то, что на ней прятали (fail-closed). Значение дублируется в
+   * storage.session: модульная переменная умирает вместе с SW (§4.10), а
+   * новый SW без связи иначе сказал бы «неизвестно» посреди эфира.
    */
   private streaming: boolean | null = null;
+  private streamingLoaded: Promise<void> | null = null;
   private settings: ConnSettings | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /**
@@ -431,6 +437,29 @@ export class ObsClient {
     if (value === this.streaming) return;
     this.streaming = value;
     this.notifyAll("obs_stream_state", { streaming: value });
+    try {
+      void browser.storage.session?.set({ [OBS_STREAMING_KEY]: value });
+    } catch {
+      /* нет storage.session — живём памятью SW */
+    }
+  }
+
+  /** Эфир с учётом того, что помнит storage.session от прошлого SW. */
+  async getStreaming(): Promise<boolean | null> {
+    if (!this.streamingLoaded) {
+      this.streamingLoaded = (async () => {
+        try {
+          const got = (await browser.storage.session?.get(OBS_STREAMING_KEY)) as Record<string, unknown> | undefined;
+          const saved = got?.[OBS_STREAMING_KEY];
+          // Свежее знание текущего SW важнее сохранённого.
+          if (this.streaming === null && typeof saved === "boolean") this.streaming = saved;
+        } catch {
+          /* нет storage.session */
+        }
+      })();
+    }
+    await this.streamingLoaded;
+    return this.streaming;
   }
 
   disconnect(): void {
@@ -494,7 +523,9 @@ export class ObsClient {
   private handleMessage(message: any): void {
     switch (message.op) {
       case 2: // Identified
-        void this.requestSceneList();
+        // Отказ запроса при отключении (disconnect посреди ожидания) — не
+        // ошибка: без catch он всплывал необработанным отклонением.
+        this.requestSceneList().catch((e) => log.debug("obs", "scene list failed", e));
         void this.refreshStreamStatus();
         break;
       case 5: // Event
@@ -533,8 +564,12 @@ export class ObsClient {
         break;
       }
       case "StreamStateChanged": {
-        const active = eventData.eventData?.outputActive;
-        if (typeof active === "boolean") this.setStreaming(active);
+        // Эфир — всё, кроме «остановлен»: при RECONNECTING obs-websocket шлёт
+        // outputActive:false, а кадры с задержкой трансляции всё равно уйдут
+        // зрителям (ревью 22.10.2026, В1). STARTING — уже эфир.
+        const state = eventData.eventData?.outputState;
+        if (typeof state === "string") this.setStreaming(state !== "OBS_WEBSOCKET_OUTPUT_STOPPED");
+        else if (typeof eventData.eventData?.outputActive === "boolean") this.setStreaming(eventData.eventData.outputActive);
         break;
       }
       case "SceneListChanged":

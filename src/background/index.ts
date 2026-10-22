@@ -586,7 +586,7 @@ async function handleObsQuery(
       // Снимок — ПОСЛЕ ожиданий: снятый до них, он мог устареть на событие
       // смены сцены (внешний аудит №2, B01).
       const st = obs.getStatus();
-      return { ...st, needsPassword };
+      return { ...st, needsPassword, streaming: await obs.getStreaming() };
     }
     case "set_scene": {
       // Только владелец автосцены; ручной клик проходит всегда.
