@@ -63,7 +63,8 @@ test('CONTROL OFF/ON and statistics OFF during real notes await converge with no
  seam.release!();await wait(400);
  expect(manager.activeIds()).not.toContain('player-notes');expect(manager.activeIds()).toContain('obs-record');
  // OFF теперь исполняется сразу (F01): мастер OFF→ON — стоп и новый старт записи, без дублей.
- expect(seam.commands).toEqual(['record_start','record_stop','record_start']);
+ // Только команды записи: get_status — запрос состояния эфира (свои ники, 9.71), к записи не относится.
+ expect(seam.commands.filter((c)=>c.startsWith('record_'))).toEqual(['record_start','record_stop','record_start']);
  expect(seam.messages.size).toBe(1); // obs-panel only; the notes listener was torn down
  expect(seam.writes.some(p=>Object.hasOwn(p,'playerNotes')||Object.hasOwn(p,'tagCustomColors'))).toBe(false);
 });

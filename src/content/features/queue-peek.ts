@@ -42,6 +42,8 @@ import {
   nickWithAlias,
 } from "@core/notes-store";
 import type { AliasIndex, NickColorIndex } from "@core/notes-store";
+import { refreshStreamState } from "@core/stream-state";
+import { aliasPolicy } from "@shared/alias-policy";
 import { setAutoAcceptSuppressed, registerPeekAbort } from "../auto-accept-gate";
 import type { Feature, FeatureContext } from "@core/feature";
 import type { Settings } from "@shared/types";
@@ -514,9 +516,11 @@ async function loadNoteIndexes(): Promise<NoteIndexes | null> {
   try {
     const { notes, loadFailed } = await loadNotes();
     if (loadFailed) return null;
+    // Эфир спрашиваем у фона прямо перед показом: панель — снимок момента.
+    const policy = aliasPolicy(settings, await refreshStreamState(settings?.obs_enabled === true));
     return {
       colors: settings?.nick_colors_enabled === false ? null : buildNickColorIndex(notes),
-      aliases: settings?.nick_aliases_enabled === false ? null : buildAliasIndex(notes),
+      aliases: policy === "none" ? null : buildAliasIndex(notes, policy === "safe"),
     };
   } catch {
     return null;

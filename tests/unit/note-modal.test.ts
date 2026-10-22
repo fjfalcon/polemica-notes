@@ -200,6 +200,29 @@ describe("свой ник", () => {
     expect(rec.alias).toBeUndefined();
   });
 
+  test("«Осуждёнка»: галочка сохраняется вместе со своим ником и без него не живёт", async () => {
+    const { port, model } = makePort({ "u:42": { text: "", timestamp: 1, nick: "Аня", alias: "Анечка", aliasCondemned: true } });
+    await model.load();
+    showNoteModal(port, "Аня");
+    const box = modal().querySelector<HTMLInputElement>("input[type=checkbox]")!;
+    expect(box.checked, "пометка показана").toBe(true);
+    aliasInput().value = "";
+    buttonByText("Сохранить")?.click();
+    await flush();
+    expect(h.saved["u:42"], "без своего ника пометка не сохраняется").toBeUndefined();
+  });
+
+  test("«Осуждёнка» ставится галочкой", async () => {
+    const { port, model } = makePort({ "u:42": { text: "x", timestamp: 1, nick: "Аня" } });
+    await model.load();
+    showNoteModal(port, "Аня");
+    aliasInput().value = "Грубость";
+    modal().querySelector<HTMLInputElement>("input[type=checkbox]")!.checked = true;
+    buttonByText("Сохранить")?.click();
+    await flush();
+    expect(h.saved["u:42"]).toMatchObject({ alias: "Грубость", aliasCondemned: true });
+  });
+
   test("свой ник не подставляется в разметку сырым", async () => {
     const { port, model } = makePort({ "u:42": { text: "", timestamp: 1, alias: '<img src=x onerror="1">' } });
     await model.load();

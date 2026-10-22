@@ -15,8 +15,10 @@
  * Запись идемпотентна (сравнение перед записью, инвариант §4).
  */
 import { onDomChangeImmediate } from "@core/dom";
+import { watchStreamState } from "@core/stream-state";
 import { SITE } from "@core/selectors";
 import { aliasFrom, buildAliasIndex, type AliasIndex, type NotesMap } from "@core/notes-store";
+import type { AliasPolicy } from "@shared/alias-policy";
 
 export const ALIAS_ATTR = "data-pn-alias";
 export const ALIAS_SUFFIX_ATTR = "data-pn-alias-suffix";
@@ -83,15 +85,16 @@ export function clearAllAliases(root: ParentNode = document): void {
  * «Участников» без кэша сканировала бы всю карту заметок на каждом проходе.
  */
 export class AliasResolver {
-  private cache: { at: number; index: AliasIndex } | null = null;
+  private cache: { at: number; safe: boolean; index: AliasIndex } | null = null;
 
   /**
-   * @param enabled тумблер «Показывать свои ники»: выключен — на страницах
-   *   сайта своих ников нет нигде (эфир), резолвер отвечает пустым.
+   * @param policy какие свои ники видны на страницах (@shared/alias-policy):
+   *   тумблеры попапа и идущий эфир OBS. "none" — резолвер отвечает пустым,
+   *   "safe" — без помеченных «Осуждёнка».
    */
   constructor(
     private readonly notes: () => NotesMap,
-    readonly enabled: () => boolean = () => true,
+    readonly policy: () => AliasPolicy = () => "all",
   ) {}
 
   reset(): void {
@@ -99,10 +102,12 @@ export class AliasResolver {
   }
 
   aliasFor(id: string | number | null | undefined, nick: string | null | undefined, strict = false): string {
-    if (!this.enabled()) return "";
+    const policy = this.policy();
+    if (policy === "none") return "";
+    const safe = policy === "safe";
     const now = Date.now();
-    if (!this.cache || now - this.cache.at >= 1000) {
-      this.cache = { at: now, index: buildAliasIndex(this.notes()) };
+    if (!this.cache || this.cache.safe !== safe || now - this.cache.at >= 1000) {
+      this.cache = { at: now, safe, index: buildAliasIndex(this.notes(), safe) };
     }
     return aliasFrom(this.cache.index, id, nick, strict);
   }
@@ -150,4 +155,18 @@ export function watchAliasText(): () => void {
       if (el.getAttribute(ALIAS_FOR_ATTR) !== nick) clearNode(el);
     }
   });
+}
+
+/**
+ * Все источники перерисовки своих ников одной подпиской: смена текста ника
+ * на месте (снять сразу) и начало/конец эфира OBS (осуждёнка и тумблер
+ * «во время эфира»). Возвращает общую отписку.
+ */
+export function watchAliasSources(onStreamChange: () => void, obsEnabled: () => boolean): () => void {
+  const offText = watchAliasText();
+  const offStream = watchStreamState(onStreamChange, obsEnabled);
+  return () => {
+    offText();
+    offStream();
+  };
 }

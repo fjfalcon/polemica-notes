@@ -18,6 +18,9 @@ import { setSettings } from "@core/settings";
 import { fetchActiveGames, fetchRoleBreakdown, findRatingPlayer } from "@core/polemica-api";
 import { rememberSeenPlayers } from "@core/seen-players";
 import { browser } from "@core/env";
+import { isStreaming, watchStreamState } from "@core/stream-state";
+import { aliasPolicy } from "@shared/alias-policy";
+import type { Settings } from "@shared/types";
 import {
   NOTES_KEY,
   aliasFrom,
@@ -175,7 +178,8 @@ function nickCell(r: SummaryRow): HTMLElement {
   // Свой ник из заметки — «Ник (свой)», как в остальных списках. Строго:
   // строка без id (до резолва или «недоступно») по истории ников чужих
   // записей не подписывается — как плитка этого же стола (ревью 22.10.2026).
-  const label = nickWithAlias(r.nick, aliases && showAliases ? aliasFrom(aliases, r.id, r.nick, true) : "");
+  const policy = aliasPolicy(aliasSettings, isStreaming());
+  const label = nickWithAlias(r.nick, aliases && policy !== "none" ? aliasFrom(aliases[policy === "safe" ? "safe" : "all"], r.id, r.nick, true) : "");
   if (!r.id) return cell(label, "pn-ts-nick");
   const a = document.createElement("a");
   a.className = "pn-ts-nick";
@@ -212,9 +216,10 @@ let sortMode: SortMode = "seat";
 let generation = 0;
 let active = false;
 /** Свои ники из заметок; null — ещё не прочитаны или чтение упало (тогда голые ники). */
-let aliases: AliasIndex | null = null;
-/** Тумблер «Показывать свои ники»: выключен (эфир) — голые ники. */
-let showAliases = true;
+let aliases: { all: AliasIndex; safe: AliasIndex } | null = null;
+/** Настройки для решения, какие свои ники показывать (тумблеры + эфир). */
+let aliasSettings: Partial<Settings> = {};
+let unwatchStream: (() => void) | null = null;
 /** Поколение включения для чтения своих ников (generation растёт и при смене стола). */
 let aliasGen = 0;
 
@@ -223,7 +228,8 @@ async function loadAliases(): Promise<void> {
   try {
     const { notes, loadFailed } = await loadNotes();
     if (!active || gen !== aliasGen || loadFailed) return;
-    aliases = buildAliasIndex(notes);
+    // Оба вида сразу: смена эфира перерисовывает окно без нового чтения заметок.
+    aliases = { all: buildAliasIndex(notes), safe: buildAliasIndex(notes, true) };
     rerender();
   } catch {
     /* без своих ников окно всё равно полезно */
@@ -385,7 +391,8 @@ export const tableSummaryFeature: Feature = {
   settingKey: "table_summary_enabled",
   enable(ctx: FeatureContext) {
     active = true;
-    showAliases = ctx.settings.nick_aliases_enabled !== false;
+    aliasSettings = ctx.settings;
+    unwatchStream = watchStreamState(rerender, () => aliasSettings.obs_enabled === true);
     sortMode = loadSortPref();
     lastSignature = "";
     browser.storage.onChanged.addListener(onStorageChanged);
@@ -401,15 +408,15 @@ export const tableSummaryFeature: Feature = {
     log.info(SCOPE, "enabled");
   },
   update(ctx: FeatureContext) {
-    const next = ctx.settings.nick_aliases_enabled !== false;
-    if (next === showAliases) return;
-    showAliases = next;
+    aliasSettings = ctx.settings;
     rerender();
   },
   disable() {
     active = false;
     generation++;
     browser.storage.onChanged.removeListener(onStorageChanged);
+    unwatchStream?.();
+    unwatchStream = null;
     aliasGen++;
     aliases = null;
     offDom?.();

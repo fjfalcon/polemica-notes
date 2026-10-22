@@ -236,3 +236,32 @@ describe("окно не стирает черновик", () => {
     }
   });
 });
+
+describe("«Осуждёнка» в «Заметках и цветах»", () => {
+  test("галочка в редакторе ника сохраняет пометку, строка помечена 🙈", async () => {
+    const start = { "u:42": { text: "Женя", timestamp: 1, nick: "Азарт" } };
+    const { port, model } = makePort(start);
+    h.saved = structuredClone(start);
+    await model.load();
+    openNickColorManager(port);
+    btn("+ ник")!.click();
+    const input = win().querySelector<HTMLInputElement>("input[placeholder^='Свой ник']")!;
+    input.value = "Грубость";
+    win().querySelector<HTMLInputElement>("input[type=checkbox]")!.checked = true;
+    btn("Сохранить")!.click();
+    await flush();
+    expect(h.saved["u:42"]).toMatchObject({ alias: "Грубость", aliasCondemned: true });
+    expect(rowText().some((t) => t === "Азарт (Грубость) 🙈")).toBe(true);
+  });
+
+  test("смена только пометки — это изменение, запись перезаписывается", async () => {
+    const start = { "u:42": { text: "x", timestamp: 1, nick: "Азарт", alias: "Жека" } };
+    const { model } = makePort(start);
+    h.saved = structuredClone(start);
+    await model.load();
+    expect(await model.setAlias("u:42", "Жека", true)).toBe(true);
+    expect((h.saved["u:42"] as { aliasCondemned?: boolean }).aliasCondemned).toBe(true);
+    expect(await model.setAlias("u:42", "Жека", false)).toBe(true);
+    expect((h.saved["u:42"] as { aliasCondemned?: boolean }).aliasCondemned).toBeUndefined();
+  });
+});

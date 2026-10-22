@@ -216,7 +216,7 @@ describe("отрисовка: текст сайта не меняется", () =
     const index = buildAliasIndex({ "u:1": { text: "", timestamp: 1, nick: "Vasya", alias: "Игорь" } });
     expect(aliasFrom(index, 2, "vasya"), "другой аккаунт с тем же ником").toBe("");
     expect(aliasFrom(index, null, "vasya"), "без id — фолбэк по нику (как у заметок)").toBe("Игорь");
-    const r = new AliasResolver(() => ({ "u:1": { text: "", timestamp: 1, alias: "Игорь" } }), () => false);
+    const r = new AliasResolver(() => ({ "u:1": { text: "", timestamp: 1, alias: "Игорь" } }), () => "none");
     expect(r.aliasFor(1, null), "тумблер выключен — ничего").toBe("");
   });
 

@@ -235,7 +235,8 @@ export function openNickColorManager(port: ModalPort): void {
       const who = document.createElement("div");
       who.style.cssText = "flex:1 1 auto;min-width:0;";
       const nick = document.createElement("div");
-      nick.textContent = nickWithAlias(entry.nick, entry.alias);
+      nick.textContent = nickWithAlias(entry.nick, entry.alias) + (entry.condemned ? " 🙈" : "");
+      if (entry.condemned) nick.title = "Осуждёнка — на эфире этот свой ник не показывается";
       nick.style.cssText =
         "color:#fff;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
       who.appendChild(nick);
@@ -389,7 +390,7 @@ export function openNickColorManager(port: ModalPort): void {
           "font-size:12px;background:rgba(99,102,241,.6);flex:0 0 auto;";
         const doSave = () => {
           const own = `a:${entry.key}`;
-          void port.model.setAlias(entry.key, input.value).then((ok) => {
+          void port.model.setAlias(entry.key, input.value, box.checked).then((ok) => {
             if (!ok) {
               save.textContent = "не сохранилось";
               return;
@@ -410,7 +411,16 @@ export function openNickColorManager(port: ModalPort): void {
             doSave();
           }
         });
-        editor.append(input, cancel, save);
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = entry.condemned;
+        const boxLabel = document.createElement("label");
+        boxLabel.title = "Осуждёнка — не показывать этот ник на эфире (вне эфира он виден)";
+        boxLabel.style.cssText =
+          "display:flex;align-items:center;gap:4px;color:rgba(255,255,255,.75);font-size:12px;" +
+          "flex:0 0 auto;cursor:pointer;user-select:none;";
+        boxLabel.append(box, document.createTextNode("Осуждёнка"));
+        editor.append(input, boxLabel, cancel, save);
         list.appendChild(editor);
         input.focus();
         input.setSelectionRange(input.value.length, input.value.length);

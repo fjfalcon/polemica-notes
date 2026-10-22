@@ -562,7 +562,7 @@ export class NotesModel {
    * существующей записи — строки окна строятся из неё. Пустой свой ник у
    * записи без текста, цвета и метки удаляет её — не копим пустышки.
    */
-  setAlias(key: string, alias: string): Promise<boolean> {
+  setAlias(key: string, alias: string, condemned = false): Promise<boolean> {
     return this.enqueue(async (): Promise<boolean> => {
       const prev = ownRecord(this.map, key);
       // Записи нет — гонка с удалением в другой вкладке: не воскрешаем.
@@ -570,10 +570,13 @@ export class NotesModel {
       const clean = normalizeAlias(alias);
       // Ничего не поменялось — не трогаем запись: свежее время сделало бы её
       // победителем слияний на ровном месте.
-      if (typeof prev !== "string" && normalizeAlias(prev.alias) === clean) return true;
+      const mark = clean && condemned ? (true as const) : undefined;
+      if (typeof prev !== "string" && normalizeAlias(prev.alias) === clean && prev.aliasCondemned === mark) {
+        return true;
+      }
       const base: NoteRecord =
         typeof prev === "string" ? { text: prev, timestamp: Date.now(), version: VERSION } : prev;
-      const next: NoteRecord = { ...base, alias: clean, timestamp: Date.now(), version: VERSION };
+      const next: NoteRecord = { ...base, alias: clean, aliasCondemned: mark, timestamp: Date.now(), version: VERSION };
       if (!clean && !next.text && !next.tag && !next.nickColor) delete this.map[key];
       else this.map[key] = next;
 
@@ -618,6 +621,7 @@ export class NotesModel {
     color: string;
     text: string;
     alias: string;
+    condemned: boolean;
   }> {
     return Object.entries(this.map)
       .filter(([, rec]) => (typeof rec === "string" ? !!rec : !!(rec.nickColor || rec.text || rec.alias)))
@@ -630,6 +634,7 @@ export class NotesModel {
         color: typeof rec === "string" ? "" : rec.nickColor || "",
         text: typeof rec === "string" ? rec : rec.text || "",
         alias: typeof rec === "string" ? "" : rec.alias || "",
+        condemned: typeof rec !== "string" && rec.aliasCondemned === true,
       }))
       .sort((a, b) => a.nick.localeCompare(b.nick, "ru"));
   }

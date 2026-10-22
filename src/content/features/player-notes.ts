@@ -69,8 +69,10 @@ import {
   clearAllAliases,
   setNickAlias,
   sweepStaleAliases,
-  watchAliasText,
+  watchAliasSources,
 } from "./player-notes/nick-alias";
+import { isStreaming } from "@core/stream-state";
+import { aliasPolicy } from "@shared/alias-policy";
 import { showNoteModal } from "./player-notes/note-modal";
 import { NotesModel } from "./player-notes/notes-model";
 import { TAG_PRESETS } from "./player-notes/tag-palette";
@@ -404,7 +406,8 @@ class PlayerNotesManager {
     this.tileMedia.loadFlipped();
 
     this.syncMatchPageRoute(getMatchId() !== null);
-    this.unsubscribers.push(watchAliasText()); // смена ника на месте снимает чужой свой ник сразу
+    const onStream = () => this.settings.statistics_enabled !== false && this.refreshNickColors();
+    this.unsubscribers.push(watchAliasSources(onStream, () => this.settings.obs_enabled === true));
 
     // Один общий наблюдатель за DOM вместо нескольких MutationObserver.
     // Полный проход — только на мутации, задевающие плитки/списки игроков:
@@ -926,7 +929,8 @@ class PlayerNotesManager {
     const el = container.querySelector<HTMLElement>(SITE.playerName);
     if (el) paintNickEl(el, this.getNickColor(username), username);
     // Свой ник в игре — вместо ника сайта, только при уверенной привязке.
-    const alias = this.aliases.enabled() ? this.model.keys.displayAlias(username) : "";
+    const policy = this.aliases.policy();
+    const alias = policy === "none" ? "" : this.model.keys.displayAlias(username, policy === "safe");
     if (el) setNickAlias(el, alias, username, "replace");
   }
 
@@ -968,7 +972,7 @@ class PlayerNotesManager {
 
   /** Кэш индекса цветов (byId/byNick), TTL 1с — см. комментарий idKeyByNick. */
   private colorIndexCache: { at: number; index: NickColorIndex } | null = null;
-  private aliases = new AliasResolver(() => this.model.notes, () => this.settings.nick_aliases_enabled !== false);
+  private aliases = new AliasResolver(() => this.model.notes, () => aliasPolicy(this.settings, isStreaming()));
 
   private colorIndex(): NickColorIndex {
     const now = Date.now();
@@ -1112,6 +1116,8 @@ class PlayerNotesManager {
         if (u && container) this.applyNickColor(container, u);
       });
     this.applyParticipantColors();
+    this.ensureProfileNoteUI(); // свой ник профиля и разбора — тоже сразу (эфир, правка)
+    applyMatchAliases(this.aliases);
   }
 
   // ─────────── Статистика игрока ───────────

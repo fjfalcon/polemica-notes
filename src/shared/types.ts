@@ -68,6 +68,10 @@ export interface Settings {
    * (в окне заметки, «Заметках и цветах» и попапе остаются).
    */
   nick_aliases_enabled: boolean;
+  /** Свои ники во время эфира OBS (выключено — на трансляции не видно ни одного). */
+  nick_aliases_on_stream: boolean;
+  /** На эфире прятать свои ники с пометкой «Осуждёнка» (остальные видны). */
+  nick_aliases_hide_condemned_on_stream: boolean;
   /** Толщина цветной рамки-метки вокруг камеры игрока. */
   note_frame_width: NoteFrameWidth;
   /** Кнопки на плитке игрока — можно убрать любую из ряда. */
@@ -245,7 +249,9 @@ export interface ObsEventMsg {
     | "obs_scenes_updated"
     | "obs_scene_changed"
     | "obs_disconnected"
-    | "obs_connected";
+    | "obs_connected"
+    /** Трансляция в OBS началась/закончилась: data = { streaming: boolean | null }. */
+    | "obs_stream_state";
   data?: unknown;
 }
 

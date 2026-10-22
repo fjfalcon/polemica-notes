@@ -74,6 +74,9 @@ class Socket {
     if (msg.d.requestType === "GetSceneList") {
       this.listRequest = msg.d;
       if (!this.holdList) queueMicrotask(() => this.replyList());
+    } else if (msg.d.requestType === "GetStreamStatus") {
+      // Настоящий OBS отвечает сразу; эфир в этих сценариях не идёт.
+      queueMicrotask(() => this.receive(7, { requestId: msg.d.requestId, requestType: "GetStreamStatus", requestStatus: { result: true, code: 100 }, responseData: { outputActive: false } }));
     } else if (msg.d.requestType === "SetCurrentProgramScene") {
       transport.actual = msg.d.requestData.sceneName;
       queueMicrotask(() => {

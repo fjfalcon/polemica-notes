@@ -60,6 +60,8 @@ export const DEFAULT_SETTINGS: Settings = {
   player_mute_enabled: true,
   nick_colors_enabled: true,
   nick_aliases_enabled: true,
+  nick_aliases_on_stream: true,
+  nick_aliases_hide_condemned_on_stream: true,
   // "thick" (3px) — вид, каким рамки были всегда; тонкие/средние — по вкусу.
   note_frame_width: "thick",
   btn_stats_enabled: true,

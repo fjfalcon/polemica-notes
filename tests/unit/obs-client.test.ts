@@ -295,3 +295,58 @@ describe("бюджет проб и записей в connected-состояни�
     expect(client.hasFreshHeartbeat()).toBe(false);
   });
 });
+
+describe("состояние эфира (осуждёнка, 22.10.2026)", () => {
+  const reply = (requestType: string, responseData: unknown) => {
+    const req = FakeSocket.last!.sent
+      .map((s) => JSON.parse(s) as { op: number; d?: { requestType?: string; requestId?: number } })
+      .filter((m) => m.op === 6 && m.d?.requestType === requestType)
+      .pop();
+    FakeSocket.last!.onmessage?.({
+      data: JSON.stringify({ op: 7, d: { requestId: req?.d?.requestId, requestStatus: { result: true }, responseData } }),
+    });
+  };
+  const event = (eventType: string, eventData: unknown) =>
+    FakeSocket.last!.onmessage?.({ data: JSON.stringify({ op: 5, d: { eventType, eventData } }) });
+  const streamEvents = async () => {
+    const { broadcastToGameTabs } = await import("@core/messaging");
+    return vi
+      .mocked(broadcastToGameTabs)
+      .mock.calls.map((c) => c[0] as { eventType?: string; data?: { streaming?: unknown } })
+      .filter((m) => m.eventType === "obs_stream_state")
+      .map((m) => m.data?.streaming);
+  };
+
+  test("после Identified спрашивает GetStreamStatus и сообщает вкладкам", async () => {
+    const { broadcastToGameTabs } = await import("@core/messaging");
+    vi.mocked(broadcastToGameTabs).mockClear();
+    const client = new ObsClient();
+    await connectOk(client);
+    reply("GetStreamStatus", { outputActive: true });
+    await Promise.resolve();
+    expect(client.getStatus().streaming).toBe(true);
+    expect(await streamEvents()).toEqual([true]);
+  });
+
+  test("событие StreamStateChanged переключает эфир", async () => {
+    const client = new ObsClient();
+    await connectOk(client);
+    reply("GetStreamStatus", { outputActive: false });
+    await Promise.resolve();
+    event("StreamStateChanged", { outputActive: true, outputState: "OBS_WEBSOCKET_OUTPUT_STARTED" });
+    expect(client.getStatus().streaming).toBe(true);
+    event("StreamStateChanged", { outputActive: false, outputState: "OBS_WEBSOCKET_OUTPUT_STOPPED" });
+    expect(client.getStatus().streaming).toBe(false);
+  });
+
+  test("обрыв связи посреди эфира НЕ сбрасывает эфир (fail-closed); явное отключение — сбрасывает", async () => {
+    const client = new ObsClient();
+    await connectOk(client);
+    reply("GetStreamStatus", { outputActive: true });
+    await Promise.resolve();
+    FakeSocket.last!.close(1006, "network");
+    expect(client.getStatus().streaming, "осуждёнка не всплывает на обрыве").toBe(true);
+    client.disconnect();
+    expect(client.getStatus().streaming).toBeNull();
+  });
+});

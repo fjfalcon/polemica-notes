@@ -1494,6 +1494,8 @@ document.addEventListener("DOMContentLoaded", () => {
     set("player_mute_enabled", items.player_mute_enabled);
     set("nick_colors_enabled", items.nick_colors_enabled);
     set("nick_aliases_enabled", items.nick_aliases_enabled);
+    set("nick_aliases_on_stream", items.nick_aliases_on_stream);
+    set("nick_aliases_hide_condemned_on_stream", items.nick_aliases_hide_condemned_on_stream);
     const nfw = $<HTMLSelectElement>("note_frame_width");
     if (nfw) {
       // Нормализация: импорт бэкапа проверяет только typeof, и мусорная
@@ -1647,6 +1649,8 @@ document.addEventListener("DOMContentLoaded", () => {
       player_mute_enabled: cb("player_mute_enabled", true),
       nick_colors_enabled: cb("nick_colors_enabled", true),
       nick_aliases_enabled: cb("nick_aliases_enabled", true),
+      nick_aliases_on_stream: cb("nick_aliases_on_stream", true),
+      nick_aliases_hide_condemned_on_stream: cb("nick_aliases_hide_condemned_on_stream", true),
       note_frame_width: noteFrameWidthValue(),
       btn_stats_enabled: cb("btn_stats_enabled", true),
       btn_note_enabled: cb("btn_note_enabled", true),
@@ -1859,6 +1863,8 @@ document.addEventListener("DOMContentLoaded", () => {
     "player_mute_enabled",
     "nick_colors_enabled",
     "nick_aliases_enabled",
+    "nick_aliases_on_stream",
+    "nick_aliases_hide_condemned_on_stream",
     "note_frame_width",
     "btn_stats_enabled",
     "btn_note_enabled",

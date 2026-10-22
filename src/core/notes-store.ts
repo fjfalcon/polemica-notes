@@ -39,6 +39,12 @@ export type NoteRecord = {
    * отображение: ключом заметки и сверкой игроков никогда не служит.
    */
   alias?: string;
+  /**
+   * «Осуждёнка»: свой ник не для эфира (например, прозвище, которое не стоит
+   * показывать зрителям). На трансляции прячется, вне её — виден. Имеет
+   * смысл только вместе с alias.
+   */
+  aliasCondemned?: true;
 };
 
 /** Длина своего ника: плашка игрока узкая, а это подпись, а не заметка. */
@@ -214,7 +220,11 @@ export interface AliasIndex {
   byRecNick: Map<string, string>;
 }
 
-export function buildAliasIndex(notes: NotesMap): AliasIndex {
+/**
+ * @param hideCondemned идёт эфир с «не показывать осуждёнку»: такие свои ники
+ *   в индекс не попадают — для страниц их просто нет.
+ */
+export function buildAliasIndex(notes: NotesMap, hideCondemned = false): AliasIndex {
   const index: AliasIndex = { byId: new Map(), ids: new Set(), byLegacyKey: new Map(), byRecNick: new Map() };
   for (const [rawKey, rec] of Object.entries(notes)) {
     if (!rec || typeof rec === "string") continue;
@@ -223,7 +233,7 @@ export function buildAliasIndex(notes: NotesMap): AliasIndex {
     if (id) index.ids.add(id);
     // Записи из старого хранилища могли обойти нормализацию — чистим на чтении.
     const alias = normalizeAlias(rec.alias);
-    if (!alias) continue;
+    if (!alias || (hideCondemned && rec.aliasCondemned === true)) continue;
     if (id) {
       index.byId.set(id, alias);
       if (typeof rec.nick === "string" && rec.nick) index.byRecNick.set(rec.nick.toLowerCase(), alias);
@@ -337,7 +347,10 @@ export function normalizeNoteRecord(raw: unknown, maxText = MAX_NOTE_TEXT): Note
   if (isSafeTag(r.nickColor)) rec.nickColor = r.nickColor;
   if (typeof r.nick === "string" && r.nick) rec.nick = r.nick.slice(0, MAX_NOTE_KEY);
   const alias = normalizeAlias(r.alias);
-  if (alias) rec.alias = alias;
+  if (alias) {
+    rec.alias = alias;
+    if (r.aliasCondemned === true) rec.aliasCondemned = true;
+  }
   if (Array.isArray(r.nicks)) {
     const nicks = r.nicks
       .filter((n): n is string => typeof n === "string" && n.length > 0)
@@ -475,7 +488,14 @@ export function mergeNickKeysIntoId(
     // Цвет и метка наследуются безусловно: непустое побеждает пустое.
     if (!winner.tag && loser.tag) winner.tag = loser.tag;
     if (!winner.nickColor && loser.nickColor) winner.nickColor = loser.nickColor;
-    if (!winner.alias && loser.alias) winner.alias = loser.alias;
+    // Свой ник наследуется вместе со своей пометкой «Осуждёнка» — пара.
+    if (!winner.alias && loser.alias) {
+      winner.alias = loser.alias;
+      if (loser.aliasCondemned) winner.aliasCondemned = true;
+      else delete winner.aliasCondemned;
+    } else if (winner.alias && winner.alias === loser.alias && loser.aliasCondemned) {
+      winner.aliasCondemned = true;
+    }
   }
 
   return { key, nickKeys, record: { ...winner, ...withNickHistory(winner, username) } };
@@ -489,7 +509,14 @@ function combineNotes(a: NoteRecord | string, b: NoteRecord | string): NoteRecor
   if (!out.text && l.text) out.text = l.text;
   if (!out.tag && l.tag) out.tag = l.tag;
   if (!out.nickColor && l.nickColor) out.nickColor = l.nickColor;
-  if (!out.alias && l.alias) out.alias = l.alias;
+  if (!out.alias && l.alias) {
+    out.alias = l.alias;
+    if (l.aliasCondemned) out.aliasCondemned = true;
+    else delete out.aliasCondemned;
+  } else if (out.alias && out.alias === l.alias && l.aliasCondemned) {
+    // Тот же свой ник: пометка — как метка и цвет, непустое побеждает пустое.
+    out.aliasCondemned = true;
+  }
   if (!out.nick && l.nick) out.nick = l.nick;
   // Историю ников СЛИВАЕМ, а не выбираем: на двух устройствах игрок мог
   // застать разные переименования, и «победа свежего» теряла бы половину.
@@ -515,6 +542,7 @@ function sameNote(a: NoteRecord | string, b: NoteRecord | string): boolean {
     Object.is(x.tag, y.tag) &&
     Object.is(x.nickColor, y.nickColor) &&
     Object.is(x.alias, y.alias) &&
+    Object.is(x.aliasCondemned === true, y.aliasCondemned === true) &&
     Object.is(x.nick, y.nick) &&
     (x.nicks ?? []).join("\u0000") === (y.nicks ?? []).join("\u0000") &&
     Object.is(x.version, y.version)

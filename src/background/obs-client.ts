@@ -86,6 +86,13 @@ export class ObsClient {
   private pending = new Map<number, Pending>();
   private scenes: ObsScene[] = [];
   private currentScene: string | null = null;
+  /**
+   * Идёт ли трансляция в OBS (22.10.2026, «осуждёнка»: свои ники с пометкой
+   * прячутся на эфире). null — неизвестно (нет связи и эфира не видели).
+   * Обрыв связи посреди эфира оставляет true до нового ответа OBS: обрыв на
+   * трансляции не должен показать то, что на ней прятали (fail-closed).
+   */
+  private streaming: boolean | null = null;
   private settings: ConnSettings | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /**
@@ -408,6 +415,24 @@ export class ObsClient {
     this.attemptReconnect();
   }
 
+  /** Состояние эфира новой сессии: ответ старой сессии не перетирает свежее. */
+  private async refreshStreamStatus(): Promise<void> {
+    const session = this.sessionId;
+    try {
+      const res = await this.request<{ outputActive?: boolean }>("GetStreamStatus");
+      if (session !== this.sessionId) return;
+      this.setStreaming(res?.outputActive === true);
+    } catch (e) {
+      log.debug("obs", "stream status failed", e);
+    }
+  }
+
+  private setStreaming(value: boolean | null): void {
+    if (value === this.streaming) return;
+    this.streaming = value;
+    this.notifyAll("obs_stream_state", { streaming: value });
+  }
+
   disconnect(): void {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -418,6 +443,8 @@ export class ObsClient {
     this.currentScene = null;
     this.settings = null;
     this.reconnectAttempts = 0;
+    // Явное отключение (настройки, кнопка) — правды об эфире больше нет.
+    this.setStreaming(null);
     this.notifyAll("obs_disconnected");
     void this.saveConnectionState(false);
   }
@@ -468,6 +495,7 @@ export class ObsClient {
     switch (message.op) {
       case 2: // Identified
         void this.requestSceneList();
+        void this.refreshStreamStatus();
         break;
       case 5: // Event
         this.handleEvent(message.d);
@@ -502,6 +530,11 @@ export class ObsClient {
         if (typeof d.inputName === "string" && typeof d.inputMuted === "boolean") {
           this.notifyAll("obs_input_mute_changed", { inputName: d.inputName, inputMuted: d.inputMuted });
         }
+        break;
+      }
+      case "StreamStateChanged": {
+        const active = eventData.eventData?.outputActive;
+        if (typeof active === "boolean") this.setStreaming(active);
         break;
       }
       case "SceneListChanged":
@@ -660,6 +693,7 @@ export class ObsClient {
       scenes: this.scenes,
       currentScene: this.currentScene,
       sessionId: this.sessionId,
+      streaming: this.streaming,
     };
   }
 

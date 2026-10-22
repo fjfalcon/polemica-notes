@@ -119,14 +119,16 @@ export class NoteKeys {
    * компромисс, а в замене настоящий ник спрятан, и чужой свой ник выдал бы
    * другого человека за этого (ревью 22.10.2026, В3).
    */
-  displayAlias(username: string): string {
+  displayAlias(username: string, hideCondemned = false): string {
     const notes = this.ctx.notes();
     const id = this.userId(username);
     let key: string | undefined;
     if (id !== undefined && Object.hasOwn(notes, idKey(id))) key = idKey(id);
     else if (Object.hasOwn(notes, username)) key = username;
     const note = key === undefined ? undefined : notes[key];
-    return note && typeof note !== "string" ? normalizeAlias(note.alias) ?? "" : "";
+    if (!note || typeof note === "string") return "";
+    if (hideCondemned && note.aliasCondemned === true) return ""; // эфир: осуждёнку не показываем
+    return normalizeAlias(note.alias) ?? "";
   }
 
   /** Свой ник игрока (очищенный на чтении — запись могла прийти из старого хранилища). */

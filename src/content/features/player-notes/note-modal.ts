@@ -80,6 +80,18 @@ export function showNoteModal(port: ModalPort, username: string): void {
   aliasInput.value = port.model.keys.alias(username);
   aliasInput.autocomplete = "off";
   aliasInput.spellcheck = false;
+  // «Осуждёнка»: свой ник не для эфира — на трансляции прячется (если в
+  // попапе включено «не показывать осуждёнку на эфире»), вне её виден.
+  const condemnedNote = port.model.keys.get(username);
+  const condemnedBox = document.createElement("input");
+  condemnedBox.type = "checkbox";
+  condemnedBox.checked = !!condemnedNote && typeof condemnedNote !== "string" && condemnedNote.aliasCondemned === true;
+  const condemnedLabel = document.createElement("label");
+  condemnedLabel.title = "Не показывать этот ник на эфире (вне эфира он виден)";
+  condemnedLabel.style.cssText =
+    "display:flex;align-items:center;gap:6px;color:rgba(255,255,255,.75);font-size:12px;" +
+    "margin:-6px 0 12px;cursor:pointer;user-select:none;";
+  condemnedLabel.append(condemnedBox, document.createTextNode("Осуждёнка — не показывать на эфире"));
   aliasInput.style.cssText = `
     width: 100%; margin-bottom: 12px; box-sizing: border-box;
     background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2);
@@ -267,6 +279,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
     }
     const value = textarea.value.trim();
     const alias = normalizeAlias(aliasInput.value);
+    const condemned = alias && condemnedBox.checked ? (true as const) : undefined;
     // Пишем по id-ключу, если статистика уже резолвила игрока: такая заметка
     // переживёт смену ника и не перепутает тёзок. Если id не резолвлен, но
     // модалка открылась на id-записи, найденной по нику (фолбэк noteKeyFor),
@@ -287,6 +300,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
       const unseenTag = unseen && typeof unseen !== "string" ? unseen.tag : undefined;
       const unseenColor = unseen && typeof unseen !== "string" ? unseen.nickColor : undefined;
       const unseenAlias = unseen && typeof unseen !== "string" ? unseen.alias : undefined;
+      const unseenCondemned = unseen && typeof unseen !== "string" ? unseen.aliasCondemned : undefined;
       port.model.notes[key] = {
         text: value,
         timestamp: Date.now(),
@@ -294,6 +308,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
         tag: selectedTag || unseenTag || undefined,
         nickColor: selectedNickColor || unseenColor || undefined,
         alias: alias || normalizeAlias(unseenAlias),
+        aliasCondemned: alias ? condemned : unseenAlias ? unseenCondemned : undefined,
         // nick обязателен у ЛЮБОЙ id-записи (в т.ч. при записи в openedKey
         // без резолвленного id) — по нему работает фолбэк-поиск.
         ...(isIdKey(key) ? withNickHistory(port.model.notes[key], username) : {}),
@@ -330,6 +345,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
     const savedRec = port.model.notes[key];
     const savedAlias = savedRec && typeof savedRec !== "string" ? savedRec.alias ?? "" : "";
     aliasInput.value = savedAlias;
+    condemnedBox.checked = !!savedRec && typeof savedRec !== "string" && savedRec.aliasCondemned === true;
     title.textContent = `Заметка для игрока ${nickWithAlias(username, savedAlias)}`;
     // Сохранённый ключ теперь «виден» пользователю — следующие сохранения
     // в этой же модалке работают с ним как со своим.
@@ -408,7 +424,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
     if (e.target === overlay) close();
   });
 
-  modal.append(title, former, aliasLabel, aliasInput, textarea, tagLabel, tagRow, nickColorLabel, nickColorRow, buttons);
+  modal.append(title, former, aliasLabel, aliasInput, condemnedLabel, textarea, tagLabel, tagRow, nickColorLabel, nickColorRow, buttons);
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 
