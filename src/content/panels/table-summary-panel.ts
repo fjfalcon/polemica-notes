@@ -172,8 +172,10 @@ function buildRow(labels: string[], head: boolean): HTMLElement {
 }
 
 function nickCell(r: SummaryRow): HTMLElement {
-  // Свой ник из заметки — «Ник (свой)», как в остальных списках.
-  const label = nickWithAlias(r.nick, aliases && showAliases ? aliasFrom(aliases, r.id, r.nick) : "");
+  // Свой ник из заметки — «Ник (свой)», как в остальных списках. Строго:
+  // строка без id (до резолва или «недоступно») по истории ников чужих
+  // записей не подписывается — как плитка этого же стола (ревью 22.10.2026).
+  const label = nickWithAlias(r.nick, aliases && showAliases ? aliasFrom(aliases, r.id, r.nick, true) : "");
   if (!r.id) return cell(label, "pn-ts-nick");
   const a = document.createElement("a");
   a.className = "pn-ts-nick";
