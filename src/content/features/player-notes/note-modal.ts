@@ -15,8 +15,11 @@ import {
   idKey,
   isIdKey,
   isSafeNoteKey,
+  MAX_ALIAS,
   MAX_OWN_NOTE_TEXT,
   NOTES_VERSION,
+  nickWithAlias,
+  normalizeAlias,
   withNickHistory,
   type NoteRecord,
 } from "@core/notes-store";
@@ -52,7 +55,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
   `;
 
   const title = document.createElement("h3");
-  title.textContent = `Заметка для игрока ${username}`;
+  title.textContent = `Заметка для игрока ${nickWithAlias(username, port.model.keys.alias(username))}`;
   title.style.cssText = "margin: 0 0 15px 0; color: white; font-size: 16px;";
 
   // Прежние ники: заметка живёт на вечном id, а человек мог переименоваться
@@ -64,6 +67,24 @@ export function showNoteModal(port: ModalPort, username: string): void {
     former.style.cssText =
       "margin: -8px 0 12px 0; color: rgba(255,255,255,.65); font-size: 12px;";
   }
+
+  // Свой ник: как ты называешь игрока. В игре — вместо ника сайта, в
+  // списках и профиле — «Ник (свой)». Только отображение, ключом не служит.
+  const aliasLabel = document.createElement("div");
+  aliasLabel.textContent = "Свой ник (видно только вам)";
+  aliasLabel.style.cssText = "color: rgba(255,255,255,.7); font-size: 12px; margin-bottom: 6px;";
+  const aliasInput = document.createElement("input");
+  aliasInput.type = "text";
+  aliasInput.maxLength = MAX_ALIAS;
+  aliasInput.placeholder = username;
+  aliasInput.value = port.model.keys.alias(username);
+  aliasInput.autocomplete = "off";
+  aliasInput.spellcheck = false;
+  aliasInput.style.cssText = `
+    width: 100%; margin-bottom: 12px; box-sizing: border-box;
+    background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px; color: white; padding: 6px 8px; font-size: 13px;
+  `;
 
   const textarea = document.createElement("textarea");
   // Потолок ввода = потолок хранения (ревью 27.08.2026): раньше поле
@@ -245,6 +266,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
       return false;
     }
     const value = textarea.value.trim();
+    const alias = normalizeAlias(aliasInput.value);
     // Пишем по id-ключу, если статистика уже резолвила игрока: такая заметка
     // переживёт смену ника и не перепутает тёзок. Если id не резолвлен, но
     // модалка открылась на id-записи, найденной по нику (фолбэк noteKeyFor),
@@ -260,16 +282,18 @@ export function showNoteModal(port: ModalPort, username: string): void {
     for (const nk of staleNickKeys) touched.set(nk, port.model.notes[nk]);
 
     const unseen = key !== openedKey ? port.model.notes[key] : undefined;
-    if (value || selectedTag || selectedNickColor) {
-      // Метка/цвет невидённой записи сохраняются, если пользователь свои не ставил.
+    if (value || selectedTag || selectedNickColor || alias) {
+      // Метка/цвет/свой ник невидённой записи сохраняются, если пользователь свои не ставил.
       const unseenTag = unseen && typeof unseen !== "string" ? unseen.tag : undefined;
       const unseenColor = unseen && typeof unseen !== "string" ? unseen.nickColor : undefined;
+      const unseenAlias = unseen && typeof unseen !== "string" ? unseen.alias : undefined;
       port.model.notes[key] = {
         text: value,
         timestamp: Date.now(),
         version: VERSION,
         tag: selectedTag || unseenTag || undefined,
         nickColor: selectedNickColor || unseenColor || undefined,
+        alias: alias || normalizeAlias(unseenAlias),
         // nick обязателен у ЛЮБОЙ id-записи (в т.ч. при записи в openedKey
         // без резолвленного id) — по нему работает фолбэк-поиск.
         ...(isIdKey(key) ? withNickHistory(port.model.notes[key], username) : {}),
@@ -301,6 +325,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
     port.refreshIndicators();
     port.refreshTags();
     port.refreshColors();
+    title.textContent = `Заметка для игрока ${nickWithAlias(username, alias)}`;
     // Сохранённый ключ теперь «виден» пользователю — следующие сохранения
     // в этой же модалке работают с ним как со своим.
     openedKey = key;
@@ -378,7 +403,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
     if (e.target === overlay) close();
   });
 
-  modal.append(title, former, textarea, tagLabel, tagRow, nickColorLabel, nickColorRow, buttons);
+  modal.append(title, former, aliasLabel, aliasInput, textarea, tagLabel, tagRow, nickColorLabel, nickColorRow, buttons);
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
 

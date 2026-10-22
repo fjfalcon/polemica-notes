@@ -11,7 +11,7 @@
  */
 import { browser } from "@core/env";
 import { log } from "@core/log";
-import { NOTES_KEY, isIdKey, ID_KEY_PREFIX, type NotesMap } from "@core/notes-store";
+import { NOTES_KEY, isIdKey, ID_KEY_PREFIX, nickWithAlias, normalizeAlias, type NotesMap } from "@core/notes-store";
 import { fetchActiveGames, fetchRatingList } from "@core/polemica-api";
 import { readSeenPlayers } from "@core/seen-players";
 
@@ -32,6 +32,8 @@ export interface Candidate {
   source: SearchSource;
   /** Прежние ники (из заметок) — тоже ищутся. */
   oldNicks?: string[];
+  /** Свой ник из заметки — ищется наравне с ником и показывается «Ник (свой)». */
+  alias?: string;
 }
 
 /** Итоговая строка выдачи (кандидаты одного id слиты). */
@@ -42,6 +44,8 @@ export interface SearchHit {
   sources: SearchSource[];
   /** Совпало по прежнему нику — показываем, по какому. */
   matchedOldNick?: string;
+  /** Свой ник из заметки. */
+  alias?: string;
   score: number;
 }
 
@@ -72,6 +76,8 @@ export function rankPlayerMatches(query: string, candidates: readonly Candidate[
     .sort((a, b) => SOURCE_ORDER.indexOf(a.source) - SOURCE_ORDER.indexOf(b.source));
   for (const c of sorted) {
     let score: number | null = c.id === q ? -1 : matchScore(c.nick, q);
+    // Свой ник — как сам ник: «Игорь» находит того, кого ты так назвал.
+    if (score === null && c.alias) score = matchScore(c.alias, q);
     let matchedOldNick: string | undefined;
     if (score === null) {
       for (const old of c.oldNicks ?? []) {
@@ -87,6 +93,7 @@ export function rankPlayerMatches(query: string, candidates: readonly Candidate[
     if (prev) {
       if (!prev.sources.includes(c.source)) prev.sources.push(c.source);
       if (prev.mmr === null && typeof c.mmr === "number") prev.mmr = c.mmr;
+      if (!prev.alias && c.alias) prev.alias = c.alias;
       if (score !== null && score < prev.score) {
         prev.score = score;
         prev.matchedOldNick = matchedOldNick;
@@ -98,6 +105,7 @@ export function rankPlayerMatches(query: string, candidates: readonly Candidate[
     byId.set(c.id, {
       nick: c.nick,
       id: c.id,
+      alias: c.alias,
       mmr: typeof c.mmr === "number" ? c.mmr : null,
       sources: [c.source],
       matchedOldNick,
@@ -122,6 +130,7 @@ export function candidatesFromNotes(notes: NotesMap): Candidate[] {
       id,
       source: "note",
       oldNicks: Array.isArray(rec.nicks) ? rec.nicks.filter((n) => typeof n === "string") : [],
+      alias: normalizeAlias(rec.alias),
     });
   }
   return out;
@@ -247,7 +256,7 @@ function hitRow(h: SearchHit): HTMLElement {
   row.rel = "noopener noreferrer";
   const left = document.createElement("span");
   const nick = document.createElement("b");
-  nick.textContent = h.nick;
+  nick.textContent = nickWithAlias(h.nick, h.alias);
   left.appendChild(nick);
   const hint = document.createElement("span");
   hint.className = "hint";

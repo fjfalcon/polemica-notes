@@ -33,8 +33,15 @@ import { log } from "@core/log";
 import { escapeHtml } from "@core/escape";
 import { onDomChange } from "@core/dom";
 import { SITE } from "@core/selectors";
-import { loadNotes, buildNickColorIndex, nickColorFrom } from "@core/notes-store";
-import type { NickColorIndex } from "@core/notes-store";
+import {
+  loadNotes,
+  aliasFrom,
+  buildAliasIndex,
+  buildNickColorIndex,
+  nickColorFrom,
+  nickWithAlias,
+} from "@core/notes-store";
+import type { AliasIndex, NickColorIndex } from "@core/notes-store";
 import { setAutoAcceptSuppressed, registerPeekAbort } from "../auto-accept-gate";
 import type { Feature, FeatureContext } from "@core/feature";
 import type { Settings } from "@shared/types";
@@ -491,16 +498,25 @@ export function peekOnce(creds: Credentials, mode: string): Promise<Record<strin
  *   это просто публичный счётчик, а НЕ признак отсутствия Pro; путать эти
  *   два случая нельзя, иначе панель врёт про подписку.
  */
+/** Что панель берёт из заметок: цвета ников и свои ники. */
+interface NoteIndexes {
+  /** null — фича цветов выключена: панель рисуется без покраски. */
+  colors: NickColorIndex | null;
+  aliases: AliasIndex;
+}
+
 /**
- * Цвета ников из заметок (общее хранилище с player-notes). null — фича
- * цветов выключена или чтение упало; панель тогда рисуется без покраски.
+ * Цвета и свои ники из заметок (общее хранилище с player-notes) — одним
+ * чтением. null — чтение упало; панель тогда рисуется голыми никами.
  */
-async function loadNickColors(): Promise<NickColorIndex | null> {
-  if (settings?.nick_colors_enabled === false) return null;
+async function loadNoteIndexes(): Promise<NoteIndexes | null> {
   try {
     const { notes, loadFailed } = await loadNotes();
     if (loadFailed) return null;
-    return buildNickColorIndex(notes);
+    return {
+      colors: settings?.nick_colors_enabled === false ? null : buildNickColorIndex(notes),
+      aliases: buildAliasIndex(notes),
+    };
   } catch {
     return null;
   }
@@ -521,8 +537,9 @@ function renderPanel(
   note?: string,
   exited = false,
   peeked = false,
-  colors: NickColorIndex | null = null,
+  indexes: NoteIndexes | null = null,
 ): void {
+  const colors = indexes?.colors ?? null;
   panel?.remove();
   panel = document.createElement("div");
   panel.style.cssText = `
@@ -546,7 +563,8 @@ function renderPanel(
       if (players.length === 0) return `<div style="margin:8px 0"><b>${title}</b>: пусто</div>`;
       const list = players
         .map((p) => {
-          const raw = String(p.username || p.id || "?");
+          const alias = indexes ? aliasFrom(indexes.aliases, p.id, p.username) : "";
+          const raw = p.username ? nickWithAlias(p.username, alias) : String(p.id || "?");
           const color = colors ? nickColorFrom(colors, p.id, p.username) : "";
           const style = nickColorStyle(color);
           const name = style
@@ -716,7 +734,7 @@ async function runPeek(auto = false): Promise<void> {
       setAutoAcceptSuppressed(true);
       try {
         const queues = await peekOnce(creds, mode);
-        renderPanel(queues, undefined, true, true, await loadNickColors());
+        renderPanel(queues, undefined, true, true, await loadNoteIndexes());
         log.info(SCOPE, "снимок очередей получен через", mode);
         return;
       } catch (e) {

@@ -11,7 +11,7 @@
  * а не подстановкой в innerHTML.
  */
 import { log } from "@core/log";
-import { idKey, isIdKey, MAX_OWN_NOTE_TEXT } from "@core/notes-store";
+import { idKey, isIdKey, MAX_OWN_NOTE_TEXT, nickWithAlias } from "@core/notes-store";
 import { redactNick } from "@shared/redact";
 import { TAG_PRESETS } from "./tag-palette";
 import type { ModalPort } from "./modal-port";
@@ -226,7 +226,7 @@ export function openNickColorManager(port: ModalPort): void {
       const who = document.createElement("div");
       who.style.cssText = "flex:1 1 auto;min-width:0;";
       const nick = document.createElement("div");
-      nick.textContent = entry.nick;
+      nick.textContent = nickWithAlias(entry.nick, entry.alias);
       nick.style.cssText =
         "color:#fff;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
       who.appendChild(nick);

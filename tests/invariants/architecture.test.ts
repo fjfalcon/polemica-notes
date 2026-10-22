@@ -640,6 +640,11 @@ describe("settings, release and manifest consistency", () => {
         "player__info",
         "player__botleftmenu",
         "player",
+        // Свой ник в игре (22.10.2026): узел ника и варианты плитки, по
+        // которым комната задаёт размер шрифта ника.
+        "info__name",
+        "desktop-version",
+        "mobile-version",
         // НАША разметка с общими именами: внутри .player-stats / .pn-tooltip.
         "player-icons",
         "mmr",

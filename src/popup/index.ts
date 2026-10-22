@@ -1493,6 +1493,7 @@ document.addEventListener("DOMContentLoaded", () => {
     set("stream_lost_icon_enabled", items.stream_lost_icon_enabled);
     set("player_mute_enabled", items.player_mute_enabled);
     set("nick_colors_enabled", items.nick_colors_enabled);
+    set("nick_alias_in_game", items.nick_alias_in_game);
     const nfw = $<HTMLSelectElement>("note_frame_width");
     if (nfw) {
       // Нормализация: импорт бэкапа проверяет только typeof, и мусорная
@@ -1645,6 +1646,7 @@ document.addEventListener("DOMContentLoaded", () => {
       stream_lost_icon_enabled: cb("stream_lost_icon_enabled", true),
       player_mute_enabled: cb("player_mute_enabled", true),
       nick_colors_enabled: cb("nick_colors_enabled", true),
+      nick_alias_in_game: cb("nick_alias_in_game", true),
       note_frame_width: noteFrameWidthValue(),
       btn_stats_enabled: cb("btn_stats_enabled", true),
       btn_note_enabled: cb("btn_note_enabled", true),
@@ -1856,6 +1858,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "stream_lost_icon_enabled",
     "player_mute_enabled",
     "nick_colors_enabled",
+    "nick_alias_in_game",
     "note_frame_width",
     "btn_stats_enabled",
     "btn_note_enabled",

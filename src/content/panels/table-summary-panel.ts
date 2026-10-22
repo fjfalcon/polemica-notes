@@ -17,6 +17,15 @@ import { SITE } from "@core/selectors";
 import { setSettings } from "@core/settings";
 import { fetchActiveGames, fetchRoleBreakdown, findRatingPlayer } from "@core/polemica-api";
 import { rememberSeenPlayers } from "@core/seen-players";
+import { browser } from "@core/env";
+import {
+  NOTES_KEY,
+  aliasFrom,
+  buildAliasIndex,
+  loadNotes,
+  nickWithAlias,
+  type AliasIndex,
+} from "@core/notes-store";
 import { isGameRoomPath } from "@shared/routes";
 import {
   SORT_MODES,
@@ -163,10 +172,12 @@ function buildRow(labels: string[], head: boolean): HTMLElement {
 }
 
 function nickCell(r: SummaryRow): HTMLElement {
-  if (!r.id) return cell(r.nick, "pn-ts-nick");
+  // Свой ник из заметки — «Ник (свой)», как в остальных списках.
+  const label = nickWithAlias(r.nick, aliases ? aliasFrom(aliases, r.id, r.nick) : "");
+  if (!r.id) return cell(label, "pn-ts-nick");
   const a = document.createElement("a");
   a.className = "pn-ts-nick";
-  a.textContent = r.nick;
+  a.textContent = label;
   a.href = `https://polemicagame.com/profile/${encodeURIComponent(r.id)}`;
   a.target = "_blank";
   a.rel = "noopener noreferrer";
@@ -198,6 +209,27 @@ let sortMode: SortMode = "seat";
 /** Поколение резолва: поздний ответ старого состава не красит новый. */
 let generation = 0;
 let active = false;
+/** Свои ники из заметок; null — ещё не прочитаны или чтение упало (тогда голые ники). */
+let aliases: AliasIndex | null = null;
+/** Поколение включения для чтения своих ников (generation растёт и при смене стола). */
+let aliasGen = 0;
+
+async function loadAliases(): Promise<void> {
+  const gen = aliasGen;
+  try {
+    const { notes, loadFailed } = await loadNotes();
+    if (!active || gen !== aliasGen || loadFailed) return;
+    aliases = buildAliasIndex(notes);
+    rerender();
+  } catch {
+    /* без своих ников окно всё равно полезно */
+  }
+}
+
+/** Правка заметки (в этой или другой вкладке) — свои ники перечитываются. */
+function onStorageChanged(changes: Record<string, unknown>, area: string): void {
+  if (area === "local" && NOTES_KEY in changes) void loadAliases();
+}
 
 function rerender(): void {
   panel?.render(rows);
@@ -351,6 +383,8 @@ export const tableSummaryFeature: Feature = {
     active = true;
     sortMode = loadSortPref();
     lastSignature = "";
+    browser.storage.onChanged.addListener(onStorageChanged);
+    void loadAliases();
     tick();
     offDom = onDomChange(() => {
       if (tickTimer) return;
@@ -364,6 +398,9 @@ export const tableSummaryFeature: Feature = {
   disable() {
     active = false;
     generation++;
+    browser.storage.onChanged.removeListener(onStorageChanged);
+    aliasGen++;
+    aliases = null;
     offDom?.();
     offDom = null;
     if (tickTimer) {

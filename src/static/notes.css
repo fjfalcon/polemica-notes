@@ -267,3 +267,29 @@
     height: 7.0625rem;
   }
 }
+
+/* Свой ник игрока (nick-alias.ts, 22.10.2026). Текст сайта не меняется —
+   его читают ключ заметки и сторожа; свой ник рисует псевдоэлемент из
+   data-атрибута, и в textContent он не попадает.
+   Замена (плитка в игре): текст сайта схлопнут font-size:0, свой ник —
+   ::before с размерами шрифта ника комнаты (0.875rem, десктоп 1rem,
+   мобильная 0.8125rem — room/bundle/style.css). Многоточие сайта
+   (text-overflow) работает и для псевдоэлемента. */
+.info__name[data-pn-alias] {
+  font-size: 0 !important;
+}
+.info__name[data-pn-alias]::before {
+  content: attr(data-pn-alias);
+  font-size: .875rem;
+}
+.player.desktop-version .info__name[data-pn-alias]::before {
+  font-size: 1rem;
+}
+.player.mobile-version .info__name[data-pn-alias]::before {
+  font-size: .8125rem;
+}
+/* «Ник (свой)»: списки, профиль, таблица разбора. */
+[data-pn-alias-suffix]::after {
+  content: " (" attr(data-pn-alias-suffix) ")";
+  opacity: .75;
+}

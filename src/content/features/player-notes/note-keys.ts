@@ -11,7 +11,7 @@
  * Состояние — только кэш ник-индекса. Записи и резолв id приходят снаружи:
  * модуль не знает ни про настройки, ни про DOM, ни про сеть.
  */
-import { idKey, isIdKey, type NoteRecord, type NotesMap } from "@core/notes-store";
+import { idKey, isIdKey, normalizeAlias, type NoteRecord, type NotesMap } from "@core/notes-store";
 import { validPlayerId } from "@shared/player-id";
 
 export interface NoteKeyContext {
@@ -110,6 +110,12 @@ export class NoteKeys {
   tag(username: string): string {
     const note = this.get(username);
     return note && typeof note !== "string" ? note.tag || "" : "";
+  }
+
+  /** Свой ник игрока (очищенный на чтении — запись могла прийти из старого хранилища). */
+  alias(username: string): string {
+    const note = this.get(username);
+    return note && typeof note !== "string" ? normalizeAlias(note.alias) ?? "" : "";
   }
 
   /** Сохранённый цвет ника (без учёта настройки — для диалогов). */

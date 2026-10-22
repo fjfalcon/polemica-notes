@@ -33,7 +33,33 @@ export type NoteRecord = {
    * хвост, чтобы можно было сказать «раньше играл как …».
    */
   nicks?: string[];
+  /**
+   * Свой ник игрока (22.10.2026): как ты его называешь. В игре показывается
+   * вместо ника сайта, в списках, профиле и разборе — «Ник (свой)». Только
+   * отображение: ключом заметки и сверкой игроков никогда не служит.
+   */
+  alias?: string;
 };
+
+/** Длина своего ника: плашка игрока узкая, а это подпись, а не заметка. */
+export const MAX_ALIAS = 32;
+
+/**
+ * Очистить свой ник: строка без управляющих символов и переключателей
+ * направления текста (U+202A–U+202E, U+2066–U+2069 — ими «переворачивают»
+ * соседний текст), пробелы схлопнуты, ≤ MAX_ALIAS. Пустой — undefined.
+ * Значение приходит и из чужого бэкапа, поэтому чистим на любом входе.
+ */
+export function normalizeAlias(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const clean = value
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Обрезка по кодовым точкам, а не UTF-16: эмодзи не рвётся пополам.
+  const cut = Array.from(clean).slice(0, MAX_ALIAS).join("").trim();
+  return cut || undefined;
+}
 
 /** Сколько прежних ников помним. Хвост нужен для узнавания, а не для архива. */
 export const MAX_NICK_HISTORY = 5;
@@ -167,6 +193,50 @@ export function buildNickColorIndex(notes: NotesMap): NickColorIndex {
   return { byId, byNick };
 }
 
+/**
+ * Индекс своих ников — того же устройства, что индекс цветов: для списков,
+ * где игроки приходят с id или ником (очередь, «Участники», «Сводка стола»).
+ */
+export interface AliasIndex {
+  byId: Map<string, string>;
+  byNick: Map<string, string>;
+}
+
+export function buildAliasIndex(notes: NotesMap): AliasIndex {
+  const byId = new Map<string, string>();
+  const byNick = new Map<string, string>();
+  for (const [rawKey, rec] of Object.entries(notes)) {
+    if (!rec || typeof rec === "string") continue;
+    // Записи из старого хранилища могли обойти нормализацию — чистим на чтении.
+    const alias = normalizeAlias(rec.alias);
+    if (!alias) continue;
+    const key = canonicalNoteKey(rawKey);
+    if (isIdKey(key)) {
+      byId.set(key.slice(ID_KEY_PREFIX.length), alias);
+      if (typeof rec.nick === "string" && rec.nick) byNick.set(rec.nick.toLowerCase(), alias);
+    } else {
+      byNick.set(key.toLowerCase(), alias);
+    }
+  }
+  return { byId, byNick };
+}
+
+/** Свой ник по id (приоритет) или нику; пустая строка — не задан. */
+export function aliasFrom(index: AliasIndex, id?: number | string | null, nick?: string | null): string {
+  if (id !== undefined && id !== null && id !== "") {
+    const a = index.byId.get(String(id));
+    if (a) return a;
+  }
+  if (nick) return index.byNick.get(nick.toLowerCase()) ?? "";
+  return "";
+}
+
+/** «Ник (свой)» для списков; свой не задан или совпал с ником — просто ник. */
+export function nickWithAlias(nick: string, alias: string | undefined): string {
+  if (!alias || alias.toLowerCase() === nick.toLowerCase()) return nick;
+  return `${nick} (${alias})`;
+}
+
 /** Цвет игрока по id (приоритет) или нику; пустая строка — цвета нет. */
 export function nickColorFrom(
   index: NickColorIndex,
@@ -239,6 +309,8 @@ export function normalizeNoteRecord(raw: unknown, maxText = MAX_NOTE_TEXT): Note
   if (isSafeTag(r.tag)) rec.tag = r.tag;
   if (isSafeTag(r.nickColor)) rec.nickColor = r.nickColor;
   if (typeof r.nick === "string" && r.nick) rec.nick = r.nick.slice(0, MAX_NOTE_KEY);
+  const alias = normalizeAlias(r.alias);
+  if (alias) rec.alias = alias;
   if (Array.isArray(r.nicks)) {
     const nicks = r.nicks
       .filter((n): n is string => typeof n === "string" && n.length > 0)
@@ -376,6 +448,7 @@ export function mergeNickKeysIntoId(
     // Цвет и метка наследуются безусловно: непустое побеждает пустое.
     if (!winner.tag && loser.tag) winner.tag = loser.tag;
     if (!winner.nickColor && loser.nickColor) winner.nickColor = loser.nickColor;
+    if (!winner.alias && loser.alias) winner.alias = loser.alias;
   }
 
   return { key, nickKeys, record: { ...winner, ...withNickHistory(winner, username) } };
@@ -389,6 +462,7 @@ function combineNotes(a: NoteRecord | string, b: NoteRecord | string): NoteRecor
   if (!out.text && l.text) out.text = l.text;
   if (!out.tag && l.tag) out.tag = l.tag;
   if (!out.nickColor && l.nickColor) out.nickColor = l.nickColor;
+  if (!out.alias && l.alias) out.alias = l.alias;
   if (!out.nick && l.nick) out.nick = l.nick;
   // Историю ников СЛИВАЕМ, а не выбираем: на двух устройствах игрок мог
   // застать разные переименования, и «победа свежего» теряла бы половину.
@@ -413,6 +487,7 @@ function sameNote(a: NoteRecord | string, b: NoteRecord | string): boolean {
     Object.is(x.timestamp, y.timestamp) &&
     Object.is(x.tag, y.tag) &&
     Object.is(x.nickColor, y.nickColor) &&
+    Object.is(x.alias, y.alias) &&
     Object.is(x.nick, y.nick) &&
     (x.nicks ?? []).join("\u0000") === (y.nicks ?? []).join("\u0000") &&
     Object.is(x.version, y.version)

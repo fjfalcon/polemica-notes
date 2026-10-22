@@ -63,6 +63,7 @@ import {
 } from "./player-notes/tile-media-state";
 import type { ModalPort } from "./player-notes/modal-port";
 import { openNickColorManager } from "./player-notes/nick-color-manager";
+import { AliasResolver, applyMatchAliases, clearAllAliases, setNickAlias, sweepStaleAliases } from "./player-notes/nick-alias";
 import { showNoteModal } from "./player-notes/note-modal";
 import { NotesModel } from "./player-notes/notes-model";
 import { TAG_PRESETS } from "./player-notes/tag-palette";
@@ -839,6 +840,7 @@ class PlayerNotesManager {
 
     // Цвет ника (учитывает nick_colors_enabled и приоритет id-записи).
     paintNickEl(nickEl, this.colorForPlayer(id, nick), nick);
+    setNickAlias(nickEl, this.aliases.aliasFor(id, nick), nick, "suffix");
 
     // Рамка метки вокруг аватара.
     const avatar = document.querySelector<HTMLElement>(SITE.profileAvatarImg);
@@ -915,6 +917,9 @@ class PlayerNotesManager {
   private applyNickColor(container: HTMLElement, username: string): void {
     const el = container.querySelector<HTMLElement>(SITE.playerName);
     if (el) paintNickEl(el, this.getNickColor(username), username);
+    // Свой ник в игре — вместо ника сайта (стример может выключить на эфир).
+    const alias = this.settings.nick_alias_in_game === false ? "" : this.model.keys.alias(username);
+    if (el) setNickAlias(el, alias, username, "replace");
   }
 
   /**
@@ -937,6 +942,7 @@ class PlayerNotesManager {
       const nick = el.textContent?.trim() || "";
       if (nick && owner !== nick) paintNickEl(el, "");
     });
+    sweepStaleAliases();
   }
 
   /**
@@ -954,6 +960,7 @@ class PlayerNotesManager {
 
   /** Кэш индекса цветов (byId/byNick), TTL 1с — см. комментарий idKeyByNick. */
   private colorIndexCache: { at: number; index: NickColorIndex } | null = null;
+  private aliases = new AliasResolver(() => this.model.notes);
 
   private colorIndex(): NickColorIndex {
     const now = Date.now();
@@ -982,6 +989,7 @@ class PlayerNotesManager {
       const id = (item.getAttribute("href") || "").match(/\/profile\/(\d+)/)?.[1];
       const nick = el.textContent?.trim();
       paintNickEl(el, this.colorForPlayer(id, nick), nick || undefined);
+      if (nick) setNickAlias(el, this.aliases.aliasFor(id, nick), nick, "suffix");
     });
   }
 
@@ -1087,6 +1095,7 @@ class PlayerNotesManager {
   }
 
   private refreshNickColors(): void {
+    this.aliases.reset(); // правка в диалоге видна сразу, а не через TTL индекса
     document
       .querySelectorAll<HTMLElement>(`.${OWN.playerIcons} > [data-username]`)
       .forEach((btn) => {
@@ -2036,6 +2045,7 @@ class PlayerNotesManager {
       this.applyParticipantColors();
       // Страница профиля — тоже отдельно (плиток .player там нет).
       this.ensureProfileNoteUI();
+      applyMatchAliases((nick) => this.model.keys.alias(nick));
       // Проход прошёл целиком: если до этого он падал — говорим, что
       // починилось. Иначе в файле остаётся только «сломалось».
       if (this.passFailed) {
@@ -2254,6 +2264,7 @@ class PlayerNotesManager {
     document
       .querySelectorAll<HTMLElement>("[data-pn-nick-color]")
       .forEach((el) => paintNickEl(el, ""));
+    clearAllAliases();
     document.querySelectorAll(`.${OWN.playerIcons}`).forEach((group) => {
       if (!group.children.length) group.remove();
     });

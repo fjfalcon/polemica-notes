@@ -490,7 +490,8 @@ export class NotesModel {
         this.map[key] = { text: prev, timestamp: Date.now(), version: VERSION, nickColor: color };
       } else {
         const next: NoteRecord = { ...prev, timestamp: Date.now(), nickColor: color || undefined };
-        if (!color && !next.text && !next.tag) delete this.map[key];
+        // Свой ник — тоже содержимое: запись с ним одним не удаляется.
+        if (!color && !next.text && !next.tag && !next.alias) delete this.map[key];
         else this.map[key] = next;
       }
       if (!(await this.saveNotes([key]))) {
@@ -542,7 +543,7 @@ export class NotesModel {
       const base: NoteRecord =
         typeof prev === "string" ? { text: prev, timestamp: Date.now(), version: VERSION } : prev;
       const next: NoteRecord = { ...base, text, timestamp: Date.now(), version: VERSION };
-      if (!text && !next.tag && !next.nickColor) delete this.map[key];
+      if (!text && !next.tag && !next.nickColor && !next.alias) delete this.map[key];
       else this.map[key] = next;
 
       if (!(await this.saveNotes([key]))) {
@@ -584,9 +585,10 @@ export class NotesModel {
     id: string;
     color: string;
     text: string;
+    alias: string;
   }> {
     return Object.entries(this.map)
-      .filter(([, rec]) => (typeof rec === "string" ? !!rec : !!(rec.nickColor || rec.text)))
+      .filter(([, rec]) => (typeof rec === "string" ? !!rec : !!(rec.nickColor || rec.text || rec.alias)))
       .map(([key, rec]) => ({
         key,
         nick:
@@ -595,6 +597,7 @@ export class NotesModel {
         id: isIdKey(key) ? key.slice(ID_KEY_PREFIX.length) : "",
         color: typeof rec === "string" ? "" : rec.nickColor || "",
         text: typeof rec === "string" ? rec : rec.text || "",
+        alias: typeof rec === "string" ? "" : rec.alias || "",
       }))
       .sort((a, b) => a.nick.localeCompare(b.nick, "ru"));
   }

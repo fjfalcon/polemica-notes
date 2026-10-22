@@ -1094,3 +1094,43 @@ describe("stale MMR in the stats tooltip", () => {
     expect(html).not.toContain("устар.");
   });
 });
+
+describe("свой ник на плитке (22.10.2026)", () => {
+  const mountTile = () => {
+    document.body.innerHTML = `
+      <div class="players"><div class="player desktop-version" id="p1"><div class="player__botleftmenu">
+        <div class="player__info info"><div class="player-number player-0">1</div>
+        <span class="info__name">fj</span></div></div></div></div>`;
+    return document.querySelector("#p1") as HTMLElement;
+  };
+  const reEnable = async (settings: Record<string, unknown>) => {
+    playerNotesFeature.disable();
+    browserMock.storage.local.get.mockImplementation((async () => ({
+      playerNotes: { fj: { text: "", timestamp: 1, alias: "Паша" } },
+      notes_migrated_to_local: true,
+    })) as never);
+    await playerNotesFeature.enable({ settings: { ...ctx.settings, ...settings } as unknown as Settings });
+    await vi.advanceTimersByTimeAsync(0);
+  };
+
+  afterEach(() => {
+    browserMock.storage.local.get.mockImplementation((async () => ({})) as never);
+  });
+
+  test("в игре — свой ник атрибутом, ник сайта в узле нетронут", async () => {
+    await reEnable({});
+    const tile = mountTile();
+    fire([rec({ target: document.body, added: [tile] })]);
+    const name = document.querySelector<HTMLElement>(".info__name")!;
+    expect(name.getAttribute("data-pn-alias")).toBe("Паша");
+    expect(name.textContent, "по тексту ищется заметка — менять нельзя").toBe("fj");
+    expect(name.title).toBe("fj");
+  });
+
+  test("тумблер «Свои ники в игре» выключен — в игре ник сайта", async () => {
+    await reEnable({ nick_alias_in_game: false });
+    const tile = mountTile();
+    fire([rec({ target: document.body, added: [tile] })]);
+    expect(document.querySelector(".info__name")!.hasAttribute("data-pn-alias")).toBe(false);
+  });
+});
