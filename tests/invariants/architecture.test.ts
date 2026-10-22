@@ -645,6 +645,9 @@ describe("settings, release and manifest consistency", () => {
         "info__name",
         "desktop-version",
         "mobile-version",
+        // «Участники» поиска: свой ник одной строкой (22.10.2026).
+        "participants-item",
+        "participants-name",
         // НАША разметка с общими именами: внутри .player-stats / .pn-tooltip.
         "player-icons",
         "mmr",

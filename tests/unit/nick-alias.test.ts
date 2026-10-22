@@ -161,6 +161,22 @@ describe("отрисовка: текст сайта не меняется", () =
     expect(el2.hasAttribute(ALIAS_ATTR)).toBe(false);
   });
 
+  test("суффикс: «Ник (свой)» целиком — в title (в «Участниках» строка обрезается многоточием)", () => {
+    const el = tile("The Gentleman");
+    setNickAlias(el, "Фриказоид", "The Gentleman", "suffix");
+    expect(el.title).toBe("The Gentleman (Фриказоид)");
+    setNickAlias(el, "", "The Gentleman", "suffix");
+    expect(el.hasAttribute("title")).toBe(false);
+  });
+
+  test("CSS: свой ник в «Участниках» держится одной строкой, колонка ника сжимается", async () => {
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync("src/static/notes.css", "utf8");
+    expect(css).toMatch(/\.participants-name > span\[data-pn-alias-suffix\]\s*\{[^}]*white-space:\s*nowrap/);
+    expect(css).toMatch(/\.participants-name > span\[data-pn-alias-suffix\]\s*\{[^}]*text-overflow:\s*ellipsis/);
+    expect(css).toMatch(/\.participants-item:has\([^)]*data-pn-alias-suffix[^)]*\)\s*\{[^}]*minmax\(0,\s*1fr\)/);
+  });
+
   test("суффикс для списков; совпавший с ником свой ник не показывается", () => {
     const el = tile("Igolka");
     setNickAlias(el, "Игорь", "Igolka", "suffix");

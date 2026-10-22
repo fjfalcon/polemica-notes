@@ -294,3 +294,21 @@
   content: " (" attr(data-pn-alias-suffix) ")";
   opacity: .75;
 }
+
+/* «Участники»: ник со своим ником — одной строкой, как без него. Перенос
+   на вторую строку делал блок текста выше аватара (выглядело как «ники
+   съехали вверх»), а значки подписки/Twitch уезжали к краю (жалоба
+   22.10.2026). Не влезающее — многоточие; целиком — в title. Колонка ника
+   сайта (auto) иначе растёт по тексту и не даёт сжаться. */
+.participants-item:has(.participants-name > span[data-pn-alias-suffix]) {
+  grid-template-columns: 2.375rem minmax(0, 1fr);
+}
+.participants-name:has(> span[data-pn-alias-suffix]) {
+  min-width: 0;
+}
+.participants-name > span[data-pn-alias-suffix] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -48,10 +48,11 @@ export function setNickAlias(el: HTMLElement, alias: string, owner: string, mode
   setAttr(el, ALIAS_ATTR, show && mode === "replace" ? alias : null);
   setAttr(el, ALIAS_SUFFIX_ATTR, show && mode === "suffix" ? alias : null);
   setAttr(el, ALIAS_FOR_ATTR, show ? owner : null);
-  // В режиме замены настоящий ник — по наведению.
-  if (show && mode === "replace") {
+  // По наведению: в замене — настоящий ник; в суффиксе — «Ник (свой)»
+  // целиком (в списках он обрезается многоточием, чтобы не переносить строку).
+  if (show) {
     if (!el.hasAttribute("title") || el.hasAttribute(ALIAS_TITLE_ATTR)) {
-      setAttr(el, "title", owner);
+      setAttr(el, "title", mode === "replace" ? owner : `${owner} (${alias})`);
       setAttr(el, ALIAS_TITLE_ATTR, "1");
     }
   } else if (el.hasAttribute(ALIAS_TITLE_ATTR)) {
