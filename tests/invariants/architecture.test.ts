@@ -943,6 +943,13 @@ describe("§4.7 lifecycle heuristic", () => {
         "error-обработчик висит на <img> внутри нашего .pn-profile-photo и умирает вместе с узлом " +
         "(removePhoto в disable и при смене фото) (22.10.2026)",
     },
+    "src/content/features/search-card-avatar.ts": {
+      listeners: 1,
+      timers: 0,
+      reason:
+        "error-обработчик висит на <img> внутри нашего .pn-search-avatar и умирает вместе с узлом " +
+        "(removeAvatar в disable и при смене картинки) (22.10.2026)",
+    },
     "src/content/features/connection-diag.ts": {
       listeners: 1,
       timers: 1,

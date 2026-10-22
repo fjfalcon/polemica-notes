@@ -136,6 +136,14 @@ export const SITE = {
    * `.avatarlvl__info`, перед которым profile-photo ставит фото.
    */
   profileLevelCard: ".avatarlvl__container",
+  /**
+   * Карточка профиля на странице поиска: ряд «картинка | ник, уровень, MMR».
+   * До Ready Player Me первым в нём стоял `.p-play__profile-avatar` —
+   * search-card-avatar ставит туда свою картинку.
+   */
+  searchProfileMain: ".p-play__profile-main",
+  /** Аватар в шапке сайта — это сам пользователь (`getUserAvatarUrl(user.avatar,"100x")`). */
+  headerAvatarImg: "img.p-header__userCont-user-avatar",
   /** Список участников (лобби/итоги): строка, ник и аватар внутри неё. */
   participantsItem: ".participants-item",
   participantsName: ".participants-name",

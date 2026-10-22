@@ -261,6 +261,9 @@
             <div class="row"><span>Аватарки в списке «Участники»<span class="hint">сайт показывает всем ищущим одну заглушку — расширение подставляет настоящие фото игроков. Видно только вам</span></span>
                 <label class="switch"><input type="checkbox" id="search_avatars_enabled" checked><span class="slider"></span></label>
             </div>
+            <div class="row"><span>Картинка в карточке поиска<span class="hint">слева от ника, где раньше стоял 3D-аватар. Что именно показывать — «Стата» → «Моя картинка». Видно только вам</span></span>
+                <label class="switch"><input type="checkbox" id="search_card_avatar_enabled" checked><span class="slider"></span></label>
+            </div>
             <div class="row"><span>Кнопка «Кто в очереди»<span class="hint">на странице поиска: на секунду заходит в самую пустую очередь, показывает состав и выходит. Нужна Pro-подписка, иначе только счётчики</span></span>
                 <label class="switch"><input type="checkbox" id="queue_peek_enabled"><span class="slider"></span></label>
             </div>
@@ -440,6 +443,19 @@
             </div>
             <div class="row"><span>Большое фото в профиле<span class="hint">фото игрока в левой карточке профиля, над уровнем и MMR — там, где раньше стоял 3D-аватар. Видно только вам</span></span>
                 <label class="switch"><input type="checkbox" id="profile_photo_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>Моя картинка<span class="hint">что показывать в карточке на странице поиска и большим фото своего профиля. Видно только вам</span></span>
+                <select id="own_avatar_source" class="sel">
+                    <option value="site">Фото с сайта</option>
+                    <option value="custom">Своя картинка</option>
+                </select>
+            </div>
+            <div class="row" style="gap:10px">
+                <img id="own_avatar_preview" alt="" hidden style="width:42px;height:42px;object-fit:cover;border-radius:8px;border:1px solid var(--border)">
+                <span id="own_avatar_empty" style="flex:1;color:var(--muted);font-size:11px">Своя картинка не выбрана — показывается фото с сайта</span>
+                <span style="flex:1"></span>
+                <button id="own_avatar_clear" class="btn" type="button" hidden style="flex:0 0 auto">Убрать</button>
+                <button id="own_avatar_pick" class="btn btn-primary" type="button" style="flex:0 0 auto">Выбрать…</button>
             </div>
             <div class="row"><span>Показывать MMR</span>
                 <label class="switch"><input type="checkbox" id="show_mmr" checked><span class="slider"></span></label>

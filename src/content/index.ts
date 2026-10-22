@@ -49,6 +49,7 @@ import { profileCrossoverFeature, profileIdFromPath, syncProfileCrossoverRoute }
 import { profileMmrChartFeature, syncProfileMmrRoute } from "./features/profile-mmr-chart";
 import { profilePhotoFeature } from "./features/profile-photo";
 import { searchAvatarsFeature } from "./features/search-avatars";
+import { searchCardAvatarFeature } from "./features/search-card-avatar";
 import { obsRecordFeature, syncObsRecordRoute } from "./features/obs-record";
 import { obsClipFeature } from "./features/obs-clip";
 import { contractWatchFeature, syncContractWatchRoute } from "./features/contract-watch";
@@ -92,6 +93,7 @@ const manager = new FeatureManager().register(
   profileMmrChartFeature,
   profilePhotoFeature,
   searchAvatarsFeature,
+  searchCardAvatarFeature,
   obsRecordFeature,
   obsClipFeature,
   contractWatchFeature,

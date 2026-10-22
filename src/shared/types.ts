@@ -24,6 +24,14 @@ export interface Settings {
   profile_photo_enabled: boolean;
   /** Настоящие аватарки в списке «Участники» страницы поиска. */
   search_avatars_enabled: boolean;
+  /** Картинка в карточке профиля на странице поиска (на месте 3D-аватара). */
+  search_card_avatar_enabled: boolean;
+  /**
+   * Чья картинка «моя»: "site" — фото с сайта, "custom" — своя картинка
+   * (pn_own_avatar в storage.local). Действует в карточке поиска и большим
+   * фото СВОЕГО профиля.
+   */
+  own_avatar_source: string;
   /** Автозапись игр в OBS: вход в комнату — StartRecord, выход — StopRecord. */
   obs_auto_record_enabled: boolean;
   /** «Клип момента»: SaveReplayBuffer по клавише/кнопке. */

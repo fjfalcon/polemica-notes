@@ -26,6 +26,14 @@ vi.mock("@core/dom", () => ({
     };
   }),
 }));
+vi.mock("@core/env", () => ({
+  browser: {
+    storage: {
+      local: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}), remove: vi.fn(async () => {}) },
+      onChanged: { addListener: vi.fn(), removeListener: vi.fn() },
+    },
+  },
+}));
 vi.mock("@core/log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));

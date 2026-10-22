@@ -30,6 +30,7 @@ import { formatKeyCode, isModifierCode } from "@core/keyboard";
 // Список углов — общий с content-скриптом (см. shared/nick-plate).
 import { PLATE_POSITIONS } from "@shared/nick-plate";
 import { setupPlayerSearch } from "./player-search";
+import { setupOwnAvatarSection } from "./own-avatar-section";
 import {
   DEFAULT_PROTOCOL_EMOJI,
   PROTOCOL_EMOJI_PALETTE,
@@ -134,6 +135,7 @@ const SCOPE = "popup";
 document.addEventListener("DOMContentLoaded", () => {
   installErrorCapture("popup");
   setupPlayerSearch();
+  setupOwnAvatarSection();
 
   // Онбординг: попап открыт — настройки найдены. Снимаем точку с иконки и
   // больше никогда не навязываем страницу-приветствие (см. background,
@@ -1541,6 +1543,9 @@ document.addEventListener("DOMContentLoaded", () => {
     set("profile_mmr_chart_enabled", items.profile_mmr_chart_enabled);
     set("profile_photo_enabled", items.profile_photo_enabled);
     set("search_avatars_enabled", items.search_avatars_enabled);
+    set("search_card_avatar_enabled", items.search_card_avatar_enabled);
+    const avatarSource = $<HTMLSelectElement>("own_avatar_source");
+    if (avatarSource) avatarSource.value = items.own_avatar_source === "custom" ? "custom" : "site";
     const clipMin = $<HTMLSelectElement>("obs_clip_minutes");
     if (clipMin) clipMin.value = String(items.obs_clip_minutes || 1);
     set("hotkey_hints_enabled", items.hotkey_hints_enabled);
@@ -1700,6 +1705,9 @@ document.addEventListener("DOMContentLoaded", () => {
       profile_mmr_chart_enabled: cb("profile_mmr_chart_enabled", true),
       profile_photo_enabled: cb("profile_photo_enabled", true),
       search_avatars_enabled: cb("search_avatars_enabled", true),
+      search_card_avatar_enabled: cb("search_card_avatar_enabled", true),
+      own_avatar_source:
+        $<HTMLSelectElement>("own_avatar_source")?.value === "custom" ? "custom" : "site",
       match_page_stats_enabled: cb("match_page_stats_enabled", true),
       match_stats_view: $<HTMLSelectElement>("match_stats_view")?.value || "hints",
       stats_button_theme: ($<HTMLSelectElement>("stats_button_theme")?.value || "default"),
@@ -1830,6 +1838,8 @@ document.addEventListener("DOMContentLoaded", () => {
     "profile_mmr_chart_enabled",
     "profile_photo_enabled",
     "search_avatars_enabled",
+    "search_card_avatar_enabled",
+    "own_avatar_source",
     "obs_auto_record_enabled",
     "obs_clip_enabled",
     "obs_clip_minutes",

@@ -33,6 +33,8 @@ export const DEFAULT_SETTINGS: Settings = {
   // Внешний вид без действий за игрока — включены (22.10.2026).
   profile_photo_enabled: true,
   search_avatars_enabled: true,
+  search_card_avatar_enabled: true,
+  own_avatar_source: "site",
   obs_auto_record_enabled: false,
   obs_clip_enabled: false,
   obs_clip_hotkey_code: "F9",

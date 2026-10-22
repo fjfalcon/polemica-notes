@@ -99,6 +99,7 @@ import { tableSummaryFeature } from "@content/panels/table-summary-panel";
 import { micSyncFeature } from "@content/features/mic-sync";
 import { profilePhotoFeature } from "@content/features/profile-photo";
 import { searchAvatarsFeature } from "@content/features/search-avatars";
+import { searchCardAvatarFeature } from "@content/features/search-card-avatar";
 import type { FeatureContext } from "@core/feature";
 
 const ROUND_MS = 600;
@@ -164,6 +165,7 @@ afterEach(() => {
   micSyncFeature.disable();
   profilePhotoFeature.disable();
   searchAvatarsFeature.disable();
+  searchCardAvatarFeature.disable();
   syncProfileCrossoverRoute(null);
   syncProfileMmrRoute(null);
   vi.useRealTimers();
@@ -430,6 +432,26 @@ describe("§4 fixpoint: аватарки в «Участниках»", () => {
     const [real, fake] = Array.from(document.querySelectorAll("img.participants-image"));
     expect(real.getAttribute("src")).toContain("file_name=11%2Favatar.webp");
     expect(fake.getAttribute("src")).toBe("/image/user-avatar?size=100x");
+  });
+});
+
+describe("§4 fixpoint: картинка в карточке поиска", () => {
+  test("карточка поиска: фото из шапки встаёт один раз слева от ника, DOM тих", async () => {
+    window.history.replaceState(null, "", "/game-search");
+    document.body.innerHTML =
+      '<img class="p-header__userCont-user-avatar" src="/image/user-avatar?file_name=13509%2Favatar.webp&size=100x">' +
+      '<div class="p-play__profile-content"><div class="p-play__profile-main">' +
+      '<div class="p-play__profile-info"><div class="p-play__profile-name">fj</div></div>' +
+      "</div></div>";
+    const before = domObserver.subscriberCount();
+    searchCardAvatarFeature.enable({ settings: { own_avatar_source: "site" } } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    document.body.appendChild(document.createElement("i"));
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    const nodes = document.querySelectorAll(".pn-search-avatar");
+    expect(nodes.length).toBe(1);
+    expect(document.querySelector(".p-play__profile-main")?.firstElementChild).toBe(nodes[0]);
   });
 });
 

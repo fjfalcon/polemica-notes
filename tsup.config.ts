@@ -13,6 +13,9 @@ export default defineConfig({
     background: "src/background/index.ts",
     content: "src/content/index.ts",
     popup: "src/popup/index.ts",
+    // Страница «Моя картинка»: выбор файла — в отдельной вкладке (Firefox
+    // закрывает попап при открытии окна выбора файла).
+    avatar: "src/avatar/index.ts",
     // PAGE-скрипт диагностики подключения (MAIN world, инжект тегом).
     // Самодостаточен: без импортов core/* (см. шапку файла).
     "conn-diag-page": "src/content/page/conn-diag-page.ts",
