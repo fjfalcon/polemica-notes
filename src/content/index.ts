@@ -47,6 +47,8 @@ import { tableSummaryFeature } from "./panels/table-summary-panel";
 import { micSyncFeature } from "./features/mic-sync";
 import { profileCrossoverFeature, profileIdFromPath, syncProfileCrossoverRoute } from "./features/profile-crossover";
 import { profileMmrChartFeature, syncProfileMmrRoute } from "./features/profile-mmr-chart";
+import { profilePhotoFeature } from "./features/profile-photo";
+import { searchAvatarsFeature } from "./features/search-avatars";
 import { obsRecordFeature, syncObsRecordRoute } from "./features/obs-record";
 import { obsClipFeature } from "./features/obs-clip";
 import { contractWatchFeature, syncContractWatchRoute } from "./features/contract-watch";
@@ -88,6 +90,8 @@ const manager = new FeatureManager().register(
   micSyncFeature,
   profileCrossoverFeature,
   profileMmrChartFeature,
+  profilePhotoFeature,
+  searchAvatarsFeature,
   obsRecordFeature,
   obsClipFeature,
   contractWatchFeature,

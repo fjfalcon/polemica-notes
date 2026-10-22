@@ -178,6 +178,28 @@ export const gameSearchProbes: Record<string, Probe> = {
     /isSearchBtnLoading\?\w+\("div",\{staticClass:"p-play__profile-game p-play__profile-game--search p-play__profile-game-loader-gradient"\}/,
     "isSearchBtnLoading ⇔ лоадер p-play__profile-game-loader-gradient вместо «Играть»",
   ),
+  /**
+   * Строка «Участников»: ссылка, ник и картинка — из ОДНОГО объекта игрока
+   * (search-avatars сверяет ник карточки профиля по id из ссылки с ником той
+   * же строки). Разъедутся — гейт «тот же игрок» перестанет что-то значить.
+   */
+  participantsRowBinding: re(
+    /key:(\w+)\.username\+"_participant",staticClass:"participants-item",attrs:\{href:"\/profile\/"\.concat\(\1\.id\)[\s\S]{0,160}?staticClass:"participants-image",attrs:\{src:\w+\.getUserAvatarUrl\(\1\.avatar_url,"100x"\)[\s\S]{0,80}?UsernameLabel",\{attrs:\{username:\1\.use/,
+    "строка участника: href /profile/{id}, картинка и ник — из одного объекта",
+  ),
+  /** Список очереди живёт в галочке режима — по ней search-avatars отличает его от витрины лобби. */
+  queueParticipantsInModeItem: inWindow(
+    't("label",{staticClass:"p-play__profile-modes-item"',
+    1200,
+    ['staticClass:"p-play__participants"', 'ParticipantsList",{attrs:{participants:'],
+    [],
+    "список «Участники» очереди внутри label.p-play__profile-modes-item",
+  ),
+  /** Адрес аватара: file_name и size — query-параметры /image/user-avatar. */
+  avatarUrlBuilder: re(
+    /\w+\.append\("file_name",\w+\),\w+&&\w+\.append\("size",\w+\),"\/image\/user-avatar\?"\.concat\(/,
+    "getUserAvatarUrl: /image/user-avatar?file_name=…&size=…",
+  ),
   /** Пока userInGame — поиск запрещён; «Играть» в DOM не существует. */
   searchDisabledWhileInGame: re(
     /searchDisabled:function\(\)\{return (?:\w+|this)\.gameSearchDisabled\|\|(?:\w+|this)\.userInGame&&!(?:\w+|this)\.inGameUsersAllowed\}/,

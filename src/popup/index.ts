@@ -1539,6 +1539,8 @@ document.addEventListener("DOMContentLoaded", () => {
     set("obs_auto_record_enabled", items.obs_auto_record_enabled);
     set("obs_clip_enabled", items.obs_clip_enabled);
     set("profile_mmr_chart_enabled", items.profile_mmr_chart_enabled);
+    set("profile_photo_enabled", items.profile_photo_enabled);
+    set("search_avatars_enabled", items.search_avatars_enabled);
     const clipMin = $<HTMLSelectElement>("obs_clip_minutes");
     if (clipMin) clipMin.value = String(items.obs_clip_minutes || 1);
     set("hotkey_hints_enabled", items.hotkey_hints_enabled);
@@ -1696,6 +1698,8 @@ document.addEventListener("DOMContentLoaded", () => {
       mic_sync_input: ($<HTMLInputElement>("mic_sync_input")?.value ?? "").trim() || "Mic/Aux",
       mic_sync_hotkey: micHotkeyCode,
       profile_mmr_chart_enabled: cb("profile_mmr_chart_enabled", true),
+      profile_photo_enabled: cb("profile_photo_enabled", true),
+      search_avatars_enabled: cb("search_avatars_enabled", true),
       match_page_stats_enabled: cb("match_page_stats_enabled", true),
       match_stats_view: $<HTMLSelectElement>("match_stats_view")?.value || "hints",
       stats_button_theme: ($<HTMLSelectElement>("stats_button_theme")?.value || "default"),
@@ -1824,6 +1828,8 @@ document.addEventListener("DOMContentLoaded", () => {
     "mic_sync_enabled",
     "mic_sync_input",
     "profile_mmr_chart_enabled",
+    "profile_photo_enabled",
+    "search_avatars_enabled",
     "obs_auto_record_enabled",
     "obs_clip_enabled",
     "obs_clip_minutes",

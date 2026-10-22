@@ -290,8 +290,10 @@ src/
                       role-faker, role-marker, pause-hotkey, outcry-hotkey,
                       hotkey-hints, controls-safety, f5-refresh, camera-health;
                     очередь — queue-guard, queue-peek, queue-requeue,
-                      requeue-pending, postgame-search, search;
-                    профиль — profile-crossover, profile-mmr-chart;
+                      requeue-pending, postgame-search, search,
+                      search-avatars (аватары «Участников» по id из ссылки);
+                    профиль — profile-crossover, profile-mmr-chart,
+                      profile-photo (фото на месте 3D-аватара);
                     стрим — obs-record, obs-clip;
                     диагностика — connection-diag, freeze-watch, contract-watch,
                       ws-log, update-notify

@@ -144,7 +144,9 @@ describe("зачисление DOM-подписчиков (§4, механика
       "src/content/features/mic-sync.ts": 1,
       "src/content/features/profile-crossover.ts": 1,
       "src/content/features/profile-mmr-chart.ts": 1,
+      "src/content/features/profile-photo.ts": 1,
       "src/content/features/protocol-emoji.ts": 1,
+      "src/content/features/search-avatars.ts": 1,
       "src/content/panels/table-summary-panel.ts": 1,
     };
     // Каждый покрытый файл обязан иметь пин (07.10.2026): auto-ready и
@@ -169,7 +171,9 @@ describe("зачисление DOM-подписчиков (§4, механика
       "src/content/features/mic-sync.ts",
       "src/content/features/profile-crossover.ts",
       "src/content/features/profile-mmr-chart.ts",
+      "src/content/features/profile-photo.ts",
       "src/content/features/protocol-emoji.ts",
+      "src/content/features/search-avatars.ts",
       "src/content/panels/table-summary-panel.ts",
     ]);
   });

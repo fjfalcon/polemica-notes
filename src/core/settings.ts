@@ -30,6 +30,9 @@ export const DEFAULT_SETTINGS: Settings = {
   // Окно поверх стола — дело вкуса: выключено, как «Мой вечер» (09.10.2026).
   table_summary_enabled: false,
   profile_mmr_chart_enabled: true,
+  // Внешний вид без действий за игрока — включены (22.10.2026).
+  profile_photo_enabled: true,
+  search_avatars_enabled: true,
   obs_auto_record_enabled: false,
   obs_clip_enabled: false,
   obs_clip_hotkey_code: "F9",

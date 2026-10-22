@@ -45,6 +45,7 @@ import {
   ACTIVE_GAMES_TTL_MS,
   fetchActiveGames,
   findRatingPlayer,
+  parseProfileCard,
   resetActiveGamesCacheForTest,
   type RatingPlayer,
 } from "@core/polemica-api";
@@ -1800,28 +1801,11 @@ class PlayerNotesManager {
       try {
         const resp = await fetch(`https://polemicagame.com/profile/${raw}`);
         if (!resp.ok) return null;
-        const text = await resp.text();
-        // СТРОГО атрибут :profile-user. Первое попавшееся "username" на
-        // странице — это :current-user, то есть САМ пользователь (в браузере
-        // запрос идёт с куками): поиск по любому id находил «себя».
-        const m = text.match(/:profile-user='([^']+)'/);
-        if (!m) return null;
-        const decoded = m[1]
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'")
-          .replace(/&amp;/g, "&");
-        let user: { id?: number | string; username?: string } | null = null;
-        try {
-          user = JSON.parse(m[1]);
-        } catch {
-          try {
-            user = JSON.parse(decoded);
-          } catch {
-            return null;
-          }
-        }
+        // СТРОГО атрибут :profile-user (см. parseProfileCard): первое
+        // попавшееся "username" — это :current-user, поиск находил «себя».
+        const user = parseProfileCard(await resp.text());
         // id обязан совпасть с запрошенным — ник чужого объекта не берём.
-        if (!user || String(user.id) !== raw || !user.username) return null;
+        if (!user || user.id !== raw) return null;
         return { key: idKey(raw), nick: user.username, id: raw };
       } catch {
         return null;

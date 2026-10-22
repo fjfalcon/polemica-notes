@@ -13,6 +13,8 @@
  *  3. CSS-БЛОКИ внутри фич: скрытие роли (auto-start), сворачивание ников
  *     (nick-plate), таблица разбора (match-stats), тултипы, порядок контролов,
  *     страница матча. Они перечислены в том же инварианте поимённо.
+ *     Плюс цвет затухания фото в profile-photo (FADE_TO) — это верх
+ *     градиента `.avatarlvl__info` сайта.
  *
  * Пункты 2 и 3 отваливаются МОЛЧА: правило просто перестаёт применяться,
  * исключения нет. Поэтому после редизайна проходить надо по всем трём.
@@ -128,9 +130,24 @@ export const SITE = {
   /** Ник и аватар на странице профиля. */
   profileNickname: ".profileinfo__main-info-username",
   profileAvatarImg: "img.profileinfo__main-info-avatar",
-  /** Список участников (лобби/итоги): строка и ник внутри неё. */
+  /**
+   * Левая карточка профиля (уровень и MMR). До отключения Ready Player Me в
+   * ней стоял 3D-аватар (`.avatarlvl__avatar`); теперь — только блок
+   * `.avatarlvl__info`, перед которым profile-photo ставит фото.
+   */
+  profileLevelCard: ".avatarlvl__container",
+  /** Список участников (лобби/итоги): строка, ник и аватар внутри неё. */
   participantsItem: ".participants-item",
   participantsName: ".participants-name",
+  participantsImage: "img.participants-image",
+  /**
+   * Строка «Участников» ОЧЕРЕДИ: список стоит внутри галочки режима
+   * (`label.p-play__profile-modes-item`). Тот же компонент живёт и в скрытых
+   * поповерах витрины «Открытые лобби» (`.p-play__lobby-table-cell-players`)
+   * — там сайт аватары присылает сам, и запросы были бы впустую
+   * (adversarial 22.10.2026, блокер).
+   */
+  queueParticipantsItem: ".p-play__profile-modes-item .participants-item",
   /** Номер матча на странице игры (role-marker). */
   gameIdBlock: ".game-info-block .game-id, .game-info-block__section.game-id",
   /** Правая колонка профиля и её вкладки — точка вставки наших карточек. */

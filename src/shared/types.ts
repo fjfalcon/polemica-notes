@@ -20,6 +20,10 @@ export interface Settings {
   session_stats_enabled: boolean;
   /** График «Путь MMR» на своём профиле. */
   profile_mmr_chart_enabled: boolean;
+  /** Большое фото игрока в левой карточке профиля (на месте 3D-аватара). */
+  profile_photo_enabled: boolean;
+  /** Настоящие аватарки в списке «Участники» страницы поиска. */
+  search_avatars_enabled: boolean;
   /** Автозапись игр в OBS: вход в комнату — StartRecord, выход — StopRecord. */
   obs_auto_record_enabled: boolean;
   /** «Клип момента»: SaveReplayBuffer по клавише/кнопке. */
