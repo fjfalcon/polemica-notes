@@ -6,6 +6,7 @@
  * обычная настройка own_avatar_source, её пишет общий механизм попапа.
  */
 import { browser } from "@core/env";
+import { setSettings } from "@core/settings";
 import { clearOwnAvatar, loadOwnAvatar, onOwnAvatarChanged } from "@core/own-avatar";
 
 function render(preview: HTMLImageElement | null, empty: HTMLElement | null, clearBtn: HTMLElement | null, value: string | null): void {
@@ -15,6 +16,9 @@ function render(preview: HTMLImageElement | null, empty: HTMLElement | null, cle
     else preview.removeAttribute("src");
   }
   if (empty) empty.hidden = !!value;
+  // Распорка нужна только рядом с превью — иначе подпись делила строку с ней.
+  const spacer = document.getElementById("own_avatar_spacer");
+  if (spacer) spacer.hidden = !value;
   if (clearBtn) clearBtn.hidden = !value;
 }
 
@@ -33,7 +37,12 @@ export function setupOwnAvatarSection(): void {
     void browser.tabs.create({ url: browser.runtime.getURL("avatar.html") });
     window.close();
   });
+  // «Убрать» — как на странице выбора: картинка удаляется, источник
+  // возвращается к фото с сайта (иначе список показывал бы «Своя картинка»
+  // без картинки — ревью 22.10.2026). Select обновит общая подписка попапа.
   clearBtn?.addEventListener("click", () => {
-    void clearOwnAvatar().catch(() => undefined);
+    void clearOwnAvatar()
+      .then(() => setSettings({ own_avatar_source: "site" }))
+      .catch(() => undefined);
   });
 }

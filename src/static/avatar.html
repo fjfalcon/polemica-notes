@@ -36,9 +36,9 @@
     background: #2c5cff; color: #fff; border: 0; border-radius: 9px;
     padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer;
   }
-  button:hover, .pick:hover { background: #3d69ff; }
+  button:not(:disabled):hover, .pick:hover { background: #3d69ff; }
   button.secondary { background: #23293a; border: 1px solid rgba(255,255,255,.15); }
-  button.secondary:hover { background: #2b3246; }
+  button.secondary:not(:disabled):hover { background: #2b3246; }
   button:disabled { opacity: .45; cursor: default; }
   input[type=file] { display: none; }
   .status { margin-top: 16px; min-height: 22px; color: #9aa3b5; font-size: 14px; }

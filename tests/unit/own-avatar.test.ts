@@ -60,7 +60,7 @@ import {
   saveOwnAvatar,
 } from "@core/own-avatar";
 import { SEARCH_AVATAR_CLASS, searchCardAvatarFeature } from "@content/features/search-card-avatar";
-import { PHOTO_CLASS, profilePhotoFeature } from "@content/features/profile-photo";
+import { PHOTO_CLASS, profilePhotoFeature, syncProfilePhotoRoute } from "@content/features/profile-photo";
 import { fitSize } from "../../src/avatar/index";
 import type { FeatureContext } from "@core/feature";
 
@@ -156,6 +156,7 @@ describe("картинка в карточке поиска", () => {
     await settle();
     expect(src()).toBe(SITE_FULL);
     searchCardAvatarFeature.update?.(ctx("custom"));
+    await settle(); // своя читается лениво — только когда выбрана
     expect(src()).toBe(IMG_A);
     searchCardAvatarFeature.update?.(ctx("site"));
     expect(src()).toBe(SITE_FULL);
@@ -214,6 +215,27 @@ describe("картинка в карточке поиска", () => {
     expect(h.listeners.size).toBe(0);
   });
 
+  test("при источнике «сайт» своя картинка не читается вовсе", async () => {
+    const { browser } = await import("@core/env");
+    const get = vi.mocked(browser.storage.local.get);
+    get.mockClear();
+    mount();
+    searchCardAvatarFeature.enable(ctx("site"));
+    await settle();
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  test("своя картинка не загрузилась — показывается фото с сайта, а не пустота", async () => {
+    h.store[OWN_AVATAR_KEY] = IMG_A;
+    mount();
+    searchCardAvatarFeature.enable(ctx("custom"));
+    await settle();
+    expect(src()).toBe(IMG_A);
+    box()!.querySelector("img")!.dispatchEvent(new Event("error"));
+    h.domSub?.(childList);
+    expect(src()).toBe(SITE_FULL);
+  });
+
   test("поздняя загрузка своей картинки после выключения в DOM не пишет", async () => {
     h.store[OWN_AVATAR_KEY] = IMG_A;
     mount();
@@ -267,6 +289,26 @@ describe("своя картинка большим фото профиля", () 
     expect(photo()?.tagName).toBe("A");
   });
 
+  test("«/profile» без шапки (не вошёл) — своя картинка не показывается", async () => {
+    window.history.replaceState(null, "", "/profile");
+    mount();
+    document.querySelector("header")!.remove();
+    profilePhotoFeature.enable(ctx("custom"));
+    await settle();
+    expect(src()).toBe(OTHER_FULL);
+  });
+
+  test("смена адреса без мутации DOM перепроверяет «свой профиль»", async () => {
+    window.history.replaceState(null, "", "/profile/13509");
+    mount(13509);
+    profilePhotoFeature.enable(ctx("custom"));
+    await settle();
+    expect(src()).toBe(IMG_A);
+    window.history.replaceState(null, "", "/profile/993");
+    syncProfilePhotoRoute();
+    expect(src(), "на чужом профиле — фото того игрока").toBe(OTHER_FULL);
+  });
+
   test("источник «сайт» — на своём профиле фото с сайта; переключение сразу", async () => {
     window.history.replaceState(null, "", "/profile");
     mount();
@@ -274,6 +316,7 @@ describe("своя картинка большим фото профиля", () 
     await settle();
     expect(src()).toBe(OTHER_FULL);
     profilePhotoFeature.update?.(ctx("custom"));
+    await settle(); // своя читается лениво — только когда выбрана
     expect(src()).toBe(IMG_A);
     await clearOwnAvatar();
     expect(src()).toBe(OTHER_FULL);

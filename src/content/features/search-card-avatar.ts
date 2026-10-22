@@ -27,10 +27,25 @@ let unsubDom: (() => void) | null = null;
 let unsubAvatar: (() => void) | null = null;
 let useCustom = false;
 let custom: string | null = null;
+/** Своя картинка уже читалась в этом включении (читаем лениво — только если выбрана). */
+let customLoaded = false;
 /** Поколение включения: поздняя загрузка картинки после disable() не пишет. */
 let generation = 0;
-/** Адреса, которые не загрузились: без этого битая картинка циклилась бы. */
-const failed = new Set<string>();
+/** Пауза перед новой попыткой после ошибки загрузки — как у profile-photo. */
+const RETRY_AFTER_MS = 60_000;
+/**
+ * Адрес → когда не загрузился. Без этой паузы битая картинка циклилась бы
+ * «вставка → ошибка → удаление → onDomChange → вставка».
+ */
+const failed = new Map<string, number>();
+
+function isFailed(src: string): boolean {
+  const at = failed.get(src);
+  if (at === undefined) return false;
+  if (Date.now() - at < RETRY_AFTER_MS) return true;
+  failed.delete(src);
+  return false;
+}
 
 function isSearchPage(): boolean {
   return location.pathname === "/game-search" || location.pathname.startsWith("/game-search/");
@@ -40,9 +55,12 @@ function removeAvatar(): void {
   document.querySelectorAll(`.${SEARCH_AVATAR_CLASS}`).forEach((n) => n.remove());
 }
 
-/** Что показывать: своя картинка, если выбрана и есть, иначе фото из шапки. */
+/**
+ * Что показывать: своя картинка, если выбрана, есть и не сломалась, иначе
+ * фото из шапки (битая своя не оставляет карточку пустой).
+ */
 export function searchAvatarSrc(): string | null {
-  if (useCustom && custom) return custom;
+  if (useCustom && custom && !isFailed(custom)) return custom;
   const header = document.querySelector<HTMLImageElement>(SITE.headerAvatarImg);
   const file = avatarFileFromSrc(header?.getAttribute("src"));
   return file ? userAvatarUrl(file) : null;
@@ -59,7 +77,7 @@ function buildAvatar(src: string): HTMLElement {
   img.addEventListener("error", () => {
     if (!enabled || !box.isConnected) return;
     // Вердикт — ДО remove: удаление будит onDomChange, вставлять снова нельзя.
-    failed.add(src);
+    failed.set(src, Date.now());
     box.remove();
   });
   box.append(img);
@@ -74,7 +92,7 @@ function apply(): void {
   const host = document.querySelector<HTMLElement>(SITE.searchProfileMain);
   if (!host) return;
   const src = searchAvatarSrc();
-  if (!src || failed.has(src)) {
+  if (!src || isFailed(src)) {
     if (document.querySelector(`.${SEARCH_AVATAR_CLASS}`)) removeAvatar();
     return;
   }
@@ -92,6 +110,17 @@ function setCustom(value: string | null): void {
 
 function readSettings(s: Settings): void {
   useCustom = s.own_avatar_source === "custom";
+  // Своя картинка (до сотен килобайт) читается только когда она выбрана:
+  // content-скрипт стоит на каждой странице сайта.
+  if (useCustom && !customLoaded) {
+    customLoaded = true;
+    const gen = generation;
+    void loadOwnAvatar().then((value) => {
+      if (gen !== generation || !enabled) return;
+      setCustom(value);
+      apply();
+    });
+  }
 }
 
 export const searchCardAvatarFeature: Feature = {
@@ -101,6 +130,7 @@ export const searchCardAvatarFeature: Feature = {
   enable(ctx: FeatureContext) {
     enabled = true;
     generation++;
+    customLoaded = false;
     readSettings(ctx.settings);
     unsubDom = onDomChange((mutations) => {
       for (const m of mutations) {
@@ -111,12 +141,7 @@ export const searchCardAvatarFeature: Feature = {
       }
     });
     unsubAvatar = onOwnAvatarChanged((value) => {
-      setCustom(value);
-      apply();
-    });
-    const gen = generation;
-    void loadOwnAvatar().then((value) => {
-      if (gen !== generation || !enabled) return;
+      customLoaded = true;
       setCustom(value);
       apply();
     });

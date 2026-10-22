@@ -15,6 +15,7 @@ import {
   clearOwnAvatar,
   isValidOwnAvatar,
   loadOwnAvatar,
+  onOwnAvatarChanged,
   saveOwnAvatar,
 } from "@core/own-avatar";
 
@@ -90,6 +91,12 @@ function setup(): void {
     showPreview(value);
     remove.hidden = !value;
   });
+  // Картинку могли убрать из попапа, пока страница открыта. Несохранённый
+  // выбор при этом не трогаем — он показан в превью и ждёт «Сохранить».
+  onOwnAvatarChanged((value) => {
+    remove.hidden = !value;
+    if (!pending) showPreview(value);
+  });
 
   input.addEventListener("change", async () => {
     const file = input.files?.[0];
@@ -125,10 +132,16 @@ function setup(): void {
       await setSettings({ own_avatar_source: "custom" });
       pending = null;
       remove.hidden = false;
-      setStatus("Сохранено. Обновится на открытых вкладках сайта сразу.", "ok");
-    } catch {
+      setStatus("Сохранено — открытые вкладки сайта обновятся сами.", "ok");
+    } catch (e) {
       save.disabled = false;
-      setStatus("Не удалось сохранить — попробуйте ещё раз.", "error");
+      const quota = /quota/i.test(String((e as Error)?.message ?? e));
+      setStatus(
+        quota
+          ? "Хранилище браузера переполнено — выберите картинку поменьше."
+          : "Не удалось сохранить — попробуйте ещё раз.",
+        "error",
+      );
     }
   });
 

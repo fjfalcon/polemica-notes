@@ -36,6 +36,8 @@ let unsubDom: (() => void) | null = null;
 let unsubAvatar: (() => void) | null = null;
 let useCustom = false;
 let custom: string | null = null;
+/** Своя картинка уже читалась в этом включении (читаем лениво — только если выбрана). */
+let customLoaded = false;
 /** Поколение включения: поздняя загрузка своей картинки после disable() не пишет. */
 let generation = 0;
 /**
@@ -43,6 +45,14 @@ let generation = 0;
  * циклом «вставка → ошибка → удаление → onDomChange → вставка».
  */
 const failed = new Map<string, number>();
+
+function isFailed(src: string): boolean {
+  const at = failed.get(src);
+  if (at === undefined) return false;
+  if (Date.now() - at < RETRY_AFTER_MS) return true;
+  failed.delete(src);
+  return false;
+}
 
 function isProfilePath(pathname: string): boolean {
   return pathname === "/profile" || pathname.startsWith("/profile/");
@@ -53,19 +63,25 @@ function removePhoto(): void {
 }
 
 /**
- * Свой ли это профиль: «/profile» без id — всегда свой (так сайт открывает
- * собственный), «/profile/<id>» — когда id совпал со ссылкой на себя в шапке.
+ * Свой ли это профиль. Решение «в пользу своей картинки» — только при
+ * ссылке на себя в шапке (вошёл в аккаунт): «/profile» без id — так сайт
+ * открывает собственный профиль, «/profile/<id>» — id совпал со ссылкой.
+ * Нет шапки — не свой: чужое лицо лучше, чем своё на чужом профиле.
  */
 function isOwnProfile(): boolean {
+  const own = readOwnIdFromDom();
+  if (own === null) return false;
   if (location.pathname === "/profile" || location.pathname === "/profile/") return true;
   const id = profileIdFromPath(location.pathname);
-  const own = readOwnIdFromDom();
-  return id !== null && own !== null && id === String(own);
+  return id !== null && id === String(own);
 }
 
-/** Что показывать: своя картинка на своём профиле, иначе фото с сайта; null — нечего. */
+/**
+ * Что показывать: своя картинка на своём профиле (если выбрана и не
+ * сломалась), иначе фото с сайта; null — нечего.
+ */
 export function profilePhotoUrl(): string | null {
-  if (useCustom && custom && isOwnProfile()) return custom;
+  if (useCustom && custom && !isFailed(custom) && isOwnProfile()) return custom;
   const small = document.querySelector<HTMLImageElement>(SITE.profileAvatarImg);
   const file = avatarFileFromSrc(small?.getAttribute("src"));
   return file ? userAvatarUrl(file) : null;
@@ -113,9 +129,7 @@ function apply(): void {
   if (!card) return;
   const url = profilePhotoUrl();
   const existing = card.querySelector<HTMLElement>(`:scope > .${PHOTO_CLASS}`);
-  const failedAt = url ? failed.get(url) : undefined;
-  if (failedAt !== undefined && Date.now() - failedAt >= RETRY_AFTER_MS) failed.delete(url as string);
-  if (!url || failed.has(url)) {
+  if (!url || isFailed(url)) {
     if (document.querySelector(`.${PHOTO_CLASS}`)) removePhoto();
     return;
   }
@@ -127,6 +141,27 @@ function apply(): void {
 
 function readSettings(s: Settings): void {
   useCustom = s.own_avatar_source === "custom";
+  // Своя картинка (до сотен килобайт) читается только когда она выбрана:
+  // content-скрипт стоит на каждой странице сайта.
+  if (useCustom && !customLoaded) {
+    customLoaded = true;
+    const gen = generation;
+    void loadOwnAvatar().then((value) => {
+      if (gen !== generation || !enabled) return;
+      custom = value;
+      apply();
+    });
+  }
+}
+
+/**
+ * Маршрут от URL-роутера: смена адреса без мутации DOM (SPA-переход между
+ * профилями) обязана перепроверить «свой ли профиль», иначе своя картинка
+ * осталась бы на чужом. Сегодня сайт ходит по профилям полной загрузкой —
+ * это страховка (ревью 22.10.2026).
+ */
+export function syncProfilePhotoRoute(): void {
+  apply();
 }
 
 export const profilePhotoFeature: Feature = {
@@ -136,6 +171,7 @@ export const profilePhotoFeature: Feature = {
   enable(ctx: FeatureContext) {
     enabled = true;
     generation++;
+    customLoaded = false;
     readSettings(ctx.settings);
     unsubDom = onDomChange((mutations) => {
       for (const m of mutations) {
@@ -146,12 +182,7 @@ export const profilePhotoFeature: Feature = {
       }
     });
     unsubAvatar = onOwnAvatarChanged((value) => {
-      custom = value;
-      apply();
-    });
-    const gen = generation;
-    void loadOwnAvatar().then((value) => {
-      if (gen !== generation || !enabled) return;
+      customLoaded = true;
       custom = value;
       apply();
     });
