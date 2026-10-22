@@ -185,3 +185,22 @@ describe("обе записи существуют разом (id и ник)", (
     expect(k.text("Аня")).toBe("актуальная");
   });
 });
+
+describe("свой ник для замены на плитке (ревью 22.10.2026, В3)", () => {
+  const notes: NotesMap = {
+    "u:1": { text: "", timestamp: 1, nick: "Vasya", alias: "Игорь" },
+    Петя: { text: "", timestamp: 1, alias: "Пётр" },
+  };
+
+  test("id не резолвлен — по чужому rec.nick не подменяем (заметка читается, замена — нет)", () => {
+    const k = keys(notes, {});
+    expect(k.alias("vasya"), "окно заметки по фолбэку видит запись").toBe("Игорь");
+    expect(k.displayAlias("vasya"), "на плитке настоящий ник спрятан — без уверенности не подменяем").toBe("");
+  });
+
+  test("id резолвлен — его запись; точный легаси-ключ — тоже", () => {
+    expect(keys(notes, { vasya: 1 }).displayAlias("vasya")).toBe("Игорь");
+    expect(keys(notes, {}).displayAlias("Петя")).toBe("Пётр");
+    expect(keys(notes, { vasya: 2 }).displayAlias("vasya"), "другой id — не он").toBe("");
+  });
+});

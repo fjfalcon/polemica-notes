@@ -14,6 +14,7 @@
  * data-атрибутов не видит — ни читатели, ни конвейер мутаций не задеты.
  * Запись идемпотентна (сравнение перед записью, инвариант §4).
  */
+import { onDomChangeImmediate } from "@core/dom";
 import { SITE } from "@core/selectors";
 import { aliasFrom, buildAliasIndex, type AliasIndex, type NotesMap } from "@core/notes-store";
 
@@ -84,29 +85,69 @@ export function clearAllAliases(root: ParentNode = document): void {
 export class AliasResolver {
   private cache: { at: number; index: AliasIndex } | null = null;
 
-  constructor(private readonly notes: () => NotesMap) {}
+  /**
+   * @param enabled тумблер «Показывать свои ники»: выключен — на страницах
+   *   сайта своих ников нет нигде (эфир), резолвер отвечает пустым.
+   */
+  constructor(
+    private readonly notes: () => NotesMap,
+    readonly enabled: () => boolean = () => true,
+  ) {}
 
   reset(): void {
     this.cache = null;
   }
 
-  aliasFor(id: string | number | null | undefined, nick: string | null | undefined): string {
+  aliasFor(id: string | number | null | undefined, nick: string | null | undefined, strict = false): string {
+    if (!this.enabled()) return "";
     const now = Date.now();
     if (!this.cache || now - this.cache.at >= 1000) {
       this.cache = { at: now, index: buildAliasIndex(this.notes()) };
     }
-    return aliasFrom(this.cache.index, id, nick);
+    return aliasFrom(this.cache.index, id, nick, strict);
   }
 }
 
+/** Ссылка на профиль, которой match-stats оборачивает ник в ячейке разбора. */
+const MATCH_PROFILE_LINK = "a.pn-profile-link";
+
 /**
- * Таблица разбора матча (/match/<id>): ячейки ников — разметка сайта, которую
- * match-stats оборачивает ссылкой на профиль. Свой ник — суффиксом на самой
- * ячейке; ник для поиска — её текст (ссылка его сохраняет).
+ * Таблица разбора матча (/match/<id>). Ячейки ников — разметка сайта
+ * (`cell player username`), заголовок строки (`.title`) — не игрок.
+ *  • Свой ник ставим на НАШУ ссылку профиля, если match-stats её поставил:
+ *    его CSS гасит `div.cell.player::after` (ревью 22.10.2026, В1) — на
+ *    ячейке суффикс не виден. Без ссылки (разбор выключен) — на ячейку.
+ *  • Игрок — по id из этой ссылки (вечный); без id — только точный
+ *    легаси-ключ: таблица ник→свой ник по истории ников выдавала бы чужой.
  */
-export function applyMatchAliases(aliasFor: (nick: string) => string): void {
-  document.querySelectorAll<HTMLElement>(`${SITE.statsTable} ${SITE.statsUsernameCell}`).forEach((cell) => {
-    const nick = cell.textContent?.trim() || "";
-    if (nick) setNickAlias(cell, aliasFor(nick), nick, "suffix");
+export function applyMatchAliases(resolver: AliasResolver): void {
+  document
+    .querySelectorAll<HTMLElement>(`${SITE.statsTable} ${SITE.statsUsernameCell}:not(${SITE.statsTitleCell})`)
+    .forEach((cell) => {
+      const link = cell.querySelector<HTMLAnchorElement>(MATCH_PROFILE_LINK);
+      const target = link ?? cell;
+      if (link) clearNode(cell); // ссылка появилась после нас — со старого места снимаем
+      const nick = target.textContent?.trim() || "";
+      if (!nick) return;
+      const id = (link?.getAttribute("href") || "").match(/\/profile\/(\d+)/)?.[1] ?? null;
+      setNickAlias(target, resolver.aliasFor(id, nick, true), nick, "suffix");
+    });
+}
+
+/**
+ * Немедленная реакция на смену ника НА МЕСТЕ (Vue переписывает Text-узел):
+ * обычные подписчики characterData не получают, и до прохода (≤2 с) новый
+ * игрок плитки носил бы свой ник прежнего (ревью 22.10.2026, С1). Только
+ * снимаем — правильный поставит обычный проход. Возвращает отписку.
+ */
+export function watchAliasText(): () => void {
+  return onDomChangeImmediate((mutations) => {
+    for (const m of mutations) {
+      if (m.type !== "characterData") continue;
+      const el = m.target.parentElement?.closest<HTMLElement>(`[${ALIAS_FOR_ATTR}]`);
+      if (!el) continue;
+      const nick = el.textContent?.trim() || "";
+      if (el.getAttribute(ALIAS_FOR_ATTR) !== nick) clearNode(el);
+    }
   });
 }

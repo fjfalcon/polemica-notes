@@ -502,7 +502,8 @@ export function peekOnce(creds: Credentials, mode: string): Promise<Record<strin
 interface NoteIndexes {
   /** null — фича цветов выключена: панель рисуется без покраски. */
   colors: NickColorIndex | null;
-  aliases: AliasIndex;
+  /** null — тумблер «Показывать свои ники» выключен (эфир). */
+  aliases: AliasIndex | null;
 }
 
 /**
@@ -515,7 +516,7 @@ async function loadNoteIndexes(): Promise<NoteIndexes | null> {
     if (loadFailed) return null;
     return {
       colors: settings?.nick_colors_enabled === false ? null : buildNickColorIndex(notes),
-      aliases: buildAliasIndex(notes),
+      aliases: settings?.nick_aliases_enabled === false ? null : buildAliasIndex(notes),
     };
   } catch {
     return null;
@@ -563,7 +564,7 @@ function renderPanel(
       if (players.length === 0) return `<div style="margin:8px 0"><b>${title}</b>: пусто</div>`;
       const list = players
         .map((p) => {
-          const alias = indexes ? aliasFrom(indexes.aliases, p.id, p.username) : "";
+          const alias = indexes?.aliases ? aliasFrom(indexes.aliases, p.id, p.username) : "";
           const raw = p.username ? nickWithAlias(p.username, alias) : String(p.id || "?");
           const color = colors ? nickColorFrom(colors, p.id, p.username) : "";
           const style = nickColorStyle(color);

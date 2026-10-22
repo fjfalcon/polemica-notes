@@ -63,7 +63,14 @@ import {
 } from "./player-notes/tile-media-state";
 import type { ModalPort } from "./player-notes/modal-port";
 import { openNickColorManager } from "./player-notes/nick-color-manager";
-import { AliasResolver, applyMatchAliases, clearAllAliases, setNickAlias, sweepStaleAliases } from "./player-notes/nick-alias";
+import {
+  AliasResolver,
+  applyMatchAliases,
+  clearAllAliases,
+  setNickAlias,
+  sweepStaleAliases,
+  watchAliasText,
+} from "./player-notes/nick-alias";
 import { showNoteModal } from "./player-notes/note-modal";
 import { NotesModel } from "./player-notes/notes-model";
 import { TAG_PRESETS } from "./player-notes/tag-palette";
@@ -397,6 +404,7 @@ class PlayerNotesManager {
     this.tileMedia.loadFlipped();
 
     this.syncMatchPageRoute(getMatchId() !== null);
+    this.unsubscribers.push(watchAliasText()); // смена ника на месте снимает чужой свой ник сразу
 
     // Один общий наблюдатель за DOM вместо нескольких MutationObserver.
     // Полный проход — только на мутации, задевающие плитки/списки игроков:
@@ -917,8 +925,8 @@ class PlayerNotesManager {
   private applyNickColor(container: HTMLElement, username: string): void {
     const el = container.querySelector<HTMLElement>(SITE.playerName);
     if (el) paintNickEl(el, this.getNickColor(username), username);
-    // Свой ник в игре — вместо ника сайта (стример может выключить на эфир).
-    const alias = this.settings.nick_alias_in_game === false ? "" : this.model.keys.alias(username);
+    // Свой ник в игре — вместо ника сайта, только при уверенной привязке.
+    const alias = this.aliases.enabled() ? this.model.keys.displayAlias(username) : "";
     if (el) setNickAlias(el, alias, username, "replace");
   }
 
@@ -960,7 +968,7 @@ class PlayerNotesManager {
 
   /** Кэш индекса цветов (byId/byNick), TTL 1с — см. комментарий idKeyByNick. */
   private colorIndexCache: { at: number; index: NickColorIndex } | null = null;
-  private aliases = new AliasResolver(() => this.model.notes);
+  private aliases = new AliasResolver(() => this.model.notes, () => this.settings.nick_aliases_enabled !== false);
 
   private colorIndex(): NickColorIndex {
     const now = Date.now();
@@ -2045,7 +2053,7 @@ class PlayerNotesManager {
       this.applyParticipantColors();
       // Страница профиля — тоже отдельно (плиток .player там нет).
       this.ensureProfileNoteUI();
-      applyMatchAliases((nick) => this.model.keys.alias(nick));
+      applyMatchAliases(this.aliases);
       // Проход прошёл целиком: если до этого он падал — говорим, что
       // починилось. Иначе в файле остаётся только «сломалось».
       if (this.passFailed) {

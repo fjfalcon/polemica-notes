@@ -29,7 +29,7 @@ vi.mock("@core/own-user", () => ({
   rememberOwnUserId: async () => {},
 }));
 
-vi.mock("@core/dom", () => ({
+vi.mock("@core/dom", () => ({ onDomChangeImmediate: vi.fn(() => () => undefined),
   onDomChange: vi.fn((cb: (muts: MutationRecord[]) => void) => {
     seam.subs.push(cb);
     return () => {
@@ -1128,7 +1128,7 @@ describe("свой ник на плитке (22.10.2026)", () => {
   });
 
   test("тумблер «Свои ники в игре» выключен — в игре ник сайта", async () => {
-    await reEnable({ nick_alias_in_game: false });
+    await reEnable({ nick_aliases_enabled: false });
     const tile = mountTile();
     fire([rec({ target: document.body, added: [tile] })]);
     expect(document.querySelector(".info__name")!.hasAttribute("data-pn-alias")).toBe(false);

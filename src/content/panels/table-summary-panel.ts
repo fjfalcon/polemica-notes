@@ -38,7 +38,7 @@ import {
   type SummaryRow,
 } from "@shared/table-summary";
 import { playerIdFromNumberEl } from "../features/nick-plate";
-import type { Feature } from "@core/feature";
+import type { Feature, FeatureContext } from "@core/feature";
 
 const SCOPE = "table-summary";
 /** Режим сортировки помнится между играми (вкус пользователя, не состояние). */
@@ -173,7 +173,7 @@ function buildRow(labels: string[], head: boolean): HTMLElement {
 
 function nickCell(r: SummaryRow): HTMLElement {
   // Свой ник из заметки — «Ник (свой)», как в остальных списках.
-  const label = nickWithAlias(r.nick, aliases ? aliasFrom(aliases, r.id, r.nick) : "");
+  const label = nickWithAlias(r.nick, aliases && showAliases ? aliasFrom(aliases, r.id, r.nick) : "");
   if (!r.id) return cell(label, "pn-ts-nick");
   const a = document.createElement("a");
   a.className = "pn-ts-nick";
@@ -211,6 +211,8 @@ let generation = 0;
 let active = false;
 /** Свои ники из заметок; null — ещё не прочитаны или чтение упало (тогда голые ники). */
 let aliases: AliasIndex | null = null;
+/** Тумблер «Показывать свои ники»: выключен (эфир) — голые ники. */
+let showAliases = true;
 /** Поколение включения для чтения своих ников (generation растёт и при смене стола). */
 let aliasGen = 0;
 
@@ -379,8 +381,9 @@ function tick(): void {
 export const tableSummaryFeature: Feature = {
   id: "table-summary",
   settingKey: "table_summary_enabled",
-  enable() {
+  enable(ctx: FeatureContext) {
     active = true;
+    showAliases = ctx.settings.nick_aliases_enabled !== false;
     sortMode = loadSortPref();
     lastSignature = "";
     browser.storage.onChanged.addListener(onStorageChanged);
@@ -394,6 +397,12 @@ export const tableSummaryFeature: Feature = {
       }, 1000);
     });
     log.info(SCOPE, "enabled");
+  },
+  update(ctx: FeatureContext) {
+    const next = ctx.settings.nick_aliases_enabled !== false;
+    if (next === showAliases) return;
+    showAliases = next;
+    rerender();
   },
   disable() {
     active = false;

@@ -10,6 +10,7 @@
  */
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
+vi.mock("@core/dom", () => ({ onDomChangeImmediate: vi.fn(() => () => undefined) }));
 vi.mock("@core/env", () => ({
   browser: { storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) } } },
 }));
@@ -34,7 +35,9 @@ import {
   clearAllAliases,
   setNickAlias,
   sweepStaleAliases,
+  watchAliasText,
 } from "@content/features/player-notes/nick-alias";
+import { onDomChangeImmediate } from "@core/dom";
 import { candidatesFromNotes, rankPlayerMatches } from "../../src/popup/player-search";
 
 describe("очистка своего ника", () => {
@@ -100,7 +103,8 @@ describe("индекс своих ников", () => {
     expect(aliasFrom(index, 42, "кто-то")).toBe("Анечка");
     expect(aliasFrom(index, null, "аня")).toBe("Анечка");
     expect(aliasFrom(index, "7", null), "ключ канонизирован").toBe("Бонд");
-    expect(aliasFrom(index, null, "ПЕТЯ")).toBe("Пётр");
+    expect(aliasFrom(index, null, "Петя"), "легаси-ключ — точное написание").toBe("Пётр");
+    expect(aliasFrom(index, null, "ПЕТЯ"), "тёзка по регистру — не он").toBe("");
     expect(aliasFrom(index, 9, null), "мусор из старого хранилища не показывается").toBe("");
   });
 
@@ -182,16 +186,53 @@ describe("отрисовка: текст сайта не меняется", () =
     expect(el.hasAttribute(ALIAS_ATTR) || el.hasAttribute(ALIAS_FOR_ATTR)).toBe(false);
   });
 
-  test("таблица разбора: суффикс на ячейке, текст ячейки и ссылки прежний", () => {
+  test("таблица разбора: по id из ссылки, суффикс на ссылке (CSS разбора гасит ::after ячейки)", () => {
+    // Разметка сайта: `cell player username`; заголовок строки — `.title`.
     document.body.innerHTML =
       '<div class="game-stats-table"><div class="table">' +
-      '<div class="cell username"><a class="pn-profile-link" href="/profile/42">Аня</a></div>' +
-      '<div class="cell username">Петя</div></div></div>';
-    applyMatchAliases((nick) => (nick === "Аня" ? "Анечка" : ""));
-    const [a, b] = Array.from(document.querySelectorAll<HTMLElement>(".cell.username"));
-    expect(a.getAttribute(ALIAS_SUFFIX_ATTR)).toBe("Анечка");
+      '<div class="cell title username">Петя</div>' +
+      '<div class="cell player username"><a class="pn-profile-link" href="/profile/42">Аня</a></div>' +
+      '<div class="cell player username"><a class="pn-profile-link" href="/profile/7">vasya</a></div>' +
+      '<div class="cell player username">Петя</div>' +
+      '<div class="cell player username">Vasya</div></div></div>';
+    const notes: NotesMap = {
+      "u:42": { text: "", timestamp: 1, nick: "Аня", alias: "Анечка" },
+      "u:1": { text: "", timestamp: 1, nick: "Vasya", alias: "Игорь" },
+      Петя: { text: "", timestamp: 1, alias: "Пётр" },
+    };
+    applyMatchAliases(new AliasResolver(() => notes));
+    const [title, a, v, p, noLink] = Array.from(document.querySelectorAll<HTMLElement>(".cell.username"));
+    const link = a.querySelector("a")!;
+    expect(link.getAttribute(ALIAS_SUFFIX_ATTR)).toBe("Анечка");
+    expect(a.hasAttribute(ALIAS_SUFFIX_ATTR), "не на ячейке").toBe(false);
     expect(a.textContent).toBe("Аня");
-    expect(b.hasAttribute(ALIAS_SUFFIX_ATTR)).toBe(false);
+    expect(v.querySelector("a")!.hasAttribute(ALIAS_SUFFIX_ATTR), "чужой (u:1) по нику не берётся").toBe(false);
+    expect(p.getAttribute(ALIAS_SUFFIX_ATTR), "без ссылки — точный легаси-ключ").toBe("Пётр");
+    expect(title.hasAttribute(ALIAS_SUFFIX_ATTR), "заголовок строки — не игрок").toBe(false);
+    expect(noLink.hasAttribute(ALIAS_SUFFIX_ATTR), "без id — по истории ников u:-записей не берём").toBe(false);
+  });
+
+  test("БЛОКЕР ревью: при известном id чужой свой ник по совпадению ника не берётся", () => {
+    const index = buildAliasIndex({ "u:1": { text: "", timestamp: 1, nick: "Vasya", alias: "Игорь" } });
+    expect(aliasFrom(index, 2, "vasya"), "другой аккаунт с тем же ником").toBe("");
+    expect(aliasFrom(index, null, "vasya"), "без id — фолбэк по нику (как у заметок)").toBe("Игорь");
+    const r = new AliasResolver(() => ({ "u:1": { text: "", timestamp: 1, alias: "Игорь" } }), () => false);
+    expect(r.aliasFor(1, null), "тумблер выключен — ничего").toBe("");
+  });
+
+  test("смена ника на месте снимает свой ник сразу (немедленный подписчик)", () => {
+    let cb: ((m: MutationRecord[]) => void) | null = null;
+    vi.mocked(onDomChangeImmediate).mockImplementation((fn) => {
+      cb = fn;
+      return () => undefined;
+    });
+    const el = tile("Igolka");
+    setNickAlias(el, "Игорь", "Igolka", "replace");
+    watchAliasText();
+    const text = el.firstChild as Text;
+    text.data = "Outland";
+    cb!([{ type: "characterData", target: text } as unknown as MutationRecord]);
+    expect(el.hasAttribute(ALIAS_ATTR)).toBe(false);
   });
 });
 

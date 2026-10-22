@@ -53,7 +53,7 @@ export const MAX_ALIAS = 32;
 export function normalizeAlias(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const clean = value
-    .replace(/[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2060-\u2069\ufeff\u061c\u180e]/g, "")
     .replace(/\s+/g, " ")
     .trim();
   // Обрезка по кодовым точкам, а не UTF-16: эмодзи не рвётся пополам.
@@ -194,41 +194,68 @@ export function buildNickColorIndex(notes: NotesMap): NickColorIndex {
 }
 
 /**
- * Индекс своих ников — того же устройства, что индекс цветов: для списков,
- * где игроки приходят с id или ником (очередь, «Участники», «Сводка стола»).
+ * Индекс своих ников для списков, где игроки приходят с id или ником
+ * (очередь, «Участники», профиль, «Сводка стола», разбор).
+ *
+ * СТРОЖЕ индекса цветов (ревью 22.10.2026, блокер): неверный цвет — мелочь,
+ * а чужой свой ник — неверная ЛИЧНОСТЬ. Поэтому при известном id — только
+ * запись этого id (или точный легаси-ключ-ник, если u:-записи нет — тот же
+ * порядок, что у NoteKeys.keyFor). `rec.nick` чужих u:-записей — лишь
+ * фолбэк для строк БЕЗ id: он обновляется только при сохранении записи, и
+ * освободившийся ник другого человека совпадал бы с ним.
  */
 export interface AliasIndex {
   byId: Map<string, string>;
-  byNick: Map<string, string>;
+  /** id всех u:-записей (с своим ником и без) — «запись есть, легаси не читаем». */
+  ids: Set<string>;
+  /** Легаси-ключи-ники, точное написание. */
+  byLegacyKey: Map<string, string>;
+  /** rec.nick u:-записей (lowercase) — только для строк без id. */
+  byRecNick: Map<string, string>;
 }
 
 export function buildAliasIndex(notes: NotesMap): AliasIndex {
-  const byId = new Map<string, string>();
-  const byNick = new Map<string, string>();
+  const index: AliasIndex = { byId: new Map(), ids: new Set(), byLegacyKey: new Map(), byRecNick: new Map() };
   for (const [rawKey, rec] of Object.entries(notes)) {
     if (!rec || typeof rec === "string") continue;
+    const key = canonicalNoteKey(rawKey);
+    const id = isIdKey(key) ? key.slice(ID_KEY_PREFIX.length) : null;
+    if (id) index.ids.add(id);
     // Записи из старого хранилища могли обойти нормализацию — чистим на чтении.
     const alias = normalizeAlias(rec.alias);
     if (!alias) continue;
-    const key = canonicalNoteKey(rawKey);
-    if (isIdKey(key)) {
-      byId.set(key.slice(ID_KEY_PREFIX.length), alias);
-      if (typeof rec.nick === "string" && rec.nick) byNick.set(rec.nick.toLowerCase(), alias);
+    if (id) {
+      index.byId.set(id, alias);
+      if (typeof rec.nick === "string" && rec.nick) index.byRecNick.set(rec.nick.toLowerCase(), alias);
     } else {
-      byNick.set(key.toLowerCase(), alias);
+      index.byLegacyKey.set(key, alias);
     }
   }
-  return { byId, byNick };
+  return index;
 }
 
-/** Свой ник по id (приоритет) или нику; пустая строка — не задан. */
-export function aliasFrom(index: AliasIndex, id?: number | string | null, nick?: string | null): string {
+/**
+ * Свой ник игрока; пустая строка — не задан (или нет уверенности, чей он).
+ * strict — без фолбэка по rec.nick для строк без id (там, где ошибка видна
+ * как подмена личности: таблица разбора).
+ */
+export function aliasFrom(
+  index: AliasIndex,
+  id?: number | string | null,
+  nick?: string | null,
+  strict = false,
+): string {
   if (id !== undefined && id !== null && id !== "") {
-    const a = index.byId.get(String(id));
-    if (a) return a;
+    const sid = String(id);
+    const own = index.byId.get(sid);
+    if (own) return own;
+    if (index.ids.has(sid)) return ""; // у игрока своя запись, и в ней своего ника нет
+    return nick ? index.byLegacyKey.get(nick) ?? "" : "";
   }
-  if (nick) return index.byNick.get(nick.toLowerCase()) ?? "";
-  return "";
+  if (!nick) return "";
+  const legacy = index.byLegacyKey.get(nick);
+  if (legacy || strict) return legacy ?? "";
+  return index.byRecNick.get(nick.toLowerCase()) ?? "";
 }
 
 /** «Ник (свой)» для списков; свой не задан или совпал с ником — просто ник. */

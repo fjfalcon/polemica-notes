@@ -112,6 +112,23 @@ export class NoteKeys {
     return note && typeof note !== "string" ? note.tag || "" : "";
   }
 
+  /**
+   * Свой ник для ЗАМЕНЫ ника на плитке — только при уверенной привязке:
+   * резолвленный id (его запись, иначе точный легаси-ключ) или точный ключ-
+   * ник. Без фолбэка idKeyByNick по rec.nick: для заметки он — принятый
+   * компромисс, а в замене настоящий ник спрятан, и чужой свой ник выдал бы
+   * другого человека за этого (ревью 22.10.2026, В3).
+   */
+  displayAlias(username: string): string {
+    const notes = this.ctx.notes();
+    const id = this.userId(username);
+    let key: string | undefined;
+    if (id !== undefined && Object.hasOwn(notes, idKey(id))) key = idKey(id);
+    else if (Object.hasOwn(notes, username)) key = username;
+    const note = key === undefined ? undefined : notes[key];
+    return note && typeof note !== "string" ? normalizeAlias(note.alias) ?? "" : "";
+  }
+
   /** Свой ник игрока (очищенный на чтении — запись могла прийти из старого хранилища). */
   alias(username: string): string {
     const note = this.get(username);

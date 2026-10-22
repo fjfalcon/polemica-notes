@@ -325,7 +325,12 @@ export function showNoteModal(port: ModalPort, username: string): void {
     port.refreshIndicators();
     port.refreshTags();
     port.refreshColors();
-    title.textContent = `Заметка для игрока ${nickWithAlias(username, alias)}`;
+    // Поле и заголовок — по ТОМУ, что записано (свой ник «невидённой» записи
+    // мог сохраниться): иначе повторное «Сохранить» стёрло бы его.
+    const savedRec = port.model.notes[key];
+    const savedAlias = savedRec && typeof savedRec !== "string" ? savedRec.alias ?? "" : "";
+    aliasInput.value = savedAlias;
+    title.textContent = `Заметка для игрока ${nickWithAlias(username, savedAlias)}`;
     // Сохранённый ключ теперь «виден» пользователю — следующие сохранения
     // в этой же модалке работают с ним как со своим.
     openedKey = key;

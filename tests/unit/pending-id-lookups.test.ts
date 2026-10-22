@@ -9,7 +9,7 @@ vi.mock("@core/env", () => ({
 vi.mock("@core/log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock("@core/dom", () => ({ onDomChange: vi.fn(), safeClick: vi.fn(), isVisible: () => true }));
+vi.mock("@core/dom", () => ({ onDomChangeImmediate: vi.fn(() => () => undefined), onDomChange: vi.fn(), safeClick: vi.fn(), isVisible: () => true }));
 vi.mock("@core/messaging", () => ({
   sendRuntime: vi.fn(),
   sendToActiveTabStrict: vi.fn(),

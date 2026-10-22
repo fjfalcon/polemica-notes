@@ -32,7 +32,7 @@ vi.mock("@core/env", () => ({
     runtime: { sendMessage: vi.fn(), onMessage: { addListener: vi.fn(), removeListener: vi.fn() } },
   },
 }));
-vi.mock("@core/dom", () => ({
+vi.mock("@core/dom", () => ({ onDomChangeImmediate: vi.fn(() => () => undefined),
   onDomChange: vi.fn(() => () => undefined),
   paintNickEl: vi.fn(),
   safeClick: vi.fn(),

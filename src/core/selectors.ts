@@ -390,6 +390,8 @@ export const SITE = {
   statsCellTitle: ".cell.title",
   /** Ячейка с ником игрока в таблице разбора — якорь ссылки на профиль. */
   statsUsernameCell: ".cell.username",
+  /** Заголовок строки таблицы разбора (подпись, не игрок): `cell title username`. */
+  statsTitleCell: ".title",
   /** Строка фазы в таблице разбора (её строим мы, имя общее). */
   statsRowPhase: ".row[data-phase]",
   penaltyDots: ".penalty-dots",

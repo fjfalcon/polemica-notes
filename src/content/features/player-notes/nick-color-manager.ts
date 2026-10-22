@@ -268,8 +268,10 @@ export function openNickColorManager(port: ModalPort): void {
         "padding:4px 8px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
         "font-size:12px;background:rgba(239,68,68,.35);flex:0 0 auto;";
       del.addEventListener("click", () => {
-        // Подтверждение: удаляется и заметка тоже, а не только цвет.
-        const what = entry.text ? "заметку и цвет" : "цвет";
+        // Подтверждение называет ВСЁ, что уйдёт: запись удаляется целиком
+        // (ревью 22.10.2026: у записи с одним своим ником спрашивалось «цвет»).
+        const parts = [entry.text && "заметку", entry.alias && "свой ник", entry.color && "цвет"].filter(Boolean);
+        const what = parts.length ? parts.join(", ") : "запись";
         if (!window.confirm(`Удалить ${what} игрока ${entry.nick}?`)) return;
         void port.model.deleteEntry(entry.key).then((ok) => {
           if (ok) {
