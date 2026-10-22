@@ -236,6 +236,21 @@ describe("картинка в карточке поиска", () => {
     expect(src()).toBe(SITE_FULL);
   });
 
+  test("ответ чтения, начатого до сохранения новой картинки, не возвращает старую", async () => {
+    const { browser } = await import("@core/env");
+    h.store[OWN_AVATAR_KEY] = IMG_A;
+    let release: () => void = () => undefined;
+    vi.mocked(browser.storage.local.get).mockImplementationOnce(
+      () => new Promise((r) => (release = () => r({ [OWN_AVATAR_KEY]: IMG_A }))) as never,
+    );
+    mount();
+    searchCardAvatarFeature.enable(ctx("custom"));
+    await saveOwnAvatar(IMG_B);
+    release();
+    await settle();
+    expect(src()).toBe(IMG_B);
+  });
+
   test("поздняя загрузка своей картинки после выключения в DOM не пишет", async () => {
     h.store[OWN_AVATAR_KEY] = IMG_A;
     mount();

@@ -38,6 +38,8 @@ let useCustom = false;
 let custom: string | null = null;
 /** Своя картинка уже читалась в этом включении (читаем лениво — только если выбрана). */
 let customLoaded = false;
+/** Счётчик событий смены картинки: ответ чтения, начатого раньше события, устарел. */
+let changeSeq = 0;
 /** Поколение включения: поздняя загрузка своей картинки после disable() не пишет. */
 let generation = 0;
 /**
@@ -146,8 +148,9 @@ function readSettings(s: Settings): void {
   if (useCustom && !customLoaded) {
     customLoaded = true;
     const gen = generation;
+    const seq = changeSeq;
     void loadOwnAvatar().then((value) => {
-      if (gen !== generation || !enabled) return;
+      if (gen !== generation || !enabled || seq !== changeSeq) return;
       custom = value;
       apply();
     });
@@ -182,6 +185,7 @@ export const profilePhotoFeature: Feature = {
       }
     });
     unsubAvatar = onOwnAvatarChanged((value) => {
+      changeSeq++;
       customLoaded = true;
       custom = value;
       apply();
