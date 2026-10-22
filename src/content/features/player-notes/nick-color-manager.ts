@@ -555,7 +555,13 @@ export function openNickColorManager(port: ModalPort): void {
     "padding:8px 16px;color:#fff;border:none;border-radius:8px;cursor:pointer;" +
     "font-size:13px;background:rgba(255,255,255,.12);display:block;margin-left:auto;";
 
+  // Эфир начался/кончился при открытом окне — строки перемаскируются (Н5).
+  // Открытый редактор не пересоздаём: это стёрло бы черновик.
+  const offStream = port.onStreamChange?.(() => {
+    if (expandedKey === null && overlay.isConnected) render();
+  }) ?? null;
   const close = () => {
+    offStream?.();
     document.removeEventListener("keydown", onKey, true);
     overlay.remove();
     port.unregisterModal(close);

@@ -55,9 +55,10 @@ export function showNoteModal(port: ModalPort, username: string): void {
   `;
 
   // Идёт эфир и осуждёнку прячут: окно в кадре тоже её не показывает (Б4).
-  const mask = port.maskCondemned?.() === true;
+  // Не снимок: эфир может начаться при открытом окне (Н5).
+  const masked = (): boolean => port.maskCondemned?.() === true;
   const titleFor = (alias: string | undefined, condemned: boolean): string =>
-    `Заметка для игрока ${mask && condemned ? username : nickWithAlias(username, alias)}`;
+    `Заметка для игрока ${masked() && condemned ? username : nickWithAlias(username, alias)}`;
   const opened = port.model.keys.get(username);
   const openedCondemned = !!opened && typeof opened !== "string" && opened.aliasCondemned === true;
   const title = document.createElement("h3");
@@ -80,7 +81,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
   aliasLabel.textContent = "Свой ник (видно только вам)";
   aliasLabel.style.cssText = "color: rgba(255,255,255,.7); font-size: 12px; margin-bottom: 6px;";
   const aliasInput = document.createElement("input");
-  aliasInput.type = mask && openedCondemned ? "password" : "text";
+  aliasInput.type = masked() && openedCondemned ? "password" : "text";
   aliasInput.maxLength = MAX_ALIAS;
   aliasInput.placeholder = username;
   aliasInput.value = port.model.keys.alias(username);
@@ -102,7 +103,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
   const revealBtn = document.createElement("button");
   revealBtn.type = "button";
   revealBtn.textContent = "показать";
-  revealBtn.hidden = !(mask && openedCondemned);
+  revealBtn.hidden = !(masked() && openedCondemned);
   revealBtn.style.cssText =
     "margin:-6px 0 12px;padding:2px 8px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
     "font-size:11px;background:rgba(255,255,255,.12);";
@@ -270,8 +271,25 @@ export function showNoteModal(port: ModalPort, username: string): void {
     },
   );
 
+  /** Перемаскировать окно по текущему эфиру и сохранённой пометке. */
+  const applyMask = (): void => {
+    const rec = port.model.notes[port.model.keys.keyFor(username)];
+    const condemned = !!rec && typeof rec !== "string" && rec.aliasCondemned === true;
+    const hide = masked() && condemned;
+    title.textContent = titleFor(rec && typeof rec !== "string" ? rec.alias : undefined, condemned);
+    if (hide && aliasInput.type !== "password") {
+      aliasInput.type = "password";
+      revealBtn.hidden = false;
+    } else if (!hide && aliasInput.type === "password") {
+      aliasInput.type = "text";
+      revealBtn.hidden = true;
+    }
+  };
+  const offStream = port.onStreamChange?.(applyMask) ?? null;
+
   // ── общие действия ──
   const close = () => {
+    offStream?.();
     document.removeEventListener("keydown", onKey, true);
     overlay.remove();
     port.unregisterModal(close);
@@ -365,6 +383,7 @@ export function showNoteModal(port: ModalPort, username: string): void {
     aliasInput.value = savedAlias;
     condemnedBox.checked = !!savedRec && typeof savedRec !== "string" && savedRec.aliasCondemned === true;
     title.textContent = titleFor(savedAlias, condemnedBox.checked);
+    applyMask();
     // Сохранённый ключ теперь «виден» пользователю — следующие сохранения
     // в этой же модалке работают с ним как со своим.
     openedKey = key;

@@ -237,6 +237,33 @@ describe("свой ник", () => {
     expect(aliasInput().type).toBe("text");
   });
 
+  test("окно открыто до эфира — начался эфир: осуждёнка прячется без переоткрытия; закрытие отписывает", async () => {
+    let live = false;
+    let cb: (() => void) | null = null;
+    let unsubscribed = false;
+    const { port, model } = makePort(
+      { "u:42": { text: "", timestamp: 1, nick: "Аня", alias: "Грубость", aliasCondemned: true } },
+      {
+        maskCondemned: () => live,
+        onStreamChange: (fn) => {
+          cb = fn;
+          return () => {
+            unsubscribed = true;
+          };
+        },
+      },
+    );
+    await model.load();
+    showNoteModal(port, "Аня");
+    expect(modal().querySelector("h3")?.textContent).toContain("Грубость");
+    live = true;
+    cb!();
+    expect(modal().querySelector("h3")?.textContent).toBe("Заметка для игрока Аня");
+    expect(aliasInput().type).toBe("password");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(unsubscribed).toBe(true);
+  });
+
   test("вне эфира — как обычно", async () => {
     const { port, model } = makePort(
       { "u:42": { text: "", timestamp: 1, nick: "Аня", alias: "Грубость", aliasCondemned: true } },

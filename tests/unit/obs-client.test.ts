@@ -384,3 +384,20 @@ describe("эфир: переподключение и выгрузка SW (ре�
     expect(await fresh.getStreaming()).toBe(true);
   });
 });
+
+describe("эфир при обрыве связи (контрольный раунд, Б5)", () => {
+  const event = (eventType: string, eventData: unknown) =>
+    FakeSocket.last!.onmessage?.({ data: JSON.stringify({ op: 5, d: { eventType, eventData } }) });
+
+  test("обрыв при «эфира нет» — «неизвестно», и новый SW тоже не скажет «нет»", async () => {
+    const client = new ObsClient();
+    await connectOk(client);
+    event("StreamStateChanged", { outputActive: false, outputState: "OBS_WEBSOCKET_OUTPUT_STOPPED" });
+    expect(client.getStatus().streaming).toBe(false);
+    FakeSocket.last!.close(1006, "OBS закрыли");
+    expect(client.getStatus().streaming, "OBS могли перезапустить и выйти в эфир").toBeNull();
+    await Promise.resolve();
+    expect(store.session.obs_streaming).toBeNull();
+    expect(await new ObsClient().getStreaming()).toBeNull();
+  });
+});

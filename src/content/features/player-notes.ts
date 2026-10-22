@@ -34,6 +34,7 @@ import {
 } from "@core/crossover";
 import { fetchFirstKilled } from "@core/match-brief";
 import { getOwnUserId, ownNameFromTable, rememberOwnUserId } from "@core/own-user";
+import { watchStreamState } from "@core/stream-state";
 import { buttonThemeColor } from "@shared/button-theme";
 import { lastGamesLimit } from "@shared/last-games";
 import { showToast } from "@core/toast";
@@ -684,6 +685,7 @@ class PlayerNotesManager {
     refreshTags: () => this.active && this.refreshPlayerTags(),
     refreshPlayer: (username) => this.active && this.updatePlayerTooltips(username),
     maskCondemned: () => this.aliases.maskCondemned(),
+    onStreamChange: (cb) => watchStreamState(cb, () => this.settings.obs_enabled === true),
   };
 
   /** Контекст тумблера «⋯» (модуль collapse-toggle; правда — в settings). */
