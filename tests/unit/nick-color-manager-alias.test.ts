@@ -11,6 +11,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
+  colorsChanged: 0,
+  fail: false,
   loadResult: { notes: {} as Record<string, unknown>, customTags: [] as string[], loadFailed: false },
   saved: {} as Record<string, unknown>,
 }));
@@ -31,6 +33,7 @@ vi.mock("@core/toast", () => ({ showToast: vi.fn(), clearToasts: vi.fn() }));
 // Координатор в фоне отвечает успехом и отдаёт свежую карту — как в бою.
 vi.mock("@core/messaging", () => ({
   sendRuntime: vi.fn(async (msg: { ops?: Array<{ key: string; record: unknown }> }) => {
+    if (h.fail) return { ok: false };
     for (const op of msg.ops ?? []) {
       if (op.record === null) delete h.saved[op.key];
       else h.saved[op.key] = op.record;
@@ -60,7 +63,9 @@ function makePort(
   const toasts: string[] = [];
   const model = new NotesModel({
     isActive: () => true,
-    onColorsChanged: () => undefined,
+    onColorsChanged: () => {
+      h.colorsChanged++;
+    },
     onIndicatorsChanged: () => undefined,
     onTagsChanged: () => undefined,
     onTooltipsChanged: () => undefined,
@@ -97,6 +102,8 @@ const flush = async () => {
 beforeEach(() => {
   document.body.innerHTML = "";
   h.saved = {};
+  h.colorsChanged = 0;
+  h.fail = false;
 });
 afterEach(() => {
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
@@ -156,5 +163,76 @@ describe("свой ник в «Заметках и цветах»", () => {
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "d", bubbles: true }));
     document.removeEventListener("keydown", probe);
     expect(leaked).toBe(0);
+  });
+});
+
+describe("setAlias: правила записи (ревью 22.10.2026)", () => {
+  const boot = async (start: Record<string, unknown>) => {
+    const { model, port } = makePort(start as NotesMap);
+    h.saved = structuredClone(start);
+    await model.load();
+    return { model, port };
+  };
+
+  test("снятый свой ник не удаляет запись с меткой; nick и история целы", async () => {
+    const { model } = await boot({ "u:7": { text: "", timestamp: 1, tag: "#ff0000", nick: "Бемби", nicks: ["Bambi"], alias: "Алина" } });
+    expect(await model.setAlias("u:7", "")).toBe(true);
+    const rec = h.saved["u:7"] as { tag?: string; nick?: string; nicks?: string[]; alias?: string };
+    expect(rec.tag).toBe("#ff0000");
+    expect(rec.nick).toBe("Бемби");
+    expect(rec.nicks).toEqual(["Bambi"]);
+    expect(rec.alias).toBeUndefined();
+  });
+
+  test("отказ записи — память откатывается, перерисовки нет", async () => {
+    const { model } = await boot({ "u:7": { text: "x", timestamp: 1, alias: "Алина" } });
+    h.fail = true;
+    expect(await model.setAlias("u:7", "Другая")).toBe(false);
+    expect((model.notes["u:7"] as { alias?: string }).alias, "память под диск").toBe("Алина");
+    expect(h.colorsChanged).toBe(0);
+  });
+
+  test("успех — плитки перерисовываются (сигнал цвета)", async () => {
+    const { model } = await boot({ "u:7": { text: "x", timestamp: 1 } });
+    expect(await model.setAlias("u:7", "Алина")).toBe(true);
+    expect(h.colorsChanged).toBe(1);
+  });
+
+  test("легаси-строка становится записью, текст сохраняется", async () => {
+    const { model } = await boot({ Бемби: "старая заметка" });
+    expect(await model.setAlias("Бемби", "Алина")).toBe(true);
+    expect(h.saved["Бемби"]).toMatchObject({ text: "старая заметка", alias: "Алина" });
+  });
+
+  test("сохранение без изменений запись не трогает (время не обновляется)", async () => {
+    const { model } = await boot({ "u:7": { text: "x", timestamp: 1, alias: "Алина" } });
+    expect(await model.setAlias("u:7", " Алина ")).toBe(true);
+    expect((h.saved["u:7"] as { timestamp: number }).timestamp).toBe(1);
+  });
+});
+
+describe("окно не стирает черновик", () => {
+  test("через 2 с после сохранения ника открытый редактор заметки не пересоздаётся", async () => {
+    vi.useFakeTimers();
+    try {
+      const start = { "u:42": { text: "Женя", timestamp: 1, nick: "Азарт" } };
+      const { port, model } = makePort(start);
+      h.saved = structuredClone(start);
+      await model.load();
+      openNickColorManager(port);
+      btn("+ ник")!.click();
+      const input = win().querySelector<HTMLInputElement>("input[placeholder^='Свой ник']")!;
+      input.value = "Жека";
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await flush();
+      btn("Заметка")!.click();
+      const area = win().querySelector("textarea")!;
+      area.value = "длинный черновик";
+      await vi.advanceTimersByTimeAsync(2100);
+      expect(win().querySelector("textarea")?.value, "черновик на месте").toBe("длинный черновик");
+      expect(win().querySelector("[data-pn-saved]"), "бейдж снят").toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

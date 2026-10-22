@@ -183,7 +183,12 @@ export function openNickColorManager(port: ModalPort): void {
     if (savedTimer) clearTimeout(savedTimer);
     savedTimer = setTimeout(() => {
       savedKey = null;
-      if (overlay.isConnected) render();
+      if (!overlay.isConnected) return;
+      // Открыт редактор — полная перерисовка пересоздала бы его из записи и
+      // стёрла недописанный текст (ревью 22.10.2026: «ник → заметка» терял
+      // черновик через 2 с). Тогда снимаем только бейдж.
+      if (expandedKey === null) render();
+      else list.querySelectorAll("[data-pn-saved]").forEach((n) => n.remove());
     }, 2000);
   };
 
@@ -299,6 +304,7 @@ export function openNickColorManager(port: ModalPort): void {
       if (savedKey === entry.key) {
         const saved = document.createElement("span");
         saved.textContent = "Сохранено ✓";
+        saved.dataset.pnSaved = "1";
         saved.style.cssText = "color:#22c55e;font-size:11px;flex:0 0 auto;";
         row.appendChild(saved);
       }
@@ -382,12 +388,17 @@ export function openNickColorManager(port: ModalPort): void {
           "padding:5px 12px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
           "font-size:12px;background:rgba(99,102,241,.6);flex:0 0 auto;";
         const doSave = () => {
+          const own = `a:${entry.key}`;
           void port.model.setAlias(entry.key, input.value).then((ok) => {
-            if (ok) {
-              expandedKey = null;
-              flashSaved(entry.key);
-              render();
-            } else save.textContent = "не сохранилось";
+            if (!ok) {
+              save.textContent = "не сохранилось";
+              return;
+            }
+            flashSaved(entry.key);
+            // Пока ждали фон, могли открыть другой редактор — его не трогаем.
+            if (expandedKey !== own) return;
+            expandedKey = null;
+            render();
           });
         };
         save.addEventListener("click", doSave);
@@ -439,12 +450,17 @@ export function openNickColorManager(port: ModalPort): void {
           "padding:5px 12px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
           "font-size:12px;background:rgba(99,102,241,.6);";
         const doSave = () => {
+          const own = `n:${entry.key}`;
           void port.model.setNoteText(entry.key, area.value.trim()).then((ok) => {
-            if (ok) {
-              expandedKey = null;
-              flashSaved(entry.key);
-              render();
-            } else save.textContent = "не сохранилось";
+            if (!ok) {
+              save.textContent = "не сохранилось";
+              return;
+            }
+            flashSaved(entry.key);
+            // Пока ждали фон, могли открыть другой редактор — его не трогаем.
+            if (expandedKey !== own) return;
+            expandedKey = null;
+            render();
           });
         };
         save.addEventListener("click", doSave);
@@ -514,7 +530,7 @@ export function openNickColorManager(port: ModalPort): void {
 
   const hint = document.createElement("div");
   hint.textContent =
-    "Цвет применяется сразу; заметка — по кнопке «Сохранить» (или Ctrl+Enter). " +
+    "Цвет применяется сразу; заметка — по «Сохранить» (или Ctrl+Enter), свой ник — по Enter. " +
     "То же самое можно делать прямо в игре — кнопка ✎ на плитке игрока.";
   hint.style.cssText = "color:rgba(255,255,255,.45);font-size:11px;margin:10px 0 12px;";
 

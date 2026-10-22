@@ -568,6 +568,9 @@ export class NotesModel {
       // Записи нет — гонка с удалением в другой вкладке: не воскрешаем.
       if (prev === undefined) return true;
       const clean = normalizeAlias(alias);
+      // Ничего не поменялось — не трогаем запись: свежее время сделало бы её
+      // победителем слияний на ровном месте.
+      if (typeof prev !== "string" && normalizeAlias(prev.alias) === clean) return true;
       const base: NoteRecord =
         typeof prev === "string" ? { text: prev, timestamp: Date.now(), version: VERSION } : prev;
       const next: NoteRecord = { ...base, alias: clean, timestamp: Date.now(), version: VERSION };
