@@ -28,7 +28,7 @@ import {
   setRoleSceneGateListener,
   type RoleSceneGateReason,
 } from "../panels/obs-panel";
-import { SITE, TEXT, OWN, classifyPhaseText, endedScreenVisible, staleDayLabel, SITE_CLASS } from "@core/selectors";
+import { SITE, TEXT, OWN, classifyPhaseText, endedScreenVisible, matchFinishedVisible, staleDayLabel, SITE_CLASS } from "@core/selectors";
 import { isAutoAcceptSuppressed } from "../auto-accept-gate";
 import { noteAutoAcceptDispatched } from "./queue-requeue";
 import type { Feature, FeatureContext } from "@core/feature";
@@ -55,6 +55,8 @@ let cfg = {
   rolePhaseSwitch: false,
   /** Автосцены OBS включены настройками (obs-panel могла ещё не стартовать). */
   obsAutoExpected: false,
+  /** Конец матча открывает стол (roles_reveal_on_game_end). */
+  revealOnEnd: true,
 };
 
 // Автопринятие (страница поиска)
@@ -691,6 +693,48 @@ function adoptSiteDecision(show: boolean, byUser: boolean): void {
  * ролями (внешний аудит №3, §4 п.7). Проверка — в немедленном подписчике,
  * до монтирования ролей новой игры.
  */
+// ─────────────────────── конец матча: стол открывается сам ───────────────────────
+
+/**
+ * Матч окончен (победа мафии или мирных) и стол открыт расширением — до новой
+ * игры (просьба владельца 23.10.2026). Сервер в конце присылает роли шерифа
+ * и чёрных: игра кончилась, прятать нечего — даже на эфире. Пауза и промах
+ * рисуются тем же блоком `.ended`, но не открывают (matchFinishedVisible
+ * различает классы ended-mafia/ended-civilian).
+ *
+ * Только КРАЙ: при входе в экран итога стол показывается один раз; дальше D
+ * и V работают как обычно, а фаза («экран итога — день») и сцена эфира (уход
+ * на дневную) стол больше не прячут. Новая игра (экран набора, другой путь)
+ * снимает режим — скрытие снова по настройкам.
+ */
+let matchRevealed = false;
+
+function checkMatchReveal(): void {
+  const due = cfg.revealOnEnd && matchFinishedVisible();
+  if (due === matchRevealed) return;
+  matchRevealed = due;
+  if (!due) return;
+  sawRunningGame = true;
+  cancelDayConfirm();
+  dayPending = false;
+  resumeShowMark = null;
+  if (pendingNightRoleShowTimer) {
+    clearTimeout(pendingNightRoleShowTimer);
+    pendingNightRoleShowTimer = null;
+  }
+  stopInitialAutoHideRole();
+  sceneHide = null;
+  endObsNight();
+  // Под V — открыть при отпускании, а не поверх зажатой клавиши.
+  if (peeking) {
+    peekRestoreHidden = false;
+    peekRestoreInline = false;
+  } else {
+    showAllRoles();
+  }
+  log.info(SCOPE, "матч окончен — роли стола открыты");
+}
+
 let lastRoutePath: string | null = null;
 
 function checkGameRoute(): void {
@@ -727,6 +771,7 @@ function checkNewRound(): void {
 
 function resetForNewGame(why: string): void {
   log.info(SCOPE, `${why} — состояние скрытия ролей сброшено`);
+  matchRevealed = false;
   lastManualRoleActionAt = 0;
   lastSiteRoleCommandAt = 0;
   pendingRoleKey = null;
@@ -803,6 +848,7 @@ function onRoleDomImmediate(muts: MutationRecord[]): void {
   for (const m of muts) {
     if (touchesPhase(m)) {
       checkNewRound();
+      checkMatchReveal();
       if (cfg.rolePhaseSwitch) applyRolePhase(detectRolePhase());
       break;
     }
@@ -985,6 +1031,7 @@ function bindPeekKey(code: string): void {
 
 function autoHideRole(): boolean {
   if (!cfg.autoHideRoles) return false;
+  if (matchRevealed) return true; // F5 на экране итога: стол открыт, не прячем
   // Всегда прячем CSS. Ночью ночной показ уберёт его сам.
   hideAllRolesCSS("auto");
   return true;
@@ -1170,6 +1217,8 @@ function applyRolePhase(phase: "day" | "night") {
   }
 
   if (phase !== "day" && phase !== "night") return;
+  // Матч окончен и стол открыт: «экран итога — день» его больше не прячет.
+  if (matchRevealed) return;
 
   // Отменяем таймер ночного показа только при уходе ИЗ ночи
   if (phase !== "night" && pendingNightRoleShowTimer) {
@@ -1282,6 +1331,8 @@ function syncRolesWithSceneGate(
   reason: RoleSceneGateReason = "gate",
   info?: { nightSince?: number },
 ): void {
+  // Матч окончен: уход эфира на дневную сцену стол не прячет — прятать нечего.
+  if (matchRevealed) return;
   if (peeking) {
     if (reason === "nightShow") {
       pendingNightShowSince = info?.nightSince ?? Date.now();
@@ -1764,6 +1815,7 @@ function enableGamePage() {
     checkGameRoute();
     clickStartGameButton();
     disableWebcams();
+    checkMatchReveal();
     queueRolePhaseCheck();
   }, 1000);
 
@@ -1819,6 +1871,8 @@ function enableGamePage() {
     sceneHide = { manualMark: lastManualRoleActionAt, cssWasPresent: isRolesHiddenByCSS() };
     if (!sceneHide.cssWasPresent) hideAllRolesCSS("auto");
   }
+  // F5 на экране итога: стол — открытый, как у дошедших до конца в этой вкладке.
+  checkMatchReveal();
 
   // Отмечаем действия игрока, чтобы автоклики не спорили с ним.
   // isTrusted отсекает наши же синтетические клики.
@@ -1942,7 +1996,9 @@ function applyConfig(ctx: FeatureContext) {
     // То же правило, что effectiveAutoMode в obs-panel: до включения панели
     // её состояние (obsAutoScenesActive) — false, поэтому читаем настройки.
     obsAutoExpected: s.obs_auto_mode_enabled === true && s.obs_enabled === true,
+    revealOnEnd: s.roles_reveal_on_game_end !== false,
   };
+  if (gameInterval !== null) checkMatchReveal();
 
   // Включили автосмену посреди фазы — переинициализируем её на ближайшей
   // проверке: прежде отменённый выключением ночной показ не перевзводился, и
@@ -2039,7 +2095,9 @@ export const autoStartFeature: Feature = {
       autoHideRoles: false,
       rolePhaseSwitch: false,
       obsAutoExpected: false,
+      revealOnEnd: true,
     };
+    matchRevealed = false;
     peeking = false;
     peekRestoreHidden = false;
     peekRestoreInline = false;

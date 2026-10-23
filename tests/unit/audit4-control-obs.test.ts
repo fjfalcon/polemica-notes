@@ -3,7 +3,7 @@
 // Внешний аудит №4 (независимый контроль): настоящий ObsClient — pending/op:6/op:7,
 // onclose(1006), attemptReconnect. Бывшие свидетели дефектов B03/H01/H02/H04 обращены.
 // Independent controls: asynchronous messages, real request timers, storage snapshots.
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 const transport = vi.hoisted(() => ({
   listeners: [] as Array<(m: any) => unknown>, client: null as any,
   storage: {} as Record<string, any>, actual: "night", sent: [] as any[],
@@ -219,4 +219,38 @@ test("H04 control with promptly completed NIGHT ACK: subsequent day keeps both r
   phase("day"); await vi.advanceTimersByTimeAsync(17000);
   expect(transport.actual).toBe("night");
   expect(visibility()).toEqual([false, false]);
+});
+
+describe("конец матча открывает стол и при автосценах OBS (23.10.2026)", () => {
+  const endScreen = () => {
+    document.querySelector(".roller")!.innerHTML = '<div class="ended ended-civilian"><div class="ended__title">Победа мирных</div></div>';
+  };
+  beforeEach(() => {
+    // matchFinishedVisible/endedScreenVisible требуют геометрию узла.
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get: () => 100 });
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, get: () => 100 });
+  });
+  afterEach(() => {
+    delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetWidth;
+    delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
+  });
+
+  test("эфир уходит на дневную сцену, но стол и своя роль открыты (пин снят)", async () => {
+    await connect(); await boot();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    expect(visibility(), "день — скрыто").toEqual([false, false]);
+    endScreen(); await vi.advanceTimersByTimeAsync(4000);
+    expect(transport.actual, "сцена — дневная").toBe("day");
+    expect(visibility(), "матч окончен — видно всё").toEqual([true, true]);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(visibility(), "самолечение пина не прячет обратно").toEqual([true, true]);
+  });
+
+  test("настройка выключена — как раньше: на экране итога скрыто", async () => {
+    settings = { ...settings, roles_reveal_on_game_end: false } as typeof settings;
+    await connect(); await boot();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    endScreen(); await vi.advanceTimersByTimeAsync(10000);
+    expect(visibility()).toEqual([false, false]);
+  });
 });

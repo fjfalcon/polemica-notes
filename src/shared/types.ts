@@ -54,6 +54,8 @@ export interface Settings {
   disable_webcam_clicks: boolean;
   enable_role_faker: boolean;
   auto_hide_roles_enabled: boolean;
+  /** Конец матча (победа мафии/мирных) открывает стол: роли шерифа и чёрных видны. */
+  roles_reveal_on_game_end: boolean;
   role_phase_auto_switch_enabled: boolean;
   /** Режим поворота камер: клик по игроку переворачивает его видео на 180°. */
   camera_rotate_enabled: boolean;

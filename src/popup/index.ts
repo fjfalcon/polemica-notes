@@ -1480,6 +1480,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (msv) msv.value = items.match_stats_view || "hints";
 
     set("auto_hide_roles_enabled", items.auto_hide_roles_enabled);
+    set("roles_reveal_on_game_end", items.roles_reveal_on_game_end);
     const rpase = $<HTMLInputElement>("role_phase_auto_switch_enabled");
     if (rpase) {
       rpase.checked = items.auto_hide_roles_enabled ? items.role_phase_auto_switch_enabled : false;
@@ -1721,6 +1722,7 @@ document.addEventListener("DOMContentLoaded", () => {
       auto_hide_roles_enabled: autoHideRolesEnabled,
       role_phase_auto_switch_enabled:
         autoHideRolesEnabled && cb("role_phase_auto_switch_enabled", false),
+      roles_reveal_on_game_end: cb("roles_reveal_on_game_end", true),
       // OBS
       obs_enabled: cb("obs_enabled", false),
       // Санитайзер SEC26-1: userinfo/query отрезаются при сохранении —
@@ -1854,6 +1856,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "match_stats_view",
     "auto_hide_roles_enabled",
     "role_phase_auto_switch_enabled",
+    "roles_reveal_on_game_end",
     "disable_webcam_clicks",
     "auto_accept_enabled",
     "auto_ready_enabled",

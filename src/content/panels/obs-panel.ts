@@ -285,6 +285,8 @@ class ObsPanel extends FloatingPanel {
 let panel: ObsPanel | null = null;
 
 let autoModeEnabled = false;
+/** Конец матча открывает стол (roles_reveal_on_game_end) — пин своей роли снимается. */
+let revealOnEnd = true;
 /** Показ плавающей панели (obs_floating_panel_enabled). Автомод от неё не зависит. */
 let panelEnabled = false;
 let dayScene = "";
@@ -631,7 +633,7 @@ function applyRoleVisibility(isRoleVisible: boolean): boolean {
         ? "роль показана (ночь, эфир на ночной сцене)"
         : "роль скрыта (день или эфир не на ночной сцене)",
     );
-    if (isRoleVisible) notifyRoleSceneGate("nightShow", { nightSince: nightSince ?? Date.now() });
+    if (isRoleVisible && !matchRevealActive()) notifyRoleSceneGate("nightShow", { nightSince: nightSince ?? Date.now() });
   }
   return true;
 }
@@ -669,8 +671,18 @@ export function nightRoleShowAllowed(input: {
   return !!input.nightScene && input.currentScene === input.nightScene;
 }
 
+/**
+ * Матч окончен и стол открывается (23.10.2026): прятать нечего — пин своей
+ * роли снимается, барьер перед дневной сценой не прячет, nightShow не шлём
+ * (стол открывает auto-start своим краем конца матча). Пауза/промах — нет.
+ */
+function matchRevealActive(): boolean {
+  return revealOnEnd && matchFinishedVisible();
+}
+
 /** Целевая видимость роли для фазы С УЧЁТОМ сцены (живое состояние модуля). */
 function roleTargetFor(timeOfDay: TimeOfDay): "visible" | "hidden" {
+  if (matchRevealActive()) return "visible";
   return timeOfDay === "night" && nightRoleShowAllowed({ nightScene, currentScene })
     ? "visible"
     : "hidden";
@@ -800,9 +812,11 @@ function scheduleRoleVisibility(timeOfDay: TimeOfDay, attempt = 0): void {
   }
 
   const delayMs = shouldShowRoles
-    ? attempt === 0
-      ? roleVisibilityDelayMs
-      : 500
+    ? matchRevealActive()
+      ? 0 // конец матча — без ночной задержки
+      : attempt === 0
+        ? roleVisibilityDelayMs
+        : 500
     : attempt === 0
       ? 0
       : 250;
@@ -853,6 +867,7 @@ let autoGeneration = 0;
 
 async function hideRoleBeforeDaySceneSwitch(): Promise<void> {
   lastPreDayAt = Date.now();
+  if (matchRevealActive()) return; // матч окончен: дневная сцена роли не прячет
   if (pendingRoleVisibilityTimer) {
     clearTimeout(pendingRoleVisibilityTimer);
     pendingRoleVisibilityTimer = null;
@@ -1421,8 +1436,10 @@ async function autoSwitchScene(timeOfDay: TimeOfDay): Promise<void> {
     // Последнее слово перед командой — синхронно: D или V, нажатые за время
     // кадра pre-day, отменяли его результат, а отметка «свежо» заставляла
     // поверить старому скрытию (внешний аудит №7, B01).
-    notifyRoleSceneGate("beforeDayScene");
-    applyRoleVisibility(false);
+    if (!matchRevealActive()) {
+      notifyRoleSceneGate("beforeDayScene");
+      applyRoleVisibility(false);
+    }
   }
 
   log.info(SCOPE, "автосмена сцены:", timeOfDay, "→", targetScene, "(было:", currentScene, ")");
@@ -1786,6 +1803,7 @@ export function effectiveAutoMode(s: { obs_auto_mode_enabled?: unknown; obs_enab
 
 function applyAutoSettings(ctx: FeatureContext): void {
   const s = ctx.settings;
+  revealOnEnd = s.roles_reveal_on_game_end !== false;
   const newAutoMode = effectiveAutoMode(s);
   const newDayScene = s.obs_day_scene || "";
   const newNightScene = s.obs_night_scene || "";

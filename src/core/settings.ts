@@ -55,6 +55,8 @@ export const DEFAULT_SETTINGS: Settings = {
   disable_webcam_clicks: false,
   enable_role_faker: false,
   auto_hide_roles_enabled: false,
+  // Игра окончена — прятать нечего: стол открывается сам (23.10.2026).
+  roles_reveal_on_game_end: true,
   role_phase_auto_switch_enabled: false,
   camera_rotate_enabled: true,
   player_mute_enabled: true,
