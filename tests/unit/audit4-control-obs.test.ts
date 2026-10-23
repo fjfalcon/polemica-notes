@@ -246,6 +246,32 @@ describe("конец матча открывает стол и при автос
     expect(visibility(), "самолечение пина не прячет обратно").toEqual([true, true]);
   });
 
+  test("ревью F2: V зажата в момент конца матча — после отпускания своя роль не прячется обратно", async () => {
+    await connect(); await boot();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    expect(visibility(), "день — скрыто").toEqual([false, false]);
+    down("KeyV"); await microtasks();
+    expect(isPeeking(), "подсматриваем").toBe(true);
+    endScreen(); await vi.advanceTimersByTimeAsync(300);
+    up("KeyV"); await microtasks();
+    for (const t of [16, 300, 1000, 2000, 5000]) {
+      await vi.advanceTimersByTimeAsync(t);
+      expect(visibility(), `через ${t} мс после отпускания`).toEqual([true, true]);
+    }
+  });
+
+  test("ревью F1: итог сменился раздачей новой игры без экрана набора — стол снова спрятан", async () => {
+    await connect(); await boot();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    endScreen(); await vi.advanceTimersByTimeAsync(4000);
+    expect(visibility(), "матч окончен").toEqual([true, true]);
+    document.querySelector(".roller")!.innerHTML = '<div class="stage"><div class="substage current">День | Раздача ролей</div></div>';
+    await vi.advanceTimersByTimeAsync(16);
+    expect(visibility(), "раздача — первый кадр").toEqual([false, false]);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(visibility(), "и дальше").toEqual([false, false]);
+  });
+
   test("настройка выключена — как раньше: на экране итога скрыто", async () => {
     settings = { ...settings, roles_reveal_on_game_end: false } as typeof settings;
     await connect(); await boot();

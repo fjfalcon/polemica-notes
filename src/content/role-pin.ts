@@ -246,11 +246,20 @@ export function liftPins(): boolean {
   return true;
 }
 
-/** Вернуть поднятый пин. Если владелец за это время перепинил — не мешаем. */
-export function restoreLiftedPins(): void {
+/**
+ * Вернуть поднятый пин. Если владелец за это время перепинил — не мешаем.
+ * rehide=false (стол открыт концом матча): скрывающий пин не возвращаем —
+ * роль остаётся открытой, а pinHolds честно отвечает «пина нет», и владелец
+ * решает заново (сегодня его цель в конце матча — «visible»).
+ */
+export function restoreLiftedPins(rehide = true): void {
   if (!lifted || pinTarget === null) return;
   lifted = false;
   const target = pinTarget;
+  if (target === "hidden" && !rehide) {
+    setShield(false);
+    return;
+  }
   dropDisconnected();
   const targets = getRoleVisibilityTargets();
   for (const el of targets) applyToElement(el, target);

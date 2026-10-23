@@ -686,13 +686,6 @@ function adoptSiteDecision(show: boolean, byUser: boolean): void {
   }
 }
 
-/**
- * Новая игра в ТОМ ЖЕ документе (SPA-переход поиск → комната): прежде
- * состояние прошлой игры (показанные D роли, «ручное» этой ночи) переезжало
- * в новую, и авто-скрытие не перевзводилось — раздача шла с открытыми
- * ролями (внешний аудит №3, §4 п.7). Проверка — в немедленном подписчике,
- * до монтирования ролей новой игры.
- */
 // ─────────────────────── конец матча: стол открывается сам ───────────────────────
 
 /**
@@ -704,16 +697,23 @@ function adoptSiteDecision(show: boolean, byUser: boolean): void {
  *
  * Только КРАЙ: при входе в экран итога стол показывается один раз; дальше D
  * и V работают как обычно, а фаза («экран итога — день») и сцена эфира (уход
- * на дневную) стол больше не прячут. Новая игра (экран набора, другой путь)
- * снимает режим — скрытие снова по настройкам.
+ * на дневную) стол больше не прячут.
+ *
+ * Режим держится, пока виден экран итога. Исчез без новой игры (сайт сразу
+ * начал раздачу, тумблер выключили) — это сброс как на новую игру: стол
+ * снова прячется по настройкам и сцене эфира (fail-closed; ревью
+ * 23.10.2026, F1 — прежде режим снимался молча и раздача шла открытой).
  */
 let matchRevealed = false;
 
 function checkMatchReveal(): void {
   const due = cfg.revealOnEnd && matchFinishedVisible();
   if (due === matchRevealed) return;
-  matchRevealed = due;
-  if (!due) return;
+  if (!due) {
+    resetForNewGame("экран итога исчез");
+    return;
+  }
+  matchRevealed = true;
   sawRunningGame = true;
   cancelDayConfirm();
   dayPending = false;
@@ -735,6 +735,13 @@ function checkMatchReveal(): void {
   log.info(SCOPE, "матч окончен — роли стола открыты");
 }
 
+/**
+ * Новая игра в ТОМ ЖЕ документе (SPA-переход поиск → комната): прежде
+ * состояние прошлой игры (показанные D роли, «ручное» этой ночи) переезжало
+ * в новую, и авто-скрытие не перевзводилось — раздача шла с открытыми
+ * ролями (внешний аудит №3, §4 п.7). Проверка — в немедленном подписчике,
+ * до монтирования ролей новой игры.
+ */
 let lastRoutePath: string | null = null;
 
 function checkGameRoute(): void {
@@ -994,7 +1001,9 @@ function stopPeek(teardown = false): void {
   peekRestoreInline = false;
   peekRestorePin = false;
   peeking = false;
-  if (restorePin) restoreLiftedPins();
+  // Конец матча под клавишей: пин своей роли не возвращаем скрытым —
+  // владелец (obs-panel) перепинит его открытым (ревью 23.10.2026, F2).
+  if (restorePin) restoreLiftedPins(!matchRevealed);
   if (teardown) return;
   const showDue = nightShowDue();
   const rehide = shouldRehideAfterPeek({

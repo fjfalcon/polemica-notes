@@ -556,7 +556,7 @@ describe("peek и пин: source-стражи (№7/№10; поведение п
     const body = src.slice(start, src.indexOf("function stopPeek"));
     expect(body).toMatch(/liftPins\(\)/);
     const stopBody = src.slice(src.indexOf("function stopPeek"), src.indexOf("function bindPeek"));
-    expect(stopBody, "возврат пина при отпускании").toMatch(/restoreLiftedPins\(\)/);
+    expect(stopBody, "возврат пина при отпускании").toMatch(/if \(restorePin\) restoreLiftedPins\(/);
   });
 
   test("№7: запинённый узел не считается «нашим inline» и не попадает в снимки", () => {
