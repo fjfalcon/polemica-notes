@@ -691,7 +691,23 @@ function matchRevealActive(): boolean {
  * же, что дня, или эфир ещё на ночной (выбыл посреди ночи).
  */
 function dayAtNightWhenOut(): boolean {
-  return autoModeEnabled && dayWhenOut && ownEliminatedVisible() && !matchRevealActive();
+  return autoModeEnabled && dayWhenOut && ownOutThisGame() && !matchRevealActive();
+}
+
+/**
+ * Метка выбывания у сайта — латч на весь документ (ревью 25.10.2026, №2):
+ * компоненты плиток живут по месту, isKilled сбрасывается только начальными
+ * data. Новая игра в том же документе унаследовала бы метку прошлой — живой
+ * стример считался бы выбывшим, и раздача шла бы на дневной сцене. Метка,
+ * видимая в момент сброса фазы на новую игру, — прошлой игры: не слушаем её,
+ * пока не пропадёт.
+ */
+let staleOutMark = false;
+
+function ownOutThisGame(): boolean {
+  const seen = ownEliminatedVisible();
+  if (!seen) staleOutMark = false;
+  return seen && !staleOutMark;
 }
 
 /** Ночная сцена держится и показ ночью разрешён (сцена + не выбыл). */
@@ -1559,6 +1575,8 @@ function checkOutAtNight(): void {
 
 function resetPhaseForNewGame(why: string): void {
   log.info(SCOPE, `${why} — фаза автосцен сброшена`);
+  staleOutMark = ownEliminatedVisible();
+  outAtNight = false;
   cancelPendingRoleVisibility();
   if (pendingTimeOfDayConfirmTimer) {
     clearTimeout(pendingTimeOfDayConfirmTimer);
@@ -2048,6 +2066,8 @@ export const obsPanelFeature: Feature = {
     scenes = [];
     currentScene = null;
     obsSessionId = null;
+    outAtNight = false;
+    staleOutMark = false;
     currentTimeOfDay = null;
     nightSince = null;
     longNightWarned = false;

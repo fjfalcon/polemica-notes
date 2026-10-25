@@ -326,10 +326,13 @@ describe("выбыл из матча — ночью эфир на дневной
     phase("night"); await vi.advanceTimersByTimeAsync(10000);
     expect(transport.actual).toBe("night");
     expect(visibility(), "ночь — показ").toEqual([true, true]);
+    const atSwitch: boolean[][] = [];
+    transport.probe = (scene) => { if (scene === "day") atSwitch.push(visibility()); };
     eliminate("state-disqualified");
     await vi.advanceTimersByTimeAsync(2500);
     expect(visibility(), "выбыл — стол спрятан").toEqual([false, false]);
     expect(transport.actual, "и эфир на дневной").toBe("day");
+    expect(atSwitch, "в момент команды дневной сцены").toEqual([[false, false]]);
     await vi.advanceTimersByTimeAsync(10000);
     expect(visibility()).toEqual([false, false]);
   });
@@ -380,5 +383,39 @@ describe("выбыл из матча — ночью эфир на дневной
     document.querySelector(".roller")!.innerHTML = '<div class="ended ended-mafia"><div class="ended__title">Победа мафии</div></div>';
     await vi.advanceTimersByTimeAsync(4000);
     expect(visibility()).toEqual([true, true]);
+  });
+
+  test("ревью №3: устаревшее сценовое скрытие и ручной D на BRB, выбыл после возврата на NIGHT — при команде DAY стол спрятан", async () => {
+    const socket = await connect(); await boot();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    phase("night"); await vi.advanceTimersByTimeAsync(10000);
+    expect(visibility()).toEqual([true, true]);
+    socket.program("brb"); await vi.advanceTimersByTimeAsync(100);
+    expect(visibility(), "BRB — спрятано").toEqual([false, false]);
+    await vi.advanceTimersByTimeAsync(2500);
+    down("KeyD"); up("KeyD");
+    await vi.advanceTimersByTimeAsync(50);
+    socket.program("night"); await vi.advanceTimersByTimeAsync(100);
+    const atSwitch: boolean[][] = [];
+    transport.probe = (scene) => { if (scene === "day") atSwitch.push(visibility()); };
+    eliminate();
+    await vi.advanceTimersByTimeAsync(2100);
+    expect(transport.actual).toBe("day");
+    expect(atSwitch).toEqual([[false, false]]);
+  });
+
+  test("ревью №2: метка выбывания прошлой игры (латч сайта) в новой игре того же документа не действует", async () => {
+    await connect(); await boot();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    eliminate();
+    phase("night"); await vi.advanceTimersByTimeAsync(4000);
+    expect(transport.actual, "выбыл — дневная").toBe("day");
+    document.body.insertAdjacentHTML("beforeend", '<div class="new-stage">Набор</div>');
+    await vi.advanceTimersByTimeAsync(2500);
+    document.querySelector(".new-stage")!.remove();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    phase("night"); await vi.advanceTimersByTimeAsync(10000);
+    expect(transport.actual, "новая игра — ночная сцена, хоть метка висит").toBe("night");
+    expect(visibility(), "и ночной показ").toEqual([true, true]);
   });
 });

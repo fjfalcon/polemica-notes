@@ -763,7 +763,8 @@ export function matchFinishedVisible(): boolean {
 
 /**
  * Я выбыл из матча (убит, заголосован, дисквалифицирован): видимая метка на
- * СВОЕЙ плитке. Не латч — новая игра рисует плитки заново, без метки.
+ * СВОЕЙ плитке. У сайта это латч на весь документ (плитки живут по месту,
+ * isKilled не сбрасывается) — привязку к текущей игре делает вызыватель.
  */
 export function ownEliminatedVisible(): boolean {
   const el = document.querySelector<HTMLElement>(SITE.myEliminatedState);
