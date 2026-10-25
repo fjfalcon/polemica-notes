@@ -761,6 +761,15 @@ export function matchFinishedVisible(): boolean {
   return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
 }
 
+/**
+ * Я выбыл из матча (убит, заголосован, дисквалифицирован): видимая метка на
+ * СВОЕЙ плитке. Не латч — новая игра рисует плитки заново, без метки.
+ */
+export function ownEliminatedVisible(): boolean {
+  const el = document.querySelector<HTMLElement>(SITE.myEliminatedState);
+  return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+}
+
 export function classifyPhaseText(text: string): "day" | "night" | null {
   const day = hasPhaseMarker(text, TEXT.day);
   const night = hasPhaseMarker(text, TEXT.night);

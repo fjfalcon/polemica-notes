@@ -30,6 +30,7 @@ import {
   endedScreenVisible,
   staleDayLabel,
   matchFinishedVisible,
+  ownEliminatedVisible,
   SITE_CLASS,
 } from "@core/selectors";
 import { gameRouteKey, isGameRoomPath } from "@shared/routes";
@@ -291,6 +292,8 @@ let revealOnEnd = true;
 let panelEnabled = false;
 let dayScene = "";
 let nightScene = "";
+/** Выбыл из матча — ночью эфир на дневной сцене (obs_day_scene_when_out). */
+let dayWhenOut = true;
 
 let scenes: ObsScene[] = [];
 let currentScene: string | null = null;
@@ -680,12 +683,26 @@ function matchRevealActive(): boolean {
   return revealOnEnd && matchFinishedVisible();
 }
 
+/**
+ * Я выбыл из матча (просьба владельца 25.10.2026): ночью эфир остаётся на
+ * дневной сцене — зрители смотрят игру дальше. Стол при этом ПРЯЧЕТСЯ, как
+ * днём: игра не сыграна, а напарники выбывшей мафии живы (подсказать им
+ * могут из чата). Поэтому и ночной показ запрещён, даже если сцена ночи та
+ * же, что дня, или эфир ещё на ночной (выбыл посреди ночи).
+ */
+function dayAtNightWhenOut(): boolean {
+  return autoModeEnabled && dayWhenOut && ownEliminatedVisible() && !matchRevealActive();
+}
+
+/** Ночная сцена держится и показ ночью разрешён (сцена + не выбыл). */
+function nightShowSceneHeld(): boolean {
+  return !dayAtNightWhenOut() && nightRoleShowAllowed({ nightScene, currentScene });
+}
+
 /** Целевая видимость роли для фазы С УЧЁТОМ сцены (живое состояние модуля). */
 function roleTargetFor(timeOfDay: TimeOfDay): "visible" | "hidden" {
   if (matchRevealActive()) return "visible";
-  return timeOfDay === "night" && nightRoleShowAllowed({ nightScene, currentScene })
-    ? "visible"
-    : "hidden";
+  return timeOfDay === "night" && nightShowSceneHeld() ? "visible" : "hidden";
 }
 
 /**
@@ -696,7 +713,7 @@ function roleTargetFor(timeOfDay: TimeOfDay): "visible" | "hidden" {
  */
 export function nightSceneSafeForRoleShow(): boolean {
   if (!autoModeEnabled) return true;
-  return nightRoleShowAllowed({ nightScene, currentScene });
+  return nightShowSceneHeld();
 }
 
 export type RoleSceneGateReason = "gate" | "beforeDayScene" | "nightShow";
@@ -1221,7 +1238,7 @@ function requestTimeOfDayCheck(): void {
     return;
   }
   // Долгая ночь: не переключаем (честная ночь бывает длинной), подсказываем.
-  if (currentTimeOfDay === "night" && !longNightWarned && isLongNight(nightSince, Date.now())) {
+  if (currentTimeOfDay === "night" && !longNightWarned && !dayAtNightWhenOut() && isLongNight(nightSince, Date.now())) {
     longNightWarned = true;
     const minutes = Math.round((Date.now() - (nightSince ?? Date.now())) / 60_000);
     log.warn(SCOPE, `ночная сцена держится уже ${minutes} мин — проверь, не зависла ли фаза`);
@@ -1412,9 +1429,13 @@ async function autoSwitchScene(timeOfDay: TimeOfDay): Promise<void> {
     return;
   }
 
-  const targetScene = timeOfDay === "day" ? dayScene : nightScene;
+  // Выбыл — ночью дневная сцена, тем же путём защиты, что днём.
+  const out = timeOfDay === "night" && dayAtNightWhenOut();
+  if (out) log.info(SCOPE, "выбыл из матча — ночью эфир остаётся на дневной сцене");
+  const scenePhase: TimeOfDay = out ? "day" : timeOfDay;
+  const targetScene = scenePhase === "day" ? dayScene : nightScene;
   if (!targetScene) {
-    log.info(SCOPE, "смена сцены пропущена: не выбрана сцена для фазы", timeOfDay);
+    log.info(SCOPE, "смена сцены пропущена: не выбрана сцена для фазы", scenePhase);
     return;
   }
   if (currentScene === targetScene) {
@@ -1425,7 +1446,7 @@ async function autoSwitchScene(timeOfDay: TimeOfDay): Promise<void> {
   // путём ни пришла команда: повтор после списка сцен (SceneCreated и т. п.)
   // шёл мимо неё, и показанный на приватной ночи стол уезжал в DAY (внешний
   // аудит №6, B02). Вызыватель, только что сделавший её сам, второй кадр не ждёт.
-  if (timeOfDay === "day") {
+  if (scenePhase === "day") {
     if (Date.now() - lastPreDayAt > PRE_DAY_FRESH_MS) {
       const gen = autoGeneration;
       const route = routeEpoch;
@@ -1442,7 +1463,7 @@ async function autoSwitchScene(timeOfDay: TimeOfDay): Promise<void> {
     }
   }
 
-  log.info(SCOPE, "автосмена сцены:", timeOfDay, "→", targetScene, "(было:", currentScene, ")");
+  log.info(SCOPE, "автосмена сцены:", scenePhase, "→", targetScene, "(было:", currentScene, ")");
   // currentScene обновляет switchScene ПОСЛЕ подтверждения. Оптимистичная
   // запись до запроса блокировала все повторы гвардом currentScene===target:
   // упавшее переключение (сцена удалена, дисконнект) молча замораживало
@@ -1463,7 +1484,7 @@ async function autoSwitchScene(timeOfDay: TimeOfDay): Promise<void> {
     // Молчание здесь стоило стримеру роли в эфире (жалоба 01.10.2026): о
     // проблеме узнали от зрителей. Ночью объясняем и последствие для роли.
     showToast(
-      timeOfDay === "night"
+      scenePhase === "night"
         ? "OBS не подключён: ночная сцена не переключена, роль оставлена скрытой. Запустите OBS или выключите автосцены"
         : "OBS: сцена не переключена — проверьте подключение",
       { key: "obs-scene-switch-fail" },
@@ -1518,6 +1539,22 @@ function checkNewRound(): void {
   } else if (currentTimeOfDay !== null) {
     roundSeenRunning = true;
   }
+}
+
+/**
+ * Выбыл посреди ночи (дисквалификация и т. п.): эфир уходит на дневную сцену
+ * сразу, а не со следующей ночи. Один раз на край — повторы при упавшей
+ * смене делают переподключение OBS и смена фазы. Стол к этому моменту уже
+ * спрятан самолечением (roleTargetFor), а autoSwitchScene прячет ещё раз
+ * перед командой дневной сцены.
+ */
+let outAtNight = false;
+
+function checkOutAtNight(): void {
+  const due = currentTimeOfDay === "night" && dayAtNightWhenOut();
+  if (due === outAtNight) return;
+  outAtNight = due;
+  if (due && currentScene !== dayScene) void autoSwitchScene("night");
 }
 
 function resetPhaseForNewGame(why: string): void {
@@ -1606,6 +1643,7 @@ function startDOMMonitoring(): void {
     checkPhaseRoute();
     checkNewRound();
     healRolePin();
+    checkOutAtNight();
     requestTimeOfDayCheck();
   }, 2000);
 
@@ -1804,6 +1842,7 @@ export function effectiveAutoMode(s: { obs_auto_mode_enabled?: unknown; obs_enab
 function applyAutoSettings(ctx: FeatureContext): void {
   const s = ctx.settings;
   revealOnEnd = s.roles_reveal_on_game_end !== false;
+  const newDayWhenOut = s.obs_day_scene_when_out !== false;
   const newAutoMode = effectiveAutoMode(s);
   const newDayScene = s.obs_day_scene || "";
   const newNightScene = s.obs_night_scene || "";
@@ -1811,9 +1850,11 @@ function applyAutoSettings(ctx: FeatureContext): void {
   const changed =
     newAutoMode !== autoModeEnabled ||
     newDayScene !== dayScene ||
-    newNightScene !== nightScene;
+    newNightScene !== nightScene ||
+    newDayWhenOut !== dayWhenOut;
 
   const wasAuto = autoModeEnabled;
+  dayWhenOut = newDayWhenOut;
   autoModeEnabled = newAutoMode;
   dayScene = newDayScene;
   nightScene = newNightScene;

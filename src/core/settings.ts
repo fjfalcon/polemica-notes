@@ -164,6 +164,7 @@ export const DEFAULT_SETTINGS: Settings = {
   obs_auto_mode_enabled: false,
   obs_day_scene: "",
   obs_night_scene: "",
+  obs_day_scene_when_out: true,
   twitch_chat_enabled: false,
   twitch_channel_name: "",
   // true: настройка теперь реально гейтит показ панели (раньше не читалась

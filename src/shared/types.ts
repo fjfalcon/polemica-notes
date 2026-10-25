@@ -181,6 +181,8 @@ export interface Settings {
   obs_auto_mode_enabled: boolean;
   obs_day_scene: string;
   obs_night_scene: string;
+  /** Выбыл из матча — ночью эфир остаётся на дневной сцене (роли спрятаны). */
+  obs_day_scene_when_out: boolean;
   // Twitch
   twitch_chat_enabled: boolean;
   twitch_channel_name: string;

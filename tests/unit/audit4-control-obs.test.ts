@@ -8,6 +8,8 @@ const transport = vi.hoisted(() => ({
   listeners: [] as Array<(m: any) => unknown>, client: null as any,
   storage: {} as Record<string, any>, actual: "night", sent: [] as any[],
   replies: [] as Array<() => void>, holdNight: false,
+  /** Снимок в момент команды смены сцены: что уехало бы в эфир с новой сценой. */
+  probe: null as null | ((scene: string) => void),
 }));
 vi.mock("@core/env", () => ({ browser: {
   storage: { local: {
@@ -78,6 +80,7 @@ class Socket {
       // Настоящий OBS отвечает сразу; эфир в этих сценариях не идёт.
       queueMicrotask(() => this.receive(7, { requestId: msg.d.requestId, requestType: "GetStreamStatus", requestStatus: { result: true, code: 100 }, responseData: { outputActive: false } }));
     } else if (msg.d.requestType === "SetCurrentProgramScene") {
+      transport.probe?.(msg.d.requestData.sceneName);
       transport.actual = msg.d.requestData.sceneName;
       queueMicrotask(() => {
         this.receive(5, { eventType: "CurrentProgramSceneChanged", eventIntent: 4, eventData: { sceneName: transport.actual } });
@@ -107,7 +110,7 @@ async function boot() { autoStartFeature.enable(context()); await obsPanelFeatur
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(1800000000000);
   settings = { ...options };
-  transport.listeners = []; transport.storage = {}; transport.actual = "night"; transport.sent = []; transport.replies = []; transport.holdNight = false;
+  transport.listeners = []; transport.storage = {}; transport.actual = "night"; transport.sent = []; transport.replies = []; transport.holdNight = false; transport.probe = null;
   transport.client = new ObsClient(); Socket.all = [];
   vi.stubGlobal("WebSocket", Socket);
   document.head.innerHTML = "";
@@ -278,5 +281,104 @@ describe("конец матча открывает стол и при автос
     phase("day"); await vi.advanceTimersByTimeAsync(4000);
     endScreen(); await vi.advanceTimersByTimeAsync(10000);
     expect(visibility()).toEqual([false, false]);
+  });
+});
+
+describe("выбыл из матча — ночью эфир на дневной сцене, стол спрятан (25.10.2026)", () => {
+  const eliminate = (kind = "state-voted") => {
+    document.querySelector(".player.my-player")!.insertAdjacentHTML("beforeend", `<div class="state ${kind}">Выбыл</div>`);
+  };
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, get: () => 100 });
+    Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, get: () => 100 });
+  });
+  afterEach(() => {
+    delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetWidth;
+    delete (HTMLElement.prototype as unknown as Record<string, unknown>).offsetHeight;
+  });
+
+  test("заголосовали днём — следующая ночь остаётся на дневной сцене, роли не открываются", async () => {
+    await connect(); await boot();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    expect(transport.actual).toBe("day");
+    eliminate("state-voted");
+    phase("night"); await vi.advanceTimersByTimeAsync(10000);
+    expect(transport.actual, "ночь — сцена дневная").toBe("day");
+    expect(visibility(), "стол спрятан всю ночь").toEqual([false, false]);
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    expect(transport.actual).toBe("day");
+    expect(visibility()).toEqual([false, false]);
+  });
+
+  test("тумблер выключен — как раньше: ночная сцена и ночной показ", async () => {
+    settings = { ...settings, obs_day_scene_when_out: false } as typeof settings;
+    await connect(); await boot();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    eliminate("state-killed");
+    phase("night"); await vi.advanceTimersByTimeAsync(10000);
+    expect(transport.actual).toBe("night");
+    expect(visibility()).toEqual([true, true]);
+  });
+
+  test("выбыл посреди ночи на ночной сцене — стол прячется, эфир уходит на дневную", async () => {
+    await connect(); await boot();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    phase("night"); await vi.advanceTimersByTimeAsync(10000);
+    expect(transport.actual).toBe("night");
+    expect(visibility(), "ночь — показ").toEqual([true, true]);
+    eliminate("state-disqualified");
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(visibility(), "выбыл — стол спрятан").toEqual([false, false]);
+    expect(transport.actual, "и эфир на дневной").toBe("day");
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(visibility()).toEqual([false, false]);
+  });
+
+  test("ночная сцена = дневная: выбывшему ночной показ всё равно запрещён", async () => {
+    settings = { ...settings, obs_night_scene: "day" } as typeof settings;
+    await connect(); await boot();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    eliminate();
+    phase("night"); await vi.advanceTimersByTimeAsync(10000);
+    expect(transport.actual).toBe("day");
+    expect(visibility()).toEqual([false, false]);
+  });
+
+  test("тумблер включили ночью, уже выбыв, — эфир уходит на дневную, стол спрятан", async () => {
+    settings = { ...settings, obs_day_scene_when_out: false } as typeof settings;
+    await connect(); await boot();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    eliminate();
+    phase("night"); await vi.advanceTimersByTimeAsync(10000);
+    expect(transport.actual).toBe("night");
+    expect(visibility()).toEqual([true, true]);
+    const atSwitch: boolean[][] = [];
+    transport.probe = (scene) => { if (scene === "day") atSwitch.push(visibility()); };
+    update({ obs_day_scene_when_out: true } as Partial<typeof settings>);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(transport.actual).toBe("day");
+    expect(atSwitch, "в момент команды дневной сцены стол уже спрятан").toEqual([[false, false]]);
+    expect(visibility()).toEqual([false, false]);
+  });
+
+  test("дневная сцена не выбрана: выбыл посреди ночи — стол прячется и на ночной сцене", async () => {
+    settings = { ...settings, obs_day_scene: "" } as typeof settings;
+    await connect(); await boot();
+    phase("night"); await vi.advanceTimersByTimeAsync(10000);
+    expect(transport.actual).toBe("night");
+    expect(visibility(), "ночь — показ").toEqual([true, true]);
+    eliminate("state-disqualified");
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(transport.actual).toBe("night");
+    expect(visibility(), "своя и напарники спрятаны").toEqual([false, false]);
+  });
+
+  test("выбыл, а матч окончен — стол открывается (конец матча главнее)", async () => {
+    await connect(); await boot();
+    phase("day"); await vi.advanceTimersByTimeAsync(4000);
+    eliminate();
+    document.querySelector(".roller")!.innerHTML = '<div class="ended ended-mafia"><div class="ended__title">Победа мафии</div></div>';
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(visibility()).toEqual([true, true]);
   });
 });

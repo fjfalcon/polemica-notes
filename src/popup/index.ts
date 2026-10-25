@@ -1481,6 +1481,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     set("auto_hide_roles_enabled", items.auto_hide_roles_enabled);
     set("roles_reveal_on_game_end", items.roles_reveal_on_game_end);
+    set("obs_day_scene_when_out", items.obs_day_scene_when_out);
     const rpase = $<HTMLInputElement>("role_phase_auto_switch_enabled");
     if (rpase) {
       rpase.checked = items.auto_hide_roles_enabled ? items.role_phase_auto_switch_enabled : false;
@@ -1741,6 +1742,7 @@ document.addEventListener("DOMContentLoaded", () => {
       obs_auto_mode_enabled: cb("obs_auto_mode_enabled", false),
       obs_day_scene: sceneVal("obs_day_scene", knownDayScene),
       obs_night_scene: sceneVal("obs_night_scene", knownNightScene),
+      obs_day_scene_when_out: cb("obs_day_scene_when_out", true),
       // Twitch
       twitch_chat_enabled: cb("twitch_chat_enabled", false),
       twitch_channel_name: val("twitch_channel_name", ""),
@@ -1857,6 +1859,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "auto_hide_roles_enabled",
     "role_phase_auto_switch_enabled",
     "roles_reveal_on_game_end",
+    "obs_day_scene_when_out",
     "disable_webcam_clicks",
     "auto_accept_enabled",
     "auto_ready_enabled",
