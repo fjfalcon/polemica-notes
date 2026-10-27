@@ -178,6 +178,12 @@ describe("отрисовка: текст сайта не меняется", () =
     expect(css).toMatch(/\.info__name\[data-pn-alias\]::before\s*\{[^}]*display:\s*inline-block[^}]*vertical-align:\s*top/);
   });
 
+  test("CSS: у ника с градиентом суффикс без прозрачности — иначе он выпадает из маски градиента", async () => {
+    const { readFileSync } = await import("node:fs");
+    const css = readFileSync("src/static/notes.css", "utf8");
+    expect(css).toMatch(/\[data-pn-nick-color\*="gradient"\]\[data-pn-alias-suffix\]::after\s*\{[^}]*opacity:\s*1\s*;/);
+  });
+
   test("CSS: свой ник в «Участниках» держится одной строкой, колонка ника сжимается", async () => {
     const { readFileSync } = await import("node:fs");
     const css = readFileSync("src/static/notes.css", "utf8");
