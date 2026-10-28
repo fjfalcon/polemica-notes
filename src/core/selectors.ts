@@ -8,7 +8,8 @@
  *     `classList`. Имя игрока живёт в реестре ДВАЖДЫ: `SITE.player` = ".player"
  *     и `SITE_CLASS.player` = "player" (инвариант сверяет их согласованность).
  *  2. `src/static/notes.css` — CSS дистрибутива, в нём разметка сайта и
- *     scoped-хеш Vue (`[data-v-…]`). Список известных классов — в инварианте
+ *     scoped-хеш Vue (`[data-v-…]`); `src/static/rating-hide.css` — классы
+ *     рейтинга сайта для режима «Скрыть рейтинг». Список известных классов — в инварианте
  *     `architecture.test.ts`, он же чек-лист.
  *  3. CSS-БЛОКИ внутри фич: скрытие роли (auto-start), сворачивание ников
  *     (nick-plate), таблица разбора (match-stats), тултипы, порядок контролов,
@@ -394,6 +395,14 @@ export const SITE = {
   statsTitleCell: ".title",
   /** Строка фазы в таблице разбора (её строим мы, имя общее). */
   statsRowPhase: ".row[data-phase]",
+  /**
+   * История игр на профиле (режим «Скрыть рейтинг»): колонки задаёт бандл
+   * профиля массивом columns — Дата, Тип игры, Роль, MMR, Результат.
+   * Колонку MMR ищем по подписи заголовка, а не по номеру.
+   */
+  profileGamesHeadItem: ".profileGames__table-head-row-item",
+  profileGamesBodyRow: ".profileGames__table-body-row",
+  profileGamesBodyItem: ".profileGames__table-body-row-item",
   penaltyDots: ".penalty-dots",
   penaltyDot: ".penalty-dot",
   bestMoveDot: ".best-move-dot",

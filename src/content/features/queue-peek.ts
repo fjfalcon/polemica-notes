@@ -605,7 +605,7 @@ function renderPanel(
           const name = style
             ? `<span style="${style}">${escapeHtml(raw)}</span>`
             : escapeHtml(raw);
-          const mmr = p.mmr ? ` <span style="color:#8b93a7">${escapeHtml(String(p.mmr))}</span>` : "";
+          const mmr = p.mmr ? ` <span data-pn-rating style="color:#8b93a7">${escapeHtml(String(p.mmr))}</span>` : "";
           return `<div style="padding:2px 0">${name}${mmr}</div>`;
         })
         .join("");

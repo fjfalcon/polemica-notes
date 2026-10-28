@@ -26,6 +26,9 @@ export default defineConfig({
     // Зонд медиа-комнаты: «F5 только для видео», ставится лениво по клику.
     "media-probe-page": "src/content/page/media-probe-page.ts",
     "room-probe-inject": "src/content/page/room-probe-inject.ts",
+    // Ранний флаг «Скрыть рейтинг» (content-скрипт на document_start): бандл
+    // сайта рисует MMR раньше, чем грузится content.js.
+    "rating-flag-early": "src/content/page/rating-flag-early.ts",
   },
   outDir: ".dist-js",
   format: ["iife"],

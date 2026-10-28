@@ -66,8 +66,14 @@ function matchScore(nick: string, q: string): number | null {
  * Ранжировать кандидатов по запросу. Чистая функция.
  * Порядок: совпадение по id → точный ник → начало ника → подстрока →
  * прежний ник; внутри — по MMR. Один id — одна строка, источники слиты.
+ * byRating=false (режим «Скрыть рейтинг»): внутри — по нику, порядок
+ * найденных не выдаёт, кто выше в рейтинге.
  */
-export function rankPlayerMatches(query: string, candidates: readonly Candidate[]): SearchHit[] {
+export function rankPlayerMatches(
+  query: string,
+  candidates: readonly Candidate[],
+  byRating = true,
+): SearchHit[] {
   const q = query.trim().toLowerCase();
   if (q.length < MIN_QUERY && !/^\d+$/.test(q)) return [];
   const byId = new Map<string, SearchHit>();
@@ -114,7 +120,12 @@ export function rankPlayerMatches(query: string, candidates: readonly Candidate[
   }
   return [...byId.values()]
     .filter((h) => Number.isFinite(h.score))
-    .sort((a, b) => a.score - b.score || (b.mmr ?? -1) - (a.mmr ?? -1) || a.nick.localeCompare(b.nick))
+    .sort(
+      (a, b) =>
+        a.score - b.score ||
+        (byRating ? (b.mmr ?? -1) - (a.mmr ?? -1) : 0) ||
+        a.nick.localeCompare(b.nick),
+    )
     .slice(0, MAX_HITS);
 }
 
@@ -193,6 +204,11 @@ export async function gatherCandidates(): Promise<{ candidates: Candidate[]; fai
 const PROFILE_URL = (id: string) => `https://polemicagame.com/profile/${encodeURIComponent(id)}`;
 
 /** Подключить поиск к разметке попапа. Без разметки — тихо ничего. */
+/** Режим «Скрыть рейтинг» — по тумблеру попапа (он и есть настройка на экране). */
+function ratingHidden(): boolean {
+  return document.querySelector<HTMLInputElement>("#hide_rating")?.checked === true;
+}
+
 export function setupPlayerSearch(): void {
   const input = document.getElementById("player_search_input") as HTMLInputElement | null;
   const button = document.getElementById("player_search_btn") as HTMLButtonElement | null;
@@ -225,7 +241,7 @@ export function setupPlayerSearch(): void {
       return;
     }
     if (my !== runId) return;
-    const hits = rankPlayerMatches(q, data.candidates);
+    const hits = rankPlayerMatches(q, data.candidates, !ratingHidden());
     renderHits(results, hits, q);
     const note = data.failed.length ? ` (недоступно: ${data.failed.join(", ")})` : "";
     status.textContent = hits.length
@@ -262,7 +278,9 @@ function hitRow(h: SearchHit): HTMLElement {
   hint.className = "hint";
   const parts = [`id ${h.id}`];
   if (h.matchedOldNick) parts.push(`раньше: ${h.matchedOldNick}`);
-  if (h.sources.length) parts.push(h.sources.map((s) => SOURCE_LABEL[s]).join(", "));
+  // «рейтинг» как источник = «игрок в топ-1000» — в режиме скрытия молчим.
+  const sources = ratingHidden() ? h.sources.filter((s) => s !== "rating") : h.sources;
+  if (sources.length) parts.push(sources.map((s) => SOURCE_LABEL[s]).join(", "));
   hint.textContent = parts.join(" · ");
   left.appendChild(hint);
   const right = document.createElement("span");

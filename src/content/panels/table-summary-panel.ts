@@ -81,11 +81,14 @@ export function tableSignature(players: readonly TablePlayer[]): string {
   return players.map((p) => `${p.seat}:${p.nick.toLowerCase()}`).join("|");
 }
 
-const TIER_BG: Record<string, string> = {
-  top: "rgba(74,222,128,.20)",
-  bottom: "rgba(148,163,184,.16)",
-  mid: "transparent",
-};
+/**
+ * Цвет тройки — через атрибут и CSS, не inline: режим «Скрыть рейтинг»
+ * гасит его вместе с колонкой (цвет «тройка сверху» и есть рейтинг).
+ */
+const TIER_CSS =
+  '.pn-table-summary-panel .pn-ts-row[data-pn-tier="top"]{background:rgba(74,222,128,.20);}' +
+  '.pn-table-summary-panel .pn-ts-row[data-pn-tier="bottom"]{background:rgba(148,163,184,.16);}' +
+  "html[data-pn-hide-rating] .pn-table-summary-panel .pn-ts-row{grid-template-columns:22px 1fr 62px 62px;background:transparent;}";
 
 class TableSummaryPanel extends FloatingPanel {
   private listEl: HTMLElement | null = null;
@@ -116,7 +119,8 @@ class TableSummaryPanel extends FloatingPanel {
       ".pn-table-summary-panel .pn-ts-nick{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fff;text-decoration:none;}" +
       ".pn-table-summary-panel a.pn-ts-nick:hover{text-decoration:underline;}" +
       ".pn-table-summary-panel .pn-ts-num{text-align:right;font-variant-numeric:tabular-nums;}" +
-      ".pn-table-summary-panel .pn-ts-dim{opacity:.55;}";
+      ".pn-table-summary-panel .pn-ts-dim{opacity:.55;}" +
+      TIER_CSS;
     body.appendChild(style);
     const list = document.createElement("div");
     Object.assign(list.style, { height: "100%", overflowY: "auto", padding: "6px" });
@@ -149,10 +153,10 @@ class TableSummaryPanel extends FloatingPanel {
     for (const r of sortRows(rows, sortMode)) {
       const row = document.createElement("div");
       row.className = "pn-ts-row";
-      row.style.background = TIER_BG[tiers.get(r.seat) ?? "mid"];
+      row.dataset.pnTier = tiers.get(r.seat) ?? "mid";
       row.appendChild(cell(String(r.seat), "pn-ts-num"));
       row.appendChild(nickCell(r));
-      row.appendChild(cell(r.mmr === null ? "—" : String(r.mmr), "pn-ts-num"));
+      row.appendChild(ratingCell(cell(r.mmr === null ? "—" : String(r.mmr), "pn-ts-num")));
       row.appendChild(sideCell(r, "civ"));
       row.appendChild(sideCell(r, "maf"));
       list.appendChild(row);
@@ -167,10 +171,19 @@ function cell(text: string, cls = ""): HTMLElement {
   return el;
 }
 
+/** Колонка MMR: режим «Скрыть рейтинг» прячет её CSS-ом (rating-hide.css). */
+function ratingCell(el: HTMLElement): HTMLElement {
+  el.setAttribute("data-pn-rating", "");
+  return el;
+}
+
 function buildRow(labels: string[], head: boolean): HTMLElement {
   const row = document.createElement("div");
   row.className = head ? "pn-ts-row pn-ts-head" : "pn-ts-row";
-  labels.forEach((l, i) => row.appendChild(cell(l, i === 0 || i >= 2 ? "pn-ts-num" : "")));
+  labels.forEach((l, i) => {
+    const c = cell(l, i === 0 || i >= 2 ? "pn-ts-num" : "");
+    row.appendChild(l === "MMR" ? ratingCell(c) : c);
+  });
   return row;
 }
 

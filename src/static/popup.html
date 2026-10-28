@@ -155,6 +155,8 @@
         .search-hit:hover { background: rgba(255,255,255,.06); }
         .search-hit .hint { display: block; }
         .search-mmr { font-size: 11px; color: var(--muted); white-space: nowrap; }
+        /* Скрыть рейтинг: MMR в найденных прячется вместе с тумблером, без перерисовки. */
+        body:has(#hide_rating:checked) .search-mmr { display: none; }
         #scenes_list {
             max-height: 110px; overflow-y: auto; border: 1px solid var(--border);
             border-radius: 8px; background: var(--bg); font-size: 12px;
@@ -437,6 +439,9 @@
                 </div>
                 <div id="player_search_status" class="status" style="text-align:left;margin:6px 0 2px"></div>
                 <div id="player_search_results"></div>
+            </div>
+            <div class="row"><span>Скрыть рейтинг<span class="hint">ничей MMR, его ± и места в рейтингах не видны нигде: в лобби, в профилях, в истории игр, на странице матча и в окнах расширения. Остаются победы, поражения и баллы матча</span></span>
+                <label class="switch"><input type="checkbox" id="hide_rating"><span class="slider"></span></label>
             </div>
             <div class="row"><span>Статистика игроков</span>
                 <label class="switch"><input type="checkbox" id="statistics_enabled" checked><span class="slider"></span></label>

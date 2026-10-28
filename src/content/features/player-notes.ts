@@ -1200,7 +1200,7 @@ class PlayerNotesManager {
     html += `<div class="tooltip-text" style="font-size: 10px;">`;
 
     if (this.settings.show_mmr) {
-      html += `MMR: ${escapeHtml(String(stats.mmr))}${stats.mmrStale ? " (устар.)" : ""}<br>`;
+      html += `<span data-pn-rating>MMR: ${escapeHtml(String(stats.mmr))}${stats.mmrStale ? " (устар.)" : ""}<br></span>`;
     }
     if (this.settings.show_games) {
       html += `Игр: ${escapeHtml(String(stats.totalGames))}<br>`;
@@ -2002,7 +2002,7 @@ class PlayerNotesManager {
           <span style="color: ${game.isWin ? "#4CAF50" : "#f44336"}">${
             game.isWin ? "Победа" : "Поражение"
           }</span>
-          <span style="color: ${game.mmrChange >= 0 ? "#4CAF50" : "#f44336"}">${
+          <span data-pn-rating style="color: ${game.mmrChange >= 0 ? "#4CAF50" : "#f44336"}">${
             game.mmrChange >= 0 ? "+" : ""
           }${escapeHtml(String(game.mmrChange))}</span>
           ${

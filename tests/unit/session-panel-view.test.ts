@@ -121,6 +121,22 @@ describe("роль в строке игры (жалоба 03.09.2026: «напи
     expect(rows[1].innerHTML, "вторая — мафия").toContain("#mafia");
     sessionStatsFeature.disable();
   });
+
+  test("скрыть рейтинг: MMR, сумма ± и ± каждой игры помечены для CSS, победы — нет", async () => {
+    const at = (mins: number) => new Date(Date.now() - mins * 60_000).toISOString().replace("T", " ").slice(0, 19);
+    h.rows = [
+      { id: 2, role: "godfather", win: true, date: at(1), mmrDiff: 22, mmrAfter: 9154 },
+      { id: 1, role: "mafia", win: false, date: at(2), mmrDiff: -17, mmrAfter: 9132 },
+    ];
+    await sessionStatsFeature.enable({ settings: {} } as never);
+    for (let i = 0; i < 8; i++) await Promise.resolve();
+    const marked = [...panelEl().querySelectorAll("[data-pn-rating]")].map((e) => e.textContent?.replace(/\s+/g, " ").trim());
+    expect(marked).toEqual(["MMR 9149 → 9154", "+5", "+22", "-17"]);
+    for (const el of panelEl().querySelectorAll("[data-pn-rating]")) {
+      expect(el.textContent).not.toMatch(/победа|поражение|Игр:/);
+    }
+    sessionStatsFeature.disable();
+  });
 });
 
 describe("«Мой вечер»: настройки вида", () => {

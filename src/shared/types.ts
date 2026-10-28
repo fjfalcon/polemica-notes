@@ -8,6 +8,12 @@ export type NoteFrameWidth = "thin" | "medium" | "thick";
 export interface Settings {
   /** Мастер-выключатель: false гасит ВСЕ функции расширения разом. */
   extension_enabled: boolean;
+  /**
+   * Режим «Скрыть рейтинг» (28.10.2026): ничей MMR, его ± и места в
+   * рейтингах не видны нигде — ни у сайта, ни в наших окнах. Победы,
+   * поражения и баллы матча остаются.
+   */
+  hide_rating: boolean;
   // Статистика игроков
   show_mmr: boolean;
   show_games: boolean;

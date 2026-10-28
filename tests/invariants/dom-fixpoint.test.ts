@@ -100,6 +100,7 @@ import { micSyncFeature } from "@content/features/mic-sync";
 import { profilePhotoFeature } from "@content/features/profile-photo";
 import { searchAvatarsFeature } from "@content/features/search-avatars";
 import { searchCardAvatarFeature } from "@content/features/search-card-avatar";
+import { hideRatingFeature } from "@content/features/hide-rating";
 import type { FeatureContext } from "@core/feature";
 
 const ROUND_MS = 600;
@@ -166,6 +167,7 @@ afterEach(() => {
   profilePhotoFeature.disable();
   searchAvatarsFeature.disable();
   searchCardAvatarFeature.disable();
+  hideRatingFeature.disable();
   syncProfileCrossoverRoute(null);
   syncProfileMmrRoute(null);
   vi.useRealTimers();
@@ -305,6 +307,11 @@ describe("§4 fixpoint: «Сводка стола»", () => {
     expect(panelText).toContain("Альфа");
     expect(panelText).toContain("2500");
     expect(panelText, "винрейт за красных 18/30").toContain("60%");
+    // Скрыть рейтинг: заголовок и ячейки MMR помечены, винрейт — нет.
+    const marked = [...document.querySelectorAll(".pn-table-summary-panel [data-pn-rating]")];
+    expect(marked.map((e) => e.textContent)).toContain("MMR");
+    expect(marked.map((e) => e.textContent)).toContain("2500");
+    expect(marked.some((e) => e.textContent?.includes("%"))).toBe(false);
   });
 
   test("стол опустел в комнате: окно показывает пустой стол, а не старый состав", async () => {
@@ -452,6 +459,31 @@ describe("§4 fixpoint: картинка в карточке поиска", () =
     const nodes = document.querySelectorAll(".pn-search-avatar");
     expect(nodes.length).toBe(1);
     expect(document.querySelector(".p-play__profile-main")?.firstElementChild).toBe(nodes[0]);
+  });
+});
+
+describe("§4 fixpoint: скрыть рейтинг", () => {
+  test("колонка MMR истории игр и строка MMR разбора помечаются один раз, DOM тих", async () => {
+    const head = ["Дата", "Тип игры", "Роль", "MMR", "Результат"]
+      .map((t) => `<div class="profileGames__table-head-row-item">${t}</div>`)
+      .join("");
+    const bodyRow =
+      '<div class="profileGames__table-body-row">' +
+      Array.from({ length: 5 }, (_, i) => `<div class="profileGames__table-body-row-item">${i}</div>`).join("") +
+      "</div>";
+    document.body.innerHTML =
+      `<div class="profileGames__table-head-row">${head}</div>` +
+      `<div class="profileGames__table-body">${bodyRow}${bodyRow}</div>` +
+      '<div class="game-stats-table"><div class="row"><div class="cell title">Итог</div></div>' +
+      '<div class="row"><div class="cell title">MMR</div><div class="cell positive-mmr">+25</div></div></div>';
+    const before = domObserver.subscriberCount();
+    hideRatingFeature.enable({ settings: {} } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    // Сайт дорисовал страницу истории — новая строка тоже получает метку.
+    document.querySelector(".profileGames__table-body")?.insertAdjacentHTML("beforeend", bodyRow);
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    expect(document.querySelectorAll("[data-pn-rating-site]").length).toBe(1 + 3 + 1);
   });
 });
 

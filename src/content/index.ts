@@ -55,10 +55,14 @@ import { obsClipFeature } from "./features/obs-clip";
 import { contractWatchFeature, syncContractWatchRoute } from "./features/contract-watch";
 import { isGameRoomPath } from "@shared/routes";
 import { twitchPanelFeature } from "./panels/twitch-panel";
+import { hideRatingFeature } from "./features/hide-rating";
 
 const manager = new FeatureManager().register(
   searchFeature,
   autoStartFeature,
+  // Скрыть рейтинг — до фич, которые ждут storage: метки колонки и строки
+  // MMR не должны ждать загрузки заметок.
+  hideRatingFeature,
   // Приватность ролей — до фич, которые ждут storage (заметки): менеджер
   // включает фичи по очереди с await, и автосцены OBS иначе стартовали
   // только после загрузки заметок — роли были открыты (внешний аудит №5, B04).

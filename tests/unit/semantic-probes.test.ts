@@ -9,6 +9,8 @@ import {
   ruLocaleProbes,
   runProbes,
   roomCssProbes,
+  roomRatingProbes,
+  profileRatingProbes,
   siteCssProbes,
   siteRollerAnimationMs,
 } from "../contract/semantic-probes";
@@ -30,6 +32,8 @@ const ROOM = snip("room-main.txt");
 const RU = snip("ru-locale.txt");
 const CSS = snip("main-css.txt");
 const ROOM_CSS = snip("room-css.txt");
+const ROOM_RATING = snip("room-rating.txt");
+const PROFILE_RATING = snip("profile-rating.txt");
 
 describe("пробы зелёные на реальных фрагментах бандлов", () => {
   test.each([
@@ -38,6 +42,8 @@ describe("пробы зелёные на реальных фрагментах �
     ["RU-локаль", ruLocaleProbes, RU],
     ["main.css", siteCssProbes, CSS],
     ["room/style.css", roomCssProbes, ROOM_CSS],
+    ["room-main: рейтинг", roomRatingProbes, ROOM_RATING],
+    ["profile: рейтинг", profileRatingProbes, PROFILE_RATING],
   ] as const)("%s", (_name, probes, text) => {
     const failed = runProbes(probes, text).filter((r) => !r.ok);
     expect(failed, failed.map((f) => `${f.name}: ${f.detail}`).join("\n")).toEqual([]);
@@ -192,6 +198,23 @@ describe("каждая проба умирает от своего дрифта"
     ["disbandPrefix: префикс отсчёта сменился", ruLocaleProbes, "disbandPrefix", RU,
       // replaceAll: фраза попала в сниппет дважды (окно паузы тоже её задело).
       (t) => t.replaceAll("Игра будет распущена через", "Роспуск через")],
+    // Скрыть рейтинг
+    ["room mmrLabelClass: класс значка переименован", roomRatingProbes, "mmrLabelClass", ROOM_RATING,
+      (t) => t.replace('{class:"mmrLabel"}', '{class:"userRating"}')],
+    ["room mmrLabelValue: значок рисует не MMR", roomRatingProbes, "mmrLabelValue", ROOM_RATING,
+      (t) => t.replace("value:e.playerView.user.mmr", "value:e.playerView.user.level")],
+    ["room previewRatingLines: обёртка карточки переименована", roomRatingProbes, "previewRatingLines", ROOM_RATING,
+      (t) => t.replace('{class:"wrapper"}', '{class:"info"}')],
+    ["room previewRatingText: ранг ушёл из карточки", roomRatingProbes, "previewRatingText", ROOM_RATING,
+      (t) => t.replace('" ранг"', '" уровень"')],
+    ["profile mmrLabelClass: класс значка переименован", profileRatingProbes, "mmrLabelClass", PROFILE_RATING,
+      (t) => t.replace('return"mmrLabel ".concat', 'return"userRating ".concat')],
+    ["profile levelCardMmr: карточка рисует не MMR", profileRatingProbes, "levelCardMmr", PROFILE_RATING,
+      (t) => t.replace("value:Number(e.user.mmr)", "value:Number(e.user.level)")],
+    ["profile historyMmrCell: класс ячейки ± сменился", profileRatingProbes, "historyMmrCell", PROFILE_RATING,
+      (t) => t.replace('staticClass:"profileGames__table-body-row-item-cont-mmr"', 'staticClass:"profileGames__mmr"')],
+    ["profile historyMmrColumn: колонка переподписана", profileRatingProbes, "historyMmrColumn", PROFILE_RATING,
+      (t) => t.replace('{title:"MMR",key:"mmr"}', '{title:"Рейтинг",key:"mmr"}')],
   ];
 
   test.each(cases)("%s", (_name, probes, probeName, original, mutate) => {

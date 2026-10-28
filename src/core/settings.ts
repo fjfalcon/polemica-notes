@@ -14,6 +14,8 @@ import type { Settings, SettingKey } from "@shared/types";
 
 export const DEFAULT_SETTINGS: Settings = {
   extension_enabled: true,
+  // Скрыть рейтинг — выбор игрока против тильта, по умолчанию рейтинг виден.
+  hide_rating: false,
   show_mmr: true,
   show_games: true,
   show_id: false,

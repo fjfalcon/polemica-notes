@@ -1442,6 +1442,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     set("extension_enabled", items.extension_enabled);
     applyExtOff(items.extension_enabled);
+    set("hide_rating", items.hide_rating);
     set("show_mmr", items.show_mmr);
     set("show_games", items.show_games);
     set("show_id", items.show_id);
@@ -1635,6 +1636,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const autoHideRolesEnabled = cb("auto_hide_roles_enabled", false);
     const settings: Settings = {
       extension_enabled: cb("extension_enabled", true),
+      hide_rating: cb("hide_rating", false),
       show_mmr: cb("show_mmr"),
       show_games: cb("show_games"),
       show_id: cb("show_id"),
@@ -1822,6 +1824,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // ───────────────────────── Подписка контролов на change ─────────────────────────
   const simpleChangeIds = [
     "extension_enabled",
+    "hide_rating",
     "show_mmr",
     "show_games",
     "show_id",

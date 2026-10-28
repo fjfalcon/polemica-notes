@@ -1,0 +1,34 @@
+/* ── Режим «Скрыть рейтинг» (28.10.2026) ──
+   Отдельный файл в content-скрипте rating-flag-early (document_start), а не
+   в notes.css: Firefox вставляет CSS content-скрипта в момент его run_at, и
+   у notes.css (document_end) правила опоздали бы к уже отрисованному MMR.
+   Флаг на <html> ставит тот же скрипт. Прячем:
+   - .mmrLabel — значок MMR сайта, ОДИН компонент в лобби комнаты (плитка до
+     старта игры), на профиле (карточка уровня) и в карточке поиска;
+   - иконки уровней MMR — цвет значка тоже выдаёт рейтинг;
+   - ± в истории игр профиля и колонку MMR целиком (метка hide-rating);
+   - в карточке игрока комнаты — всё, кроме ника: место в рейтинге и ранг;
+   - строку ± разбора матча: ячейки сайта `cell player mmr_diff` (класс —
+     код строки), строка уходит целиком по ним, без ожидания content.js;
+   - наши метки [data-pn-rating]. */
+html[data-pn-hide-rating] .mmrLabel,
+html[data-pn-hide-rating] img[src*="/images/user_mmr/"],
+html[data-pn-hide-rating] .profileGames__table-body-row-item-cont-mmr,
+html[data-pn-hide-rating] .player-preview .profile-info .wrapper > p:not(.username),
+html[data-pn-hide-rating] [data-pn-rating-site],
+html[data-pn-hide-rating] [data-pn-rating],
+html[data-pn-hide-rating] .pn-mmr-chart {
+  display: none !important;
+}
+/* :has — отдельным правилом: движок, не разобравший его, выбросил бы весь
+   список селекторов вместе со значком MMR. */
+html[data-pn-hide-rating] .game-stats-table .row:has(> .cell.mmr_diff, > .cell.positive-mmr, > .cell.negative-mmr) {
+  display: none !important;
+}
+/* Страховка на движок без :has и на чужую строку: значение ± не видно, место
+   держим — таблица не едет. */
+html[data-pn-hide-rating] .game-stats-table .cell.mmr_diff,
+html[data-pn-hide-rating] .game-stats-table .cell.positive-mmr,
+html[data-pn-hide-rating] .game-stats-table .cell.negative-mmr {
+  visibility: hidden !important;
+}

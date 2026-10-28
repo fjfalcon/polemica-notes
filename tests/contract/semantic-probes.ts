@@ -534,6 +534,43 @@ export const ruLocaleProbes: Record<string, Probe> = {
   ),
 };
 
+/**
+ * Режим «Скрыть рейтинг» (28.10.2026): rating-hide.css прячет рейтинг по
+ * классам сайта. Переименование класса вернуло бы рейтинг МОЛЧА — поэтому
+ * пригвождаем связь «класс ↔ что в нём рисуется».
+ */
+export const roomRatingProbes: Record<string, Probe> = {
+  mmrLabelClass: re(
+    /\w+=\{class:"mmrLabel"\}[\s\S]{0,700}image:"\/images\/user_mmr\//,
+    "значок MMR комнаты — .mmrLabel с иконками /images/user_mmr/",
+  ),
+  mmrLabelValue: has(
+    "value:e.playerView.user.mmr",
+    "в .mmrLabel лобби рисуется MMR игрока (playerView.user.mmr)",
+  ),
+  previewRatingLines: re(
+    /\{class:"player-preview default-modal"\},\w+=\{class:"profile-info"\}[\s\S]{0,80}\{class:"wrapper"\},\w+=\{class:"username"\}/,
+    "карточка игрока: .player-preview .profile-info .wrapper > p.username",
+  ),
+  previewRatingText: re(
+    /ratingTypeText\[\w+\.type\]\(\w+\.player\.position\)[\s\S]{0,120}" ранг"/,
+    "место в рейтинге и ранг — абзацы .wrapper рядом с ником (не .username)",
+  ),
+};
+
+export const profileRatingProbes: Record<string, Probe> = {
+  mmrLabelClass: has('return"mmrLabel ".concat', "значок MMR профиля — тот же класс .mmrLabel"),
+  levelCardMmr: re(
+    /t\("UserMmrLabel",\{attrs:\{containerClass:"avatarlvl__info-block avatarlvl__info-block-mmr"[\s\S]{0,200}value:Number\(\w+\.user\.mmr\)/,
+    "MMR в карточке уровня — компонент UserMmrLabel",
+  ),
+  historyMmrCell: re(
+    /"Итоговый MMR: "[\s\S]{0,120}staticClass:"profileGames__table-body-row-item-cont-mmr"/,
+    "± истории игр — profileGames__table-body-row-item-cont-mmr",
+  ),
+  historyMmrColumn: has('{title:"MMR",key:"mmr"}', "колонка истории игр подписана «MMR» (метка по подписи)"),
+};
+
 export function runProbes(
   probes: Record<string, Probe>,
   text: string,

@@ -656,6 +656,22 @@ describe("settings, release and manifest consistency", () => {
         "kills",
         "tooltip-text",
       ],
+      // Скрыть рейтинг (28.10.2026): значок MMR, ± истории игр профиля,
+      // карточка игрока комнаты, строка ± разбора матча.
+      "src/static/rating-hide.css": [
+        "mmrLabel",
+        "profileGames__table-body-row-item-cont-mmr",
+        "player-preview",
+        "profile-info",
+        "wrapper",
+        "username",
+        "game-stats-table",
+        "row",
+        "cell",
+        "mmr_diff",
+        "positive-mmr",
+        "negative-mmr",
+      ],
     };
     for (const [file, known] of Object.entries(cssKnown)) {
       const css = read(file);

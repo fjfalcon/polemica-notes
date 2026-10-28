@@ -8,6 +8,8 @@ import {
   roomProbes,
   ruLocaleProbes,
   roomCssProbes,
+  roomRatingProbes,
+  profileRatingProbes,
   runProbes,
   siteCssProbes,
   siteRollerAnimationMs,
@@ -30,9 +32,9 @@ describe("живые семантические контракты бандло�
   test("состояния, ветки и матрицы кнопок означают то, что мы им приписываем", async ({
     skip,
   }) => {
-    let gs: string, room: string, ru: string, css: string, roomCss: string;
+    let gs: string, room: string, ru: string, css: string, roomCss: string, profile: string;
     try {
-      [gs, room, ru, css, roomCss] = (
+      [gs, room, ru, css, roomCss, profile] = (
         await Promise.all([
           download(siteFixture.bundles.gameSearch.url),
           download(siteFixture.bundles.roomMain.url),
@@ -42,6 +44,8 @@ describe("живые семантические контракты бандло�
           download(siteFixture.bundles.mainCss.url),
           // Стили комнаты: на них стоит перестановка плашки игрока по углам.
           download(siteFixture.bundles.roomCss.url),
+          // Профиль: рейтинг в карточке уровня и истории игр (скрыть рейтинг).
+          download(siteFixture.bundles.profile.url),
         ])
       ).map((d) => d.text);
     } catch (error) {
@@ -55,6 +59,8 @@ describe("живые семантические контракты бандло�
       ...runProbes(ruLocaleProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
       ...runProbes(siteCssProbes, css).map((r) => ({ ...r, bundle: "main.css" })),
       ...runProbes(roomCssProbes, roomCss).map((r) => ({ ...r, bundle: "room/style.css" })),
+      ...runProbes(roomRatingProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
+      ...runProbes(profileRatingProbes, profile).map((r) => ({ ...r, bundle: "profile" })),
     ].filter((r) => !r.ok);
     expect(
       failed,

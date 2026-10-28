@@ -46,6 +46,18 @@
         "https://*.polemicagame.com/*"
       ],
       "js": [
+        "rating-flag-early.js"
+      ],
+      "css": [
+        "rating-hide.css"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.polemicagame.com/*"
+      ],
+      "js": [
         "content.js"
       ],
       "css": [
