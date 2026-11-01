@@ -695,6 +695,12 @@ async function handleObsQuery(
     // на смене маршрута), но не ждёт длинные connect/probe из enqueueObs.
     case "record_start":
       return enqueueRecord(async () => {
+        // Обычный вход в комнату снимает подавление ДО проверки соединения:
+        // иначе при выключенном OBS вход бросал раньше, флаг прошлой комнаты
+        // выживал, и поздний коннект не записывал новую игру (ревью PR #4).
+        if (data?.reconnect !== true) {
+          await browser.storage.local.remove(OBS_AUTO_RECORD_MANUAL_STOP_KEY);
+        }
         if (!obs.getStatus().connected) throw new Error("OBS не подключён");
         if (data?.reconnect === true) {
           const st = (await browser.storage.local.get({
@@ -703,8 +709,6 @@ async function handleObsQuery(
           if (st[OBS_AUTO_RECORD_MANUAL_STOP_KEY] === true) {
             return { ignored: "manual_stop" };
           }
-        } else {
-          await browser.storage.local.remove(OBS_AUTO_RECORD_MANUAL_STOP_KEY);
         }
         if (await obs.isRecording()) {
           // Запись уже идёт. НАША (метка подтверждена длительностью — например, F5

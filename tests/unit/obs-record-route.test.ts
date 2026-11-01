@@ -10,7 +10,7 @@ const sent = vi.hoisted(() => ({
   commands: [] as string[],
   data: [] as unknown[],
   handlers: [] as ((msg: unknown) => unknown)[],
-  /** Background reply to record_stop. */
+  /** Ответ фона на record_stop. */
   stopReply: { stopped: true } as Record<string, unknown>,
 }));
 
@@ -54,8 +54,8 @@ beforeEach(() => {
   vi.mocked(showToast).mockClear();
 });
 
-describe("stop not confirmed by the background", () => {
-  test("unconfirmed: the streamer gets a toast to stop the recording in OBS", async () => {
+describe("остановка не подтверждена фоном", () => {
+  test("unconfirmed: стример получает тост остановить запись в OBS", async () => {
     obsRecordFeature.enable({ settings: {} } as unknown as FeatureContext);
     syncObsRecordRoute(true);
     await flush();
@@ -67,7 +67,7 @@ describe("stop not confirmed by the background", () => {
     expect(vi.mocked(showToast).mock.calls[0][0]).toContain("OBS");
   });
 
-  test("other ignore reasons stay silent", async () => {
+  test("прочие причины отказа молчат", async () => {
     obsRecordFeature.enable({ settings: {} } as unknown as FeatureContext);
     syncObsRecordRoute(true);
     await flush();
