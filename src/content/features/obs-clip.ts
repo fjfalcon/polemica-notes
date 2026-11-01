@@ -5,7 +5,7 @@
  * Включение фичи настраивает буфер повторов OBS (replay_setup: длина из
  * настроек, старт буфера) и вешает клавишу; нажатие — SaveReplayBuffer,
  * файл падает в папку записей OBS. Кнопка «Сохранить клип» в попапе идёт
- * тем же путём через фон (обработчик сообщений здесь не нужен).
+ * тем же путём через фон (обработчик команды здесь не нужен).
  *
  * Замечания:
  *  • буфер повторов должен быть ВКЛЮЧЁН в настройках вывода OBS — иначе
@@ -13,11 +13,13 @@
  *    один раз, а не молчим;
  *  • смена длины буфера в настройках применяется на лету перезапуском
  *    буфера (его текущий хвост при этом теряется — так устроен OBS);
+ *  • OBS, поднятый позже вкладки, получает replay_setup по obs_connected;
  *  • клавиша работает на любой странице сайта: момент случается и в лобби.
  */
 import { keyboard } from "@core/keyboard";
 import { log } from "@core/log";
 import { sendRuntime } from "@core/messaging";
+import { onObsConnected } from "@core/obs-events";
 import { showToast } from "@core/toast";
 import type { Feature, FeatureContext } from "@core/feature";
 
@@ -33,6 +35,8 @@ let off: (() => void) | null = null;
 let boundCode = "";
 let configuredSeconds = 0;
 let setupFailedWarned = false;
+let wantedSeconds = 0;
+let offConnected: (() => void) | null = null;
 
 async function obsCommand(
   command: "replay_save" | "replay_setup",
@@ -43,6 +47,8 @@ async function obsCommand(
 
 async function setupBuffer(seconds: number): Promise<void> {
   const res = await obsCommand("replay_setup", { seconds });
+  // Ответ после disable() (wantedSeconds = 0) или на устаревшую длину состояние не трогает.
+  if (seconds !== wantedSeconds) return;
   if (res?.success) {
     configuredSeconds = seconds;
     setupFailedWarned = false;
@@ -89,18 +95,26 @@ export const obsClipFeature: Feature = {
 
   enable(ctx: FeatureContext) {
     bind(ctx.settings.obs_clip_hotkey_code);
-    void setupBuffer(clipSeconds(ctx.settings.obs_clip_minutes));
+    wantedSeconds = clipSeconds(ctx.settings.obs_clip_minutes);
+    offConnected = onObsConnected(() => {
+      void setupBuffer(wantedSeconds);
+    });
+    void setupBuffer(wantedSeconds);
   },
 
   update(ctx: FeatureContext) {
     if (ctx.settings.obs_clip_hotkey_code !== boundCode) bind(ctx.settings.obs_clip_hotkey_code);
     const seconds = clipSeconds(ctx.settings.obs_clip_minutes);
+    wantedSeconds = seconds;
     if (seconds !== configuredSeconds) void setupBuffer(seconds);
   },
 
   disable() {
     off?.();
     off = null;
+    offConnected?.();
+    offConnected = null;
+    wantedSeconds = 0;
     boundCode = "";
     configuredSeconds = 0;
     setupFailedWarned = false;
