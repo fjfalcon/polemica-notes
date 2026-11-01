@@ -12,6 +12,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 
 import {
   getRoleVisibilityTargets,
+  isNativeRoleHidden,
   isPinnedElement,
   liftPins,
   pinHolds,
@@ -19,6 +20,7 @@ import {
   releasePins,
   resetRolePinForTest,
   restoreLiftedPins,
+  sweepOrphanPins,
 } from "@content/role-pin";
 
 function mountRole(): HTMLElement {
@@ -131,13 +133,11 @@ describe("пин своей роли", () => {
     // obs-панели; пин снимает снимок с этим hidden. Прежний подъём
     // восстанавливал снимок — V не показывал ничего.
     const el = mountRole();
-    el.style.display = "none";
     el.style.visibility = "hidden";
     el.style.opacity = "0";
     el.style.pointerEvents = "none";
     pinOwnRole("hidden");
     expect(liftPins()).toBe(true);
-    expect(el.style.display, "display:none от auto-start снят").toBe("");
     expect(el.style.visibility).toBe("");
     expect(el.style.opacity).toBe("");
     expect(el.style.pointerEvents).toBe("");
@@ -145,9 +145,8 @@ describe("пин своей роли", () => {
     restoreLiftedPins();
     expect(el.style.visibility).toBe("hidden");
     expect(pinHolds("hidden")).toBe(true);
-    // Снимок цел: teardown вернёт ровно исходное (включая display).
+    // Снимок цел: teardown вернёт ровно исходное.
     releasePins();
-    expect(el.style.display, "снимок display не отравлен подъёмом").toBe("none");
     expect(el.style.visibility).toBe("hidden");
   });
 
@@ -159,14 +158,68 @@ describe("пин своей роли", () => {
     expect(el.style.visibility, "подсматривание не имеет права ПРЯТАТЬ").toBe("");
   });
 
-  test("visible-пин снимает чужой display:none (ночной показ при скрытии на входе)", () => {
+  test("21.10.2026: display — флаг САЙТА, пин его не трогает ни в одной операции", () => {
+    // Сайт прячет роли v-show (display:none на КАЖДОЙ роли по общему флагу).
+    // Наш пин, снимавший display:none, показывал свою роль при скрытых сайтом
+    // сокомандниках — зеркальный рассинхрон («Бош не показывается»).
     const el = mountRole();
     el.style.display = "none";
     pinOwnRole("visible");
-    expect(el.style.display, "visibility:visible не перебивает display:none").toBe("");
-    expect(el.style.visibility).toBe("visible");
+    expect(el.style.display, "visible-пин не снимает скрытие сайта").toBe("none");
+    liftPins();
+    expect(el.style.display, "подъём для V не снимает скрытие сайта").toBe("none");
+    restoreLiftedPins();
+    el.style.display = ""; // сайт показал роли своим D
     releasePins();
-    expect(el.style.display, "teardown возвращает исходный display").toBe("none");
+    expect(el.style.display, "teardown не возвращает устаревший display").toBe("");
+  });
+
+  test("isNativeRoleHidden: display:none (v-show сайта) и прежний #stop", () => {
+    const el = mountRole();
+    expect(isNativeRoleHidden(el)).toBe(false);
+    el.style.display = "none";
+    expect(isNativeRoleHidden(el), "новая вёрстка сайта").toBe(true);
+    el.style.display = "";
+    el.innerHTML = '<svg><use href="/room/bundle/x.svg#stop"></use></svg>';
+    expect(isNativeRoleHidden(el), "прежняя вёрстка").toBe(true);
+    expect(isNativeRoleHidden(null)).toBe(false);
+  });
+
+  test("щит дневного пина: Vue-пересозданный узел скрыт сразу (adversarial 21.10.2026, №8)", () => {
+    // Inline-пин живёт на узле: до heal-перепина свежий узел показывал
+    // настоящую роль. Таблица стилей по атрибуту на <html> — мгновенно.
+    const vis = (el: Element) => getComputedStyle(el).visibility;
+    const el = mountRole();
+    pinOwnRole("hidden");
+    el.remove();
+    const fresh = mountRole();
+    expect(vis(fresh), "свежий узел скрыт до перепина").toBe("hidden");
+    liftPins();
+    expect(vis(fresh), "«подсмотреть» щит снимает").not.toBe("hidden");
+    restoreLiftedPins();
+    expect(vis(fresh)).toBe("hidden");
+    pinOwnRole("visible");
+    expect(vis(fresh), "ночной показ — без щита").toBe("visible");
+    pinOwnRole("hidden");
+    releasePins();
+    expect(vis(fresh), "teardown снимает щит").not.toBe("hidden");
+  });
+
+  test("чужие пины прежней копии скрипта снимаются; свои — нет (обновление расширения)", () => {
+    // «visible»-пин старой копии перебивал свежее CSS-скрытие — своя роль днём в эфире.
+    const orphan = mountRole();
+    orphan.setAttribute("data-pn-role-pin", "visible");
+    orphan.style.setProperty("visibility", "visible", "important");
+    orphan.style.setProperty("opacity", "1", "important");
+    document.documentElement.setAttribute("data-pn-own-role-hidden", "");
+    sweepOrphanPins();
+    expect(orphan.style.visibility).toBe("");
+    expect(orphan.hasAttribute("data-pn-role-pin")).toBe(false);
+    expect(document.documentElement.hasAttribute("data-pn-own-role-hidden")).toBe(false);
+    pinOwnRole("hidden");
+    sweepOrphanPins();
+    expect(orphan.style.visibility, "свой пин сохраняется").toBe("hidden");
+    expect(document.documentElement.hasAttribute("data-pn-own-role-hidden")).toBe(true);
   });
 
   test("повторный lift без пина — false; restore после перепина владельцем — не мешает", () => {

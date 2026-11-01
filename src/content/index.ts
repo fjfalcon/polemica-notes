@@ -47,20 +47,31 @@ import { tableSummaryFeature } from "./panels/table-summary-panel";
 import { micSyncFeature } from "./features/mic-sync";
 import { profileCrossoverFeature, profileIdFromPath, syncProfileCrossoverRoute } from "./features/profile-crossover";
 import { profileMmrChartFeature, syncProfileMmrRoute } from "./features/profile-mmr-chart";
+import { profilePhotoFeature, syncProfilePhotoRoute } from "./features/profile-photo";
+import { searchAvatarsFeature } from "./features/search-avatars";
+import { searchCardAvatarFeature } from "./features/search-card-avatar";
 import { obsRecordFeature, syncObsRecordRoute } from "./features/obs-record";
 import { obsClipFeature } from "./features/obs-clip";
 import { contractWatchFeature, syncContractWatchRoute } from "./features/contract-watch";
 import { isGameRoomPath } from "@shared/routes";
 import { twitchPanelFeature } from "./panels/twitch-panel";
+import { hideRatingFeature } from "./features/hide-rating";
 
 const manager = new FeatureManager().register(
   searchFeature,
   autoStartFeature,
+  // Скрыть рейтинг — до фич, которые ждут storage: метки колонки и строки
+  // MMR не должны ждать загрузки заметок.
+  hideRatingFeature,
+  // Приватность ролей — до фич, которые ждут storage (заметки): менеджер
+  // включает фичи по очереди с await, и автосцены OBS иначе стартовали
+  // только после загрузки заметок — роли были открыты (внешний аудит №5, B04).
+  obsPanelFeature,
+  roleFakerFeature,
   autoReadyFeature,
   playerNotesFeature,
   matchStatsFeature,
   tooltipFeature,
-  roleFakerFeature,
   pauseHotkeyFeature,
   outcryHotkeyFeature,
   hotkeyHintsFeature,
@@ -78,13 +89,15 @@ const manager = new FeatureManager().register(
   nickPlateFeature,
   wsLogFeature,
   controlsSafetyFeature,
-  obsPanelFeature,
   twitchPanelFeature,
   sessionStatsFeature,
   tableSummaryFeature,
   micSyncFeature,
   profileCrossoverFeature,
   profileMmrChartFeature,
+  profilePhotoFeature,
+  searchAvatarsFeature,
+  searchCardAvatarFeature,
   obsRecordFeature,
   obsClipFeature,
   contractWatchFeature,
@@ -114,6 +127,7 @@ function setupUrlRouter(extensionEnabledAtBoot: boolean): void {
     syncConnectionDiagRoute(onSearch);
     syncProfileCrossoverRoute(profileIdFromPath(location.pathname));
     syncProfileMmrRoute(profileIdFromPath(location.pathname));
+    syncProfilePhotoRoute();
     syncObsRecordRoute(isGameRoomPath(location.pathname));
     syncContractWatchRoute(isGameRoomPath(location.pathname));
     syncObsRoomRoute(isGameRoomPath(location.pathname));

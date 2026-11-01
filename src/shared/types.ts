@@ -8,6 +8,12 @@ export type NoteFrameWidth = "thin" | "medium" | "thick";
 export interface Settings {
   /** Мастер-выключатель: false гасит ВСЕ функции расширения разом. */
   extension_enabled: boolean;
+  /**
+   * Режим «Скрыть рейтинг» (28.10.2026): ничей MMR, его ± и места в
+   * рейтингах не видны нигде — ни у сайта, ни в наших окнах. Победы,
+   * поражения и баллы матча остаются.
+   */
+  hide_rating: boolean;
   // Статистика игроков
   show_mmr: boolean;
   show_games: boolean;
@@ -20,6 +26,18 @@ export interface Settings {
   session_stats_enabled: boolean;
   /** График «Путь MMR» на своём профиле. */
   profile_mmr_chart_enabled: boolean;
+  /** Большое фото игрока в левой карточке профиля (на месте 3D-аватара). */
+  profile_photo_enabled: boolean;
+  /** Настоящие аватарки в списке «Участники» страницы поиска. */
+  search_avatars_enabled: boolean;
+  /** Картинка в карточке профиля на странице поиска (на месте 3D-аватара). */
+  search_card_avatar_enabled: boolean;
+  /**
+   * Чья картинка «моя»: "site" — фото с сайта, "custom" — своя картинка
+   * (pn_own_avatar в storage.local). Действует в карточке поиска и большим
+   * фото СВОЕГО профиля.
+   */
+  own_avatar_source: string;
   /** Автозапись игр в OBS: вход в комнату — StartRecord, выход — StopRecord. */
   obs_auto_record_enabled: boolean;
   /** «Клип момента»: SaveReplayBuffer по клавише/кнопке. */
@@ -42,6 +60,8 @@ export interface Settings {
   disable_webcam_clicks: boolean;
   enable_role_faker: boolean;
   auto_hide_roles_enabled: boolean;
+  /** Конец матча (победа мафии/мирных) открывает стол: роли шерифа и чёрных видны. */
+  roles_reveal_on_game_end: boolean;
   role_phase_auto_switch_enabled: boolean;
   /** Режим поворота камер: клик по игроку переворачивает его видео на 180°. */
   camera_rotate_enabled: boolean;
@@ -49,6 +69,17 @@ export interface Settings {
   player_mute_enabled: boolean;
   /** Цветные ники игроков (цвет задаётся в заметке; палитра — как у рамок). */
   nick_colors_enabled: boolean;
+  /**
+   * Свои ники (из заметки) на страницах сайта: в игре — вместо ника сайта,
+   * в «Участниках», профиле, разборе, «Кто в очереди» и «Сводке стола» —
+   * «Ник (свой)». Выключатель — для эфира: прозвища пропадают со страниц
+   * (в окне заметки, «Заметках и цветах» и попапе остаются).
+   */
+  nick_aliases_enabled: boolean;
+  /** Свои ники во время эфира OBS (выключено — на трансляции не видно ни одного). */
+  nick_aliases_on_stream: boolean;
+  /** На эфире прятать свои ники с пометкой «Осуждёнка» (остальные видны). */
+  nick_aliases_hide_condemned_on_stream: boolean;
   /** Толщина цветной рамки-метки вокруг камеры игрока. */
   note_frame_width: NoteFrameWidth;
   /** Кнопки на плитке игрока — можно убрать любую из ряда. */
@@ -156,6 +187,8 @@ export interface Settings {
   obs_auto_mode_enabled: boolean;
   obs_day_scene: string;
   obs_night_scene: string;
+  /** Выбыл из матча — ночью эфир остаётся на дневной сцене (роли спрятаны). */
+  obs_day_scene_when_out: boolean;
   // Twitch
   twitch_chat_enabled: boolean;
   twitch_channel_name: string;
@@ -228,7 +261,9 @@ export interface ObsEventMsg {
     | "obs_scenes_updated"
     | "obs_scene_changed"
     | "obs_disconnected"
-    | "obs_connected";
+    | "obs_connected"
+    /** Трансляция в OBS началась/закончилась: data = { streaming: boolean | null }. */
+    | "obs_stream_state";
   data?: unknown;
 }
 
@@ -360,8 +395,10 @@ export interface GetContentVersionMsg {
  *
  * Спрашиваем саму вкладку, а не браузер: `tabs.get` успешен и для выгруженной
  * вкладки, и для той, чей content-скрипт осиротел после обновления расширения,
- * а `tab.url` без разрешения `tabs` приходит только для страниц сайта. Молчание
- * в ответ = владение свободно (ревью 02.08.2026).
+ * а `tab.url` без разрешения `tabs` приходит только для страниц сайта (ревью
+ * 02.08.2026). Отказ канала = вкладки нет, владение свободно; молчание до таймаута или
+ * ответ без булева `owning` = ответа нет, решает TTL записи владения
+ * (scene-owner.ts).
  */
 export interface ObsSceneOwnerPingMsg {
   type: "obs_scene_owner_ping";
@@ -428,6 +465,13 @@ export interface NotesMigrateMsg {
   type: "notes_migrate";
 }
 
+/** Слить ник-записи игрока в `u:<id>`. Ответ — NotesResultMsg. */
+export interface NotesMigrateIdMsg {
+  type: "notes_migrate_id";
+  username: string;
+  userId: number | string;
+}
+
 /** Попап собирается выгружать лог: вкладки дописывают хвост на диск. */
 export interface WsLogFlushMsg {
   type: "ws_log_flush";
@@ -462,6 +506,7 @@ export type ExtMessage =
   | NotesApplyOpsMsg
   | NotesTagOpsMsg
   | NotesMergeMsg
+  | NotesMigrateIdMsg
   | StartSearchMsg
   | StopSearchMsg
   | QueueGuardMsg

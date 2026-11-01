@@ -155,6 +155,8 @@
         .search-hit:hover { background: rgba(255,255,255,.06); }
         .search-hit .hint { display: block; }
         .search-mmr { font-size: 11px; color: var(--muted); white-space: nowrap; }
+        /* Скрыть рейтинг: MMR в найденных прячется вместе с тумблером, без перерисовки. */
+        body:has(#hide_rating:checked) .search-mmr { display: none; }
         #scenes_list {
             max-height: 110px; overflow-y: auto; border: 1px solid var(--border);
             border-radius: 8px; background: var(--bg); font-size: 12px;
@@ -257,6 +259,12 @@
             </div>
             <div class="row"><span>— пропускать «Покинуть лобби»<span class="hint">подтверждать модалку выхода из игры автоматически. Выключите — расширение остановится на модалке и продолжит после вашего подтверждения</span></span>
                 <label class="switch"><input type="checkbox" id="postgame_skip_confirm_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>Аватарки в списке «Участники»<span class="hint">сайт показывает всем ищущим одну заглушку — расширение подставляет настоящие фото игроков. Видно только вам</span></span>
+                <label class="switch"><input type="checkbox" id="search_avatars_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>Картинка в карточке поиска<span class="hint">слева от ника, где раньше стоял 3D-аватар. Что именно показывать — «Стата» → «Моя картинка». Видно только вам</span></span>
+                <label class="switch"><input type="checkbox" id="search_card_avatar_enabled" checked><span class="slider"></span></label>
             </div>
             <div class="row"><span>Кнопка «Кто в очереди»<span class="hint">на странице поиска: на секунду заходит в самую пустую очередь, показывает состав и выходит. Нужна Pro-подписка, иначе только счётчики</span></span>
                 <label class="switch"><input type="checkbox" id="queue_peek_enabled"><span class="slider"></span></label>
@@ -386,6 +394,15 @@
             <div class="row"><span>Цветные ники игроков<span class="hint">цвет задаётся в заметке игрока (кнопка ✎ на плитке); палитра — как у рамок</span></span>
                 <label class="switch"><input type="checkbox" id="nick_colors_enabled" checked><span class="slider"></span></label>
             </div>
+            <div class="row"><span>Показывать свои ники<span class="hint">свой ник задаётся в заметке игрока. В игре он показывается вместо ника сайта (настоящий — по наведению), в «Участниках», профиле, разборе, «Кто в очереди» и «Сводке стола» — «Ник (свой)». Выключите на время эфира — прозвища пропадут со страниц сайта (в окне заметки и попапе останутся)</span></span>
+                <label class="switch"><input type="checkbox" id="nick_aliases_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>— во время эфира<span class="hint">для стримеров: пока в OBS идёт трансляция, свои ники видны на страницах сайта. Выключите — на эфире не будет ни одного. Эфир определяется через интеграцию OBS (вкладка «Стрим»); пока связи с OBS нет, расширение считает, что эфир может идти, — и свои ники тоже прячет</span></span>
+                <label class="switch"><input type="checkbox" id="nick_aliases_on_stream" checked><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>— не показывать осуждёнку на эфире<span class="hint">свои ники с галочкой «Осуждёнка» (в заметке игрока) прячутся, пока идёт трансляция, — на страницах сайта и в окнах заметок. Вне эфира видны как обычно. Эфир узнаётся через интеграцию OBS (вкладка «Стрим»): без неё осуждёнка видна всегда; если связь с OBS не установлена — прячется на всякий случай. Запись (не трансляция) эфиром не считается</span></span>
+                <label class="switch"><input type="checkbox" id="nick_aliases_hide_condemned_on_stream" checked><span class="slider"></span></label>
+            </div>
             <div class="row"><span>Заметки и цвета игроков<span class="hint">все ваши записи одним списком: заметка, цвет, id. Можно добавить игрока по нику или id, не дожидаясь встречи в игре. Откроется на активной вкладке полемики</span></span>
                 <button id="open_nick_colors" class="btn btn-primary">Открыть</button>
             </div>
@@ -423,6 +440,9 @@
                 <div id="player_search_status" class="status" style="text-align:left;margin:6px 0 2px"></div>
                 <div id="player_search_results"></div>
             </div>
+            <div class="row"><span>Скрыть рейтинг<span class="hint">ничей MMR, его ± и места в рейтингах не видны нигде: в лобби, в профилях, в истории игр, на странице матча и в окнах расширения. Остаются победы, поражения и баллы матча</span></span>
+                <label class="switch"><input type="checkbox" id="hide_rating"><span class="slider"></span></label>
+            </div>
             <div class="row"><span>Статистика игроков</span>
                 <label class="switch"><input type="checkbox" id="statistics_enabled" checked><span class="slider"></span></label>
             </div>
@@ -434,6 +454,22 @@
             </div>
             <div class="row"><span>График «Путь MMR» на своём профиле</span>
                 <label class="switch"><input type="checkbox" id="profile_mmr_chart_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>Большое фото в профиле<span class="hint">фото игрока в левой карточке профиля, над уровнем и MMR — там, где раньше стоял 3D-аватар. Видно только вам</span></span>
+                <label class="switch"><input type="checkbox" id="profile_photo_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>Моя картинка<span class="hint">что показывать в карточке на странице поиска и большим фото своего профиля. Видно только вам</span></span>
+                <select id="own_avatar_source" class="sel">
+                    <option value="site">Фото с сайта</option>
+                    <option value="custom">Своя картинка</option>
+                </select>
+            </div>
+            <div class="row" style="gap:10px">
+                <img id="own_avatar_preview" alt="" hidden style="width:42px;height:42px;object-fit:cover;border-radius:8px;border:1px solid var(--border)">
+                <span id="own_avatar_empty" style="flex:1;color:var(--muted);font-size:11px">Своя картинка не выбрана — показывается фото с сайта</span>
+                <span style="flex:1" aria-hidden="true" id="own_avatar_spacer"></span>
+                <button id="own_avatar_clear" class="btn" type="button" hidden style="flex:0 0 auto">Убрать</button>
+                <button id="own_avatar_pick" class="btn btn-primary" type="button" style="flex:0 0 auto">Выбрать…</button>
             </div>
             <div class="row"><span>Показывать MMR</span>
                 <label class="switch"><input type="checkbox" id="show_mmr" checked><span class="slider"></span></label>
@@ -495,6 +531,9 @@
             <div class="row"><span>Автосмена ролей днём/ночью<span class="hint">днём скрыты, ночью показаны. Работает и без «Автоотключения»</span></span>
                 <label class="switch"><input type="checkbox" id="role_phase_auto_switch_enabled" checked><span class="slider"></span></label>
             </div>
+            <div class="row"><span>Открывать роли в конце игры<span class="hint">победа мафии или мирных — скрытие снимается само, и видны роли, которые сайт раскрывает в конце (шериф и чёрные). Пауза и промах не считаются. Новая игра — скрытие снова по настройкам</span></span>
+                <label class="switch"><input type="checkbox" id="roles_reveal_on_game_end" checked><span class="slider"></span></label>
+            </div>
             <div class="row"><span>Подсмотреть роли<span class="hint">пока клавиша зажата — роли видны, отпустил — снова скрыты. Работает при включённом автоотключении</span></span>
                 <button id="hotkey_role_peek" class="btn-key">V</button>
             </div>
@@ -554,7 +593,10 @@
                         <label>Ночная сцена</label>
                         <select id="obs_night_scene" class="inp"><option value="">Выберите сцену</option></select>
                     </div>
-                    <div class="note-box">🎯 Сцены переключаются автоматически при смене времени суток в игре</div>
+                    <div class="row"><span>Выбыл — ночью дневная сцена<span class="hint">убили или заголосовали — ночью эфир остаётся на дневной сцене, зрители смотрят игру. Роли стола до конца матча спрятаны. Осторожно: V и D на дневной сцене покажут роли и в эфире</span></span>
+                        <label class="switch"><input type="checkbox" id="obs_day_scene_when_out" checked><span class="slider"></span></label>
+                    </div>
+                    <div class="note-box">🎯 Сцены переключаются автоматически при смене времени суток в игре. Пока ночная сцена не выбрана, роли ночью сами не откроются (показать — D)</div>
                 </div>
                 <div class="row" style="margin-top:6px;"><span>Автозапись игр<span class="hint">вход в комнату включает запись в OBS, выход — останавливает. Каждая игра — отдельный файл. Запись, начатую вручную, расширение не трогает</span></span>
                     <label class="switch"><input type="checkbox" id="obs_auto_record_enabled"><span class="slider"></span></label>

@@ -15,7 +15,7 @@ vi.mock("@core/env", () => ({
 }));
 
 import { NoteKeys } from "@content/features/player-notes/note-keys";
-import type { NotesMap } from "@core/notes-store";
+import { canonicalUserId, type NotesMap } from "@core/notes-store";
 
 function keys(notes: NotesMap, ids: Record<string, number | string> = {}): NoteKeys {
   return new NoteKeys({ notes: () => notes, lookupId: (lower) => ids[lower] });
@@ -32,10 +32,33 @@ describe("id игрока для ключа: белый список, а не ч
     [-5, undefined],
     [3.5, undefined],
     [NaN, undefined],
+    ["007", undefined],
+    ["00", undefined],
+    [Number.MAX_SAFE_INTEGER + 1, undefined],
+    ["9007199254740993", undefined],
     [42, 42],
     ["42", "42"],
+    [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER],
   ])("id %p → %p", (raw, expected) => {
     expect(keys({}, { аня: raw as number | string }).userId("Аня")).toBe(expected);
+  });
+
+  test("id, который вкладка приняла, координатор принимает тоже: валидатор один", () => {
+    // До ревью апстрима 09.10.2026: "007" проходил сюда и давал ключ u:007,
+    // а canonicalUserId в координаторе отвечал bad_request, так что запись под
+    // ником не сливалась никогда, и заметка расходилась по двум ключам.
+    for (const raw of ["007", "00", "42", 42, Number.MAX_SAFE_INTEGER + 1, "9007199254740993"]) {
+      const accepted = keys({}, { аня: raw }).userId("Аня");
+      expect(accepted !== undefined, `id ${String(raw)}`).toBe(canonicalUserId(raw) !== undefined);
+    }
+  });
+
+  test("ведущие нули: ключом остаётся ник, а не u:007", () => {
+    // До ревью апстрима 09.10.2026 ключи заметок принимали "007", а статистика и
+    // координатор нет: игрок получал ключ u:007, который никто больше не признавал.
+    const k = keys({ Аня: { text: "старая", timestamp: 1, version: "4" } }, { аня: "007" });
+    expect(k.keyFor("Аня")).toBe("Аня");
+    expect(keys({}, { аня: "007" }).keyFor("Аня")).toBe("Аня");
   });
 
   test("плейсхолдеры НЕ сливают разных игроков в один ключ (блокер 8.1.29)", () => {
@@ -160,5 +183,24 @@ describe("обе записи существуют разом (id и ник)", (
     );
     expect(k.keyFor("Аня")).toBe("u:42");
     expect(k.text("Аня")).toBe("актуальная");
+  });
+});
+
+describe("свой ник для замены на плитке (ревью 22.10.2026, В3)", () => {
+  const notes: NotesMap = {
+    "u:1": { text: "", timestamp: 1, nick: "Vasya", alias: "Игорь" },
+    Петя: { text: "", timestamp: 1, alias: "Пётр" },
+  };
+
+  test("id не резолвлен — по чужому rec.nick не подменяем (заметка читается, замена — нет)", () => {
+    const k = keys(notes, {});
+    expect(k.alias("vasya"), "окно заметки по фолбэку видит запись").toBe("Игорь");
+    expect(k.displayAlias("vasya"), "на плитке настоящий ник спрятан — без уверенности не подменяем").toBe("");
+  });
+
+  test("id резолвлен — его запись; точный легаси-ключ — тоже", () => {
+    expect(keys(notes, { vasya: 1 }).displayAlias("vasya")).toBe("Игорь");
+    expect(keys(notes, {}).displayAlias("Петя")).toBe("Пётр");
+    expect(keys(notes, { vasya: 2 }).displayAlias("vasya"), "другой id — не он").toBe("");
   });
 });

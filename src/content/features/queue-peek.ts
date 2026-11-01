@@ -33,8 +33,17 @@ import { log } from "@core/log";
 import { escapeHtml } from "@core/escape";
 import { onDomChange } from "@core/dom";
 import { SITE } from "@core/selectors";
-import { loadNotes, buildNickColorIndex, nickColorFrom } from "@core/notes-store";
-import type { NickColorIndex } from "@core/notes-store";
+import {
+  loadNotes,
+  aliasFrom,
+  buildAliasIndex,
+  buildNickColorIndex,
+  nickColorFrom,
+  nickWithAlias,
+} from "@core/notes-store";
+import type { AliasIndex, NickColorIndex } from "@core/notes-store";
+import { isStreamStateWatched, isStreaming, refreshStreamState, watchStreamState } from "@core/stream-state";
+import { aliasPolicy } from "@shared/alias-policy";
 import { setAutoAcceptSuppressed, registerPeekAbort } from "../auto-accept-gate";
 import type { Feature, FeatureContext } from "@core/feature";
 import type { Settings } from "@shared/types";
@@ -491,19 +500,61 @@ export function peekOnce(creds: Credentials, mode: string): Promise<Record<strin
  *   это просто публичный счётчик, а НЕ признак отсутствия Pro; путать эти
  *   два случая нельзя, иначе панель врёт про подписку.
  */
+/** Что панель берёт из заметок: цвета ников и свои ники. */
+interface NoteIndexes {
+  /** null — фича цветов выключена: панель рисуется без покраски. */
+  colors: NickColorIndex | null;
+  /** null — тумблер «Показывать свои ники» выключен (эфир). */
+  aliases: AliasIndex | null;
+}
+
 /**
- * Цвета ников из заметок (общее хранилище с player-notes). null — фича
- * цветов выключена или чтение упало; панель тогда рисуется без покраски.
+ * Цвета и свои ники из заметок (общее хранилище с player-notes) — одним
+ * чтением. null — чтение упало; панель тогда рисуется голыми никами.
  */
-async function loadNickColors(): Promise<NickColorIndex | null> {
-  if (settings?.nick_colors_enabled === false) return null;
+async function loadNoteIndexes(): Promise<NoteIndexes | null> {
   try {
     const { notes, loadFailed } = await loadNotes();
     if (loadFailed) return null;
-    return buildNickColorIndex(notes);
+    // Эфир: есть живая подписка вкладки — берём её; нет — спрашиваем фон.
+    const obs = settings?.obs_enabled === true;
+    const policy = aliasPolicy(settings, isStreamStateWatched() ? isStreaming(obs) : await refreshStreamState(obs));
+    return {
+      colors: settings?.nick_colors_enabled === false ? null : buildNickColorIndex(notes),
+      aliases: policy === "none" ? null : buildAliasIndex(notes, policy === "safe"),
+    };
   } catch {
     return null;
   }
+}
+
+/** Поимённый состав, показанный последним, — для перерисовки при смене эфира. */
+let lastNamed: Record<string, QueueInfo> | null = null;
+let unwatchStream: (() => void) | null = null;
+
+/**
+ * Пока открыта панель с поимённым составом, она следит за эфиром: начался —
+ * свои ники пересобираются по политике (осуждёнка прячется), а не висят
+ * снимком момента открытия (ревью 22.10.2026, С2).
+ */
+function watchStreamWhileOpen(): void {
+  if (unwatchStream) return;
+  unwatchStream = watchStreamState(() => {
+    if (!panel?.isConnected || !lastNamed) {
+      stopStreamWatch();
+      return;
+    }
+    const queues = lastNamed;
+    void loadNoteIndexes().then((indexes) => {
+      if (panel?.isConnected && lastNamed === queues) renderPanel(queues, undefined, true, true, indexes);
+    });
+  }, () => settings?.obs_enabled === true);
+}
+
+function stopStreamWatch(): void {
+  unwatchStream?.();
+  unwatchStream = null;
+  lastNamed = null;
 }
 
 /** Инлайн-стиль цвета ника. Значение прошло isSafeTag (см. buildNickColorIndex) —
@@ -521,8 +572,9 @@ function renderPanel(
   note?: string,
   exited = false,
   peeked = false,
-  colors: NickColorIndex | null = null,
+  indexes: NoteIndexes | null = null,
 ): void {
+  const colors = indexes?.colors ?? null;
   panel?.remove();
   panel = document.createElement("div");
   panel.style.cssText = `
@@ -546,13 +598,14 @@ function renderPanel(
       if (players.length === 0) return `<div style="margin:8px 0"><b>${title}</b>: пусто</div>`;
       const list = players
         .map((p) => {
-          const raw = String(p.username || p.id || "?");
+          const alias = indexes?.aliases ? aliasFrom(indexes.aliases, p.id, p.username) : "";
+          const raw = p.username ? nickWithAlias(p.username, alias) : String(p.id || "?");
           const color = colors ? nickColorFrom(colors, p.id, p.username) : "";
           const style = nickColorStyle(color);
           const name = style
             ? `<span style="${style}">${escapeHtml(raw)}</span>`
             : escapeHtml(raw);
-          const mmr = p.mmr ? ` <span style="color:#8b93a7">${escapeHtml(String(p.mmr))}</span>` : "";
+          const mmr = p.mmr ? ` <span data-pn-rating style="color:#8b93a7">${escapeHtml(String(p.mmr))}</span>` : "";
           return `<div style="padding:2px 0">${name}${mmr}</div>`;
         })
         .join("");
@@ -716,7 +769,9 @@ async function runPeek(auto = false): Promise<void> {
       setAutoAcceptSuppressed(true);
       try {
         const queues = await peekOnce(creds, mode);
-        renderPanel(queues, undefined, true, true, await loadNickColors());
+        renderPanel(queues, undefined, true, true, await loadNoteIndexes());
+        lastNamed = queues;
+        watchStreamWhileOpen();
         log.info(SCOPE, "снимок очередей получен через", mode);
         return;
       } catch (e) {
@@ -964,6 +1019,7 @@ export const queuePeekFeature: Feature = {
   disable() {
     // Сначала выйти из очереди, потом всё остальное.
     cancelPeek("фича выключена");
+    stopStreamWatch();
     cancelAutoPeek();
     autoPeekDone = false;
     registerPeekAbort(null);

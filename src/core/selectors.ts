@@ -8,11 +8,14 @@
  *     `classList`. Имя игрока живёт в реестре ДВАЖДЫ: `SITE.player` = ".player"
  *     и `SITE_CLASS.player` = "player" (инвариант сверяет их согласованность).
  *  2. `src/static/notes.css` — CSS дистрибутива, в нём разметка сайта и
- *     scoped-хеш Vue (`[data-v-…]`). Список известных классов — в инварианте
+ *     scoped-хеш Vue (`[data-v-…]`); `src/static/rating-hide.css` — классы
+ *     рейтинга сайта для режима «Скрыть рейтинг». Список известных классов — в инварианте
  *     `architecture.test.ts`, он же чек-лист.
  *  3. CSS-БЛОКИ внутри фич: скрытие роли (auto-start), сворачивание ников
  *     (nick-plate), таблица разбора (match-stats), тултипы, порядок контролов,
  *     страница матча. Они перечислены в том же инварианте поимённо.
+ *     Плюс цвет затухания фото в profile-photo (FADE_TO) — это верх
+ *     градиента `.avatarlvl__info` сайта.
  *
  * Пункты 2 и 3 отваливаются МОЛЧА: правило просто перестаёт применяться,
  * исключения нет. Поэтому после редизайна проходить надо по всем трём.
@@ -128,9 +131,32 @@ export const SITE = {
   /** Ник и аватар на странице профиля. */
   profileNickname: ".profileinfo__main-info-username",
   profileAvatarImg: "img.profileinfo__main-info-avatar",
-  /** Список участников (лобби/итоги): строка и ник внутри неё. */
+  /**
+   * Левая карточка профиля (уровень и MMR). До отключения Ready Player Me в
+   * ней стоял 3D-аватар (`.avatarlvl__avatar`); теперь — только блок
+   * `.avatarlvl__info`, перед которым profile-photo ставит фото.
+   */
+  profileLevelCard: ".avatarlvl__container",
+  /**
+   * Карточка профиля на странице поиска: ряд «картинка | ник, уровень, MMR».
+   * До Ready Player Me первым в нём стоял `.p-play__profile-avatar` —
+   * search-card-avatar ставит туда свою картинку.
+   */
+  searchProfileMain: ".p-play__profile-main",
+  /** Аватар в шапке сайта — это сам пользователь (`getUserAvatarUrl(user.avatar,"100x")`). */
+  headerAvatarImg: "img.p-header__userCont-user-avatar",
+  /** Список участников (лобби/итоги): строка, ник и аватар внутри неё. */
   participantsItem: ".participants-item",
   participantsName: ".participants-name",
+  participantsImage: "img.participants-image",
+  /**
+   * Строка «Участников» ОЧЕРЕДИ: список стоит внутри галочки режима
+   * (`label.p-play__profile-modes-item`). Тот же компонент живёт и в скрытых
+   * поповерах витрины «Открытые лобби» (`.p-play__lobby-table-cell-players`)
+   * — там сайт аватары присылает сам, и запросы были бы впустую
+   * (adversarial 22.10.2026, блокер).
+   */
+  queueParticipantsItem: ".p-play__profile-modes-item .participants-item",
   /** Номер матча на странице игры (role-marker). */
   gameIdBlock: ".game-info-block .game-id, .game-info-block__section.game-id",
   /** Правая колонка профиля и её вкладки — точка вставки наших карточек. */
@@ -152,6 +178,17 @@ export const SITE = {
   roleSymbols: "symbol#civilian, symbol#sheriff, symbol#mafia, symbol#godfather",
   myRole: ".player__role.role.role.my-role",
   anyRole: ".player__role.role.role",
+  /**
+   * Собственный display роли в стилях сайта (room/bundle/style.css:
+   * `.player__role{display:flex}`). Им нейтрализуем скрытие сайта (v-show
+   * пишет inline display:none) — правилом таблицы стилей с !important.
+   */
+  roleDisplayValue: "flex",
+  /**
+   * Уведомление на плитке «Игрок является мафией» (сокет on_reveal_role;
+   * класс элемента = тип уведомления). То же знание, что значок роли.
+   */
+  roleRevealNotice: ".notifications-block .roleReveal",
   // Свои роли — все варианты разметки для скрытия/показа (auto-start)
   // Сверено с бандлом (аудит устойчивости 01.08.2026): класс my-role стоит
   // НА САМОМ элементе роли, отдельного предка .my-role сайт не создаёт —
@@ -163,6 +200,13 @@ export const SITE = {
   ] as readonly string[],
   // Стадии игры (день/ночь/голосование)
   stage: ".stage, .substage",
+  /**
+   * Узлы, смена которых может сменить фазу для немедленного детектора ролей:
+   * этап, сам роллер (сайт ЗАМЕНЯЕТ DesktopRoller на RollerFixedState —
+   * «Промах», пауза, итог — мутациями с target `.roller`, ни одна не внутри
+   * `.stage`; внешний аудит №4, B01) и экран `.ended`.
+   */
+  rolePhaseHost: ".roller, .stage, .substage, .ended, .new-stage",
   substageCurrent: ".substage.current",
   /** МЁРТВЫЙ: сайт рендерит подстадии только как current/next/temp. */
   substageActive: ".substage.active",
@@ -347,8 +391,18 @@ export const SITE = {
   statsCellTitle: ".cell.title",
   /** Ячейка с ником игрока в таблице разбора — якорь ссылки на профиль. */
   statsUsernameCell: ".cell.username",
+  /** Заголовок строки таблицы разбора (подпись, не игрок): `cell title username`. */
+  statsTitleCell: ".title",
   /** Строка фазы в таблице разбора (её строим мы, имя общее). */
   statsRowPhase: ".row[data-phase]",
+  /**
+   * История игр на профиле (режим «Скрыть рейтинг»): колонки задаёт бандл
+   * профиля массивом columns — Дата, Тип игры, Роль, MMR, Результат.
+   * Колонку MMR ищем по подписи заголовка, а не по номеру.
+   */
+  profileGamesHeadItem: ".profileGames__table-head-row-item",
+  profileGamesBodyRow: ".profileGames__table-body-row",
+  profileGamesBodyItem: ".profileGames__table-body-row-item",
   penaltyDots: ".penalty-dots",
   penaltyDot: ".penalty-dot",
   bestMoveDot: ".best-move-dot",
@@ -595,6 +649,8 @@ export const OWN = {
   rotateButton: "rotate-button",
   muteButton: "mute-button",
   roleHideStyle: "polemica-role-hide",
+  /** Нейтрализатор скрытия ролей САЙТОМ (его v-show): display поверх inline. */
+  roleDisplayOverride: "pn-role-display-override",
   /** Контейнер для иконок, добавляемых к игроку. */
   playerIcons: "player-icons",
   /** Контейнер инлайновой статистики игрока. */
@@ -621,6 +677,8 @@ export const OWN = {
  * молча, пока `SITE` выглядел бы исправленным (внешний аудит).
  */
 export const SITE_CLASS = {
+  /** Значок роли игрока (span под v-show флага roleDisplay). */
+  playerRole: "player__role",
   /** Плитка игрока и своя плитка. */
   player: "player",
   myPlayer: "my-player",
@@ -712,6 +770,16 @@ export function matchFinishedVisible(): boolean {
   return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
 }
 
+/**
+ * Я выбыл из матча (убит, заголосован, дисквалифицирован): видимая метка на
+ * СВОЕЙ плитке. У сайта это латч на весь документ (плитки живут по месту,
+ * isKilled не сбрасывается) — привязку к текущей игре делает вызыватель.
+ */
+export function ownEliminatedVisible(): boolean {
+  const el = document.querySelector<HTMLElement>(SITE.myEliminatedState);
+  return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+}
+
 export function classifyPhaseText(text: string): "day" | "night" | null {
   const day = hasPhaseMarker(text, TEXT.day);
   const night = hasPhaseMarker(text, TEXT.night);
@@ -719,4 +787,17 @@ export function classifyPhaseText(text: string): "day" | "night" | null {
   if (day) return "day";
   if (night) return "night";
   return null;
+}
+
+/**
+ * Подпись этапа «день», когда следующий этап — «ночь». Так выглядит и
+ * последний этап дня, и ЗАСТРЯВШАЯ подпись роллера: на `toNight` с отсчётом
+ * сайт после отсчёта не вызывает setStage (`case"evening":return`), и до
+ * следующего пакета `current` остаётся старым днём при уже ночной игре —
+ * сколько угодно дольше двух секунд (внешний аудит №6, §2.2/B03). Прятать по
+ * такой подписи можно (fail-safe), заканчивать ночь — нельзя.
+ */
+export function staleDayLabel(): boolean {
+  const text = (sel: string) => (document.querySelector(sel)?.textContent ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+  return classifyPhaseText(text(SITE.substageCurrent)) === "day" && classifyPhaseText(text(SITE.substageNext)) === "night";
 }

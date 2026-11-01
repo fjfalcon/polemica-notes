@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { TransientNetworkError, fetchWithRetry, json } from "./fetch";
+import { parseProfileCard, userAvatarUrl } from "@core/polemica-api";
 
 /**
  * Живые контракты SSR и вложенных форм API (аудит хрупкости 06.08.2026,
@@ -115,5 +116,37 @@ describe("вложенные формы HTTP API", () => {
       id: expect.anything(),
       username: expect.any(String),
     });
+  });
+});
+
+describe("SSR профиля и аватары", () => {
+  test(":profile-user несёт id/username/avatar, оригинал аватара — картинка", async ({ skip }) => {
+    // Фото в профиле и аватарки «Участников» (22.10.2026) стоят на трёх
+    // внешних фактах: атрибут :profile-user, его поле avatar и адрес
+    // /image/user-avatar без size. Дрифт любого — тихая пропажа фото.
+    let card: ReturnType<typeof parseProfileCard> = null;
+    let image: Response;
+    try {
+      const rating = await json("https://polemicagame.com/ratings/default/get-list?limit=20");
+      if (rating.response.status !== 200) skip("rating seed unavailable");
+      const rows = (rating.body as Array<{ user_id?: unknown; avatar_url?: unknown }>) ?? [];
+      const seed = rows.find((r) => typeof r.avatar_url === "string" && r.avatar_url);
+      if (!seed) {
+        skip("в топе нет игрока с фото — форму не проверить");
+        return;
+      }
+      const res = await fetchWithRetry(`https://polemicagame.com/profile/${String(seed.user_id)}`);
+      if (!res.ok) skip(`profile page HTTP ${res.status}`);
+      card = parseProfileCard(await res.text());
+      expect(card, "атрибут :profile-user пропал или сменил форму").not.toBeNull();
+      expect(card?.id).toBe(String(seed.user_id));
+      expect(card?.avatar, "поле avatar пропало из :profile-user").toBe(seed.avatar_url);
+      image = await fetchWithRetry(userAvatarUrl(card?.avatar as string));
+    } catch (error) {
+      if (error instanceof TransientNetworkError) skip(`site unavailable: ${error}`);
+      throw error;
+    }
+    expect(image.status).toBe(200);
+    expect(image.headers.get("content-type") ?? "", "оригинал аватара — картинка").toMatch(/^image\//);
   });
 });

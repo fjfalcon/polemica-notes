@@ -64,28 +64,43 @@ vi.mock("@core/crossover", async (importOriginal) => {
 });
 
 // Сеть «Сводки стола»: харнес не имеет права ходить на живой сайт.
-vi.mock("@core/polemica-api", () => ({
-  ACTIVE_GAMES_TTL_MS: 15_000,
-  fetchActiveGames: vi.fn(async () => [
-    { players: [{ username: "Альфа", id: 11, mmr: 2500 }, { username: "Бета", id: 22, mmr: 1900 }] },
-  ]),
-  findRatingPlayer: vi.fn(async () => undefined),
-  fetchRoleBreakdown: vi.fn(async () => ({
-    civilian: { games_count: 30, wins_count: 18 },
-    mafia: { games_count: 12, wins_count: 6 },
-  })),
-}));
+vi.mock("@core/polemica-api", async (importOriginal) => {
+  // Настоящие — ТОЛЬКО чистые помощники адресов аватара, поимённо: подмешанный
+  // целиком модуль сделал бы настоящим любой будущий сетевой экспорт.
+  const { avatarFileFromSrc, userAvatarUrl } = await importOriginal<typeof import("@core/polemica-api")>();
+  return {
+    avatarFileFromSrc,
+    userAvatarUrl,
+    fetchProfileCard: vi.fn(async (id: string) =>
+      id === "11" ? { id: "11", username: "Альфа", avatar: "11/avatar.webp" } : null,
+    ),
+    ACTIVE_GAMES_TTL_MS: 15_000,
+    fetchActiveGames: vi.fn(async () => [
+      { players: [{ username: "Альфа", id: 11, mmr: 2500 }, { username: "Бета", id: 22, mmr: 1900 }] },
+    ]),
+    findRatingPlayer: vi.fn(async () => undefined),
+    fetchRoleBreakdown: vi.fn(async () => ({
+      civilian: { games_count: 30, wins_count: 18 },
+      mafia: { games_count: 12, wins_count: 6 },
+    })),
+  };
+});
 
 // ВАЖНО: @core/dom НЕ мокается — конвейер настоящий.
 import { domObserver, onDomChange } from "@core/dom";
 import { log } from "@core/log";
 import { getOwnUserId } from "@core/own-user";
+import { fetchRoleBreakdown } from "@core/polemica-api";
 import { profileCrossoverFeature, syncProfileCrossoverRoute } from "@content/features/profile-crossover";
 import { profileMmrChartFeature, syncProfileMmrRoute } from "@content/features/profile-mmr-chart";
 import { protocolEmojiFeature, symbolId } from "@content/features/protocol-emoji";
 import { autoReadyFeature } from "@content/features/auto-ready";
 import { tableSummaryFeature } from "@content/panels/table-summary-panel";
 import { micSyncFeature } from "@content/features/mic-sync";
+import { profilePhotoFeature } from "@content/features/profile-photo";
+import { searchAvatarsFeature } from "@content/features/search-avatars";
+import { searchCardAvatarFeature } from "@content/features/search-card-avatar";
+import { hideRatingFeature } from "@content/features/hide-rating";
 import type { FeatureContext } from "@core/feature";
 
 const ROUND_MS = 600;
@@ -149,6 +164,10 @@ afterEach(() => {
   autoReadyFeature.disable();
   tableSummaryFeature.disable();
   micSyncFeature.disable();
+  profilePhotoFeature.disable();
+  searchAvatarsFeature.disable();
+  searchCardAvatarFeature.disable();
+  hideRatingFeature.disable();
   syncProfileCrossoverRoute(null);
   syncProfileMmrRoute(null);
   vi.useRealTimers();
@@ -265,13 +284,18 @@ describe("§4 fixpoint: автонажатие «Готов»", () => {
 });
 
 describe("§4 fixpoint: «Сводка стола»", () => {
+  const summaryTile = (seat0: number, nick: string) =>
+    `<div class="player desktop-version"><div class="player__botleftmenu"><div class="player__info">` +
+    `<div class="player-number player-${seat0}">${seat0 + 1}</div>` +
+    `<div class="info__name">${nick}</div></div></div></div>`;
+  const summaryText = () => document.querySelector(".pn-table-summary-panel")?.textContent ?? "";
+  const clearTable = () => {
+    for (const el of Array.from(document.querySelectorAll(".player.desktop-version"))) el.remove();
+  };
+
   test("стол из двух игроков: окно собирается, статистика приходит, DOM затихает", async () => {
     window.history.replaceState(null, "", "/game");
-    const tile = (seat0: number, nick: string) =>
-      `<div class="player desktop-version"><div class="player__botleftmenu"><div class="player__info">` +
-      `<div class="player-number player-${seat0}">${seat0 + 1}</div>` +
-      `<div class="info__name">${nick}</div></div></div></div>`;
-    document.body.innerHTML = tile(0, "Альфа") + tile(1, "Бета");
+    document.body.innerHTML = summaryTile(0, "Альфа") + summaryTile(1, "Бета");
     const before = domObserver.subscriberCount();
     void tableSummaryFeature.enable({ settings: {} } as unknown as FeatureContext);
     expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
@@ -283,6 +307,63 @@ describe("§4 fixpoint: «Сводка стола»", () => {
     expect(panelText).toContain("Альфа");
     expect(panelText).toContain("2500");
     expect(panelText, "винрейт за красных 18/30").toContain("60%");
+    // Скрыть рейтинг: заголовок и ячейки MMR помечены, винрейт — нет.
+    const marked = [...document.querySelectorAll(".pn-table-summary-panel [data-pn-rating]")];
+    expect(marked.map((e) => e.textContent)).toContain("MMR");
+    expect(marked.map((e) => e.textContent)).toContain("2500");
+    expect(marked.some((e) => e.textContent?.includes("%"))).toBe(false);
+  });
+
+  test("стол опустел в комнате: окно показывает пустой стол, а не старый состав", async () => {
+    window.history.replaceState(null, "", "/game");
+    document.body.innerHTML = summaryTile(0, "Альфа") + summaryTile(1, "Бета");
+    void tableSummaryFeature.enable({ settings: {} } as unknown as FeatureContext);
+    await driveToFixpoint();
+    expect(summaryText()).toContain("Альфа");
+    clearTable();
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    expect(summaryText(), "пустой стол").toContain("За столом пока никого");
+    expect(summaryText(), "старый состав ушёл").not.toContain("Альфа");
+  });
+
+  test("поздний ответ статистики не возвращает строки опустевшего стола", async () => {
+    const api = vi.mocked(fetchRoleBreakdown);
+    const original = api.getMockImplementation();
+    let release: (v: unknown) => void = () => undefined;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    api.mockImplementation(() => held as ReturnType<typeof fetchRoleBreakdown>);
+    try {
+      window.history.replaceState(null, "", "/game");
+      document.body.innerHTML = summaryTile(0, "Альфа") + summaryTile(1, "Бета");
+      void tableSummaryFeature.enable({ settings: {} } as unknown as FeatureContext);
+      await driveToFixpoint();
+      expect(summaryText(), "статистика ещё грузится").toContain("…");
+      clearTable();
+      await driveToFixpoint();
+      release({
+        civilian: { games_count: 30, wins_count: 18 },
+        mafia: { games_count: 12, wins_count: 6 },
+      });
+      const r = await driveToFixpoint();
+      expect(r.settled, `DOM не затих за ${r.rounds} раундов`).toBe(true);
+      expect(summaryText(), "старый состав не вернулся").not.toContain("Альфа");
+      expect(summaryText(), "поздний винрейт не нарисован").not.toContain("60%");
+      expect(summaryText()).toContain("За столом пока никого");
+    } finally {
+      if (original) api.mockImplementation(original);
+    }
+  });
+
+  test("стол ещё не отрисован: окно не появляется", async () => {
+    window.history.replaceState(null, "", "/game");
+    void tableSummaryFeature.enable({ settings: {} } as unknown as FeatureContext);
+    document.body.appendChild(document.createElement("i"));
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов`).toBe(true);
+    expect(document.querySelector(".pn-table-summary-panel")).toBeNull();
   });
 });
 
@@ -301,6 +382,108 @@ describe("§4 fixpoint: «Микрофон: OBS и игра»", () => {
     expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
     // sendRuntime харнеса отвечает success без данных → OBS «вкл», игра «вкл».
     expect(document.querySelector(".pn-mic-pill")?.textContent).toContain("OBS + игра");
+  });
+});
+
+describe("§4 fixpoint: фото в профиле", () => {
+  const mountLevelCard = (avatarSrc: string) => {
+    document.body.innerHTML =
+      `<img class="profileinfo__main-info-avatar" src="${avatarSrc}">` +
+      '<div class="avatarlvl"><div class="avatarlvl__container">' +
+      '<div class="avatarlvl__info">32 lvl</div><div class="avatarlvl__ellipse"></div>' +
+      "</div></div>";
+  };
+
+  test("профиль с фото: фото встаёт один раз над уровнем и DOM затихает", async () => {
+    window.history.replaceState(null, "", "/profile");
+    mountLevelCard("/image/user-avatar?file_name=13509%2Favatar.webp&size=100x");
+    const before = domObserver.subscriberCount();
+    profilePhotoFeature.enable({ settings: {} } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    // Посторонняя мутация будит подписчика повторно — вставка не повторяется.
+    document.body.appendChild(document.createElement("i"));
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    const photos = document.querySelectorAll(".pn-profile-photo");
+    expect(photos.length).toBe(1);
+    expect(document.querySelector(".avatarlvl__container")?.firstElementChild).toBe(photos[0]);
+  });
+
+  test("профиль без фото (заглушка сайта): ничего не вставляется, DOM тих", async () => {
+    window.history.replaceState(null, "", "/profile/993");
+    mountLevelCard("/image/user-avatar?size=100x");
+    profilePhotoFeature.enable({ settings: {} } as unknown as FeatureContext);
+    document.body.appendChild(document.createElement("i"));
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов`).toBe(true);
+    expect(document.querySelector(".pn-profile-photo")).toBeNull();
+  });
+});
+
+describe("§4 fixpoint: аватарки в «Участниках»", () => {
+  test("очередь: настоящий аватар подставлен один раз, строка без ника цела, DOM тих", async () => {
+    window.history.replaceState(null, "", "/game-search");
+    document.body.innerHTML =
+      '<label class="p-play__profile-modes-item"><div class="p-play__participants">' +
+      '<div class="participants"><div class="participants-items">' +
+      '<a class="participants-item" href="/profile/11"><img class="participants-image" src="/image/user-avatar?size=100x">' +
+      '<div class="participants-name"><span>Альфа</span></div></a>' +
+      '<a class="participants-item" href="/profile/2"><img class="participants-image" src="/image/user-avatar?size=100x">' +
+      '<div class="participants-name"><span></span></div></a>' +
+      "</div></div></div></label>";
+    const before = domObserver.subscriberCount();
+    searchAvatarsFeature.enable({ settings: {} } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    const [real, fake] = Array.from(document.querySelectorAll("img.participants-image"));
+    expect(real.getAttribute("src")).toContain("file_name=11%2Favatar.webp");
+    expect(fake.getAttribute("src")).toBe("/image/user-avatar?size=100x");
+  });
+});
+
+describe("§4 fixpoint: картинка в карточке поиска", () => {
+  test("карточка поиска: фото из шапки встаёт один раз слева от ника, DOM тих", async () => {
+    window.history.replaceState(null, "", "/game-search");
+    document.body.innerHTML =
+      '<img class="p-header__userCont-user-avatar" src="/image/user-avatar?file_name=13509%2Favatar.webp&size=100x">' +
+      '<div class="p-play__profile-content"><div class="p-play__profile-main">' +
+      '<div class="p-play__profile-info"><div class="p-play__profile-name">fj</div></div>' +
+      "</div></div>";
+    const before = domObserver.subscriberCount();
+    searchCardAvatarFeature.enable({ settings: { own_avatar_source: "site" } } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    document.body.appendChild(document.createElement("i"));
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    const nodes = document.querySelectorAll(".pn-search-avatar");
+    expect(nodes.length).toBe(1);
+    expect(document.querySelector(".p-play__profile-main")?.firstElementChild).toBe(nodes[0]);
+  });
+});
+
+describe("§4 fixpoint: скрыть рейтинг", () => {
+  test("колонка MMR истории игр и строка MMR разбора помечаются один раз, DOM тих", async () => {
+    const head = ["Дата", "Тип игры", "Роль", "MMR", "Результат"]
+      .map((t) => `<div class="profileGames__table-head-row-item">${t}</div>`)
+      .join("");
+    const bodyRow =
+      '<div class="profileGames__table-body-row">' +
+      Array.from({ length: 5 }, (_, i) => `<div class="profileGames__table-body-row-item">${i}</div>`).join("") +
+      "</div>";
+    document.body.innerHTML =
+      `<div class="profileGames__table-head-row">${head}</div>` +
+      `<div class="profileGames__table-body">${bodyRow}${bodyRow}</div>` +
+      '<div class="game-stats-table"><div class="row"><div class="cell title">Итог</div></div>' +
+      '<div class="row"><div class="cell title">MMR</div><div class="cell positive-mmr">+25</div></div></div>';
+    const before = domObserver.subscriberCount();
+    hideRatingFeature.enable({ settings: {} } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    // Сайт дорисовал страницу истории — новая строка тоже получает метку.
+    document.querySelector(".profileGames__table-body")?.insertAdjacentHTML("beforeend", bodyRow);
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    expect(document.querySelectorAll("[data-pn-rating-site]").length).toBe(1 + 3 + 1);
   });
 });
 

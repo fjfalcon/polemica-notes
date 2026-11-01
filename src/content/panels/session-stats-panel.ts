@@ -336,7 +336,7 @@ class SessionStatsPanel extends FloatingPanel {
     const s = summarizeSession(rows);
     const mmrLine =
       s.startMmr !== null && s.currentMmr !== null
-        ? `<div style="display:flex;justify-content:space-between;margin-bottom:2px;">
+        ? `<div data-pn-rating style="display:flex;justify-content:space-between;margin-bottom:2px;">
              <span style="color:rgba(255,255,255,.6);">MMR</span>
              <span>${s.startMmr} → <b>${s.currentMmr}</b></span>
            </div>`
@@ -346,7 +346,7 @@ class SessionStatsPanel extends FloatingPanel {
         ${mmrLine}
         <div style="display:flex;justify-content:space-between;">
           <span style="color:rgba(255,255,255,.6);">Игр: ${s.games} · Побед: ${s.wins}</span>
-          <b style="color:${deltaColor(s.delta)};">${fmtDelta(s.delta)}</b>
+          <b data-pn-rating style="color:${deltaColor(s.delta)};">${fmtDelta(s.delta)}</b>
         </div>
         <div style="color:rgba(255,255,255,.45);font-size:.85em;text-align:right;"
              title="Обновляется раз в 3 минуты при видимой вкладке; ⟳ — вручную">${escapeHtml(freshness(updatedAt))}</div>
@@ -359,8 +359,8 @@ class SessionStatsPanel extends FloatingPanel {
       const sprite = ROLE_SPRITE[r.role] ?? "civilian";
       const diff =
         typeof r.mmrDiff === "number"
-          ? `<b style="color:${deltaColor(r.mmrDiff)};min-width:34px;text-align:right;">${fmtDelta(r.mmrDiff)}</b>`
-          : `<span style="color:rgba(255,255,255,.4);min-width:34px;text-align:right;">—</span>`;
+          ? `<b data-pn-rating style="color:${deltaColor(r.mmrDiff)};min-width:34px;text-align:right;">${fmtDelta(r.mmrDiff)}</b>`
+          : `<span data-pn-rating style="color:rgba(255,255,255,.4);min-width:34px;text-align:right;">—</span>`;
       const result = r.win
         ? `<span style="color:#4ade80;">победа</span>`
         : `<span style="color:#f87171;">поражение</span>`;

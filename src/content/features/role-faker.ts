@@ -3,12 +3,13 @@
  * Пока подмена активна — прячет чужие роли и блокирует клавишу D/В.
  * Порт role-faker.js на единый keyboard-роутер и общий DOM-наблюдатель.
  */
-import { keyboard, isTypingContext, producesText } from "@core/keyboard";
+import { keyboard, isTypingContext, editsText } from "@core/keyboard";
 import { onDomChange } from "@core/dom";
 import { log } from "@core/log";
 import { showToast } from "@core/toast";
 import { SITE } from "@core/selectors";
 import type { Feature, FeatureContext } from "@core/feature";
+import { FAKE_HIDDEN_ATTR, FAKE_SHIELD_ATTR, setLiveFaker, sweepOrphanFake } from "../role-fake-orphans";
 
 interface RoleDef {
   name: string;
@@ -31,9 +32,53 @@ export function shouldSwallowRoleKey(e: KeyboardEvent, hideKeyCode: string): boo
   if (e.code !== hideKeyCode) return false;
   // Пока пользователь печатает (KeyD = «в» в русской раскладке) или жмёт
   // Cmd/Ctrl+D — не глотаем.
-  if (isTypingContext(e) && producesText(e.code)) return false;
+  // Те же клавиши правки текста, что у роутера: иначе Enter/стрелки в поле
+  // ввода при хоткее на них отменялись блокировщиком (внешний аудит №3).
+  if (isTypingContext(e) && editsText(e.code)) return false;
+  if (e.isComposing || e.keyCode === 229) return false;
   if (e.ctrlKey || e.metaKey || e.altKey) return false;
   return true;
+}
+
+/**
+ * Щит подмены (adversarial 21.10.2026, №8): Vue пересоздаёт плитку роли, и
+ * до флаша наблюдателя (rAF, ≤ ~270 мс) свежий узел показывал НАСТОЯЩУЮ
+ * роль — свою или сокомандника — посреди подмены. Правило таблицы стилей
+ * действует на новый узел мгновенно: прячет любую роль без нашей
+ * фальшивки (data-original-role ставит changeRole на свою роль).
+ */
+const FAKE_SHIELD_ID = "pn-role-fake-shield";
+
+function setFakeShield(on: boolean, icon?: string): void {
+  const root = document.documentElement;
+  if (!on) {
+    root.removeAttribute(FAKE_SHIELD_ATTR);
+    return;
+  }
+  let style = document.getElementById(FAKE_SHIELD_ID);
+  if (!style) {
+    style = document.createElement("style");
+    style.id = FAKE_SHIELD_ID;
+    (document.head || root).appendChild(style);
+  }
+  // Второе правило — подменённая роль, у которой Vue заменил только <use>
+  // (корень с data-original-role сохранился): настоящий значок не
+  // проступает до флаша наблюдателя (внешний аудит 21.10.2026, раздел E).
+  const text =
+    `html[${FAKE_SHIELD_ATTR}] ${SITE.anyRole}:not([data-original-role]), ` +
+    // Текст «Игрок является …» (on_reveal_role) — то же знание, что значок.
+    `html[${FAKE_SHIELD_ATTR}] ${SITE.roleRevealNotice} ` +
+    `{ visibility: hidden !important; }` +
+    // Подсказка роли по наведению: Vue мог вернуть настоящую подпись до
+    // флаша наблюдателя (внешний аудит №2, §4 п.2) — под подменой подсказок
+    // ролей нет вовсе.
+    ` html[${FAKE_SHIELD_ATTR}] ${SITE.anyRole} ${SITE.siteTooltipText} { visibility: hidden !important; }` +
+    (icon
+      ? ` html[${FAKE_SHIELD_ATTR}] ${SITE.anyRole}[data-original-role] use:not([href$="#${icon}"]) ` +
+        `{ visibility: hidden !important; }`
+      : "");
+  if (style.textContent !== text) style.textContent = text;
+  if (!root.hasAttribute(FAKE_SHIELD_ATTR)) root.setAttribute(FAKE_SHIELD_ATTR, "");
 }
 
 class RoleFaker {
@@ -50,7 +95,7 @@ class RoleFaker {
   get faked(): boolean {
     return this.isFaked;
   }
-  private originalRoles = new Map<HTMLElement, { display: string; visibility: string }>();
+  private originalRoles = new Map<HTMLElement, { visibility: string; visibilityPriority: string }>();
   private originalStyles = new Map<HTMLElement, { right: string; position: string }>();
   private spriteBase?: string;
 
@@ -60,6 +105,12 @@ class RoleFaker {
   hideKeyCode = "KeyD";
 
   onFakeKey = () => {
+    // Подмена уже стоит, а сайт успел сменить настоящую роль в том же узле
+    // до сверки наблюдателя — схватить её ДО следующей фальшивки (индекс ещё
+    // указывает на текущую), иначе E вернёт прежнюю (внешний аудит №5, §4.3).
+    const mine = document.querySelector<HTMLElement>(SITE.myRole);
+    const mineUse = mine?.querySelector("use");
+    if (this.isFaked && mine?.hasAttribute("data-original-role") && mineUse) this.captureRealRole(mine, mineUse);
     // Своей роли может не быть вовсе (зритель, судья, роль ещё не
     // смонтирована). Раньше в этом случае подмена не происходила, но чужие
     // роли всё равно скрывались и D блокировался — поле оставалось пустым
@@ -89,6 +140,7 @@ class RoleFaker {
     this.isFaked = v;
     if (v) this.attachDBlocker();
     else this.detachDBlocker();
+    setFakeShield(v, this.roles[this.currentRoleIndex]?.icon);
   }
 
   /** Блокировка D/В пока подмена активна — отдельный capture-листенер (D занят auto-start). */
@@ -105,6 +157,10 @@ class RoleFaker {
   private detachDBlocker() {
     if (this.dBlocker) window.removeEventListener("keydown", this.dBlocker, true);
     this.dBlocker = null;
+  }
+
+  spriteBaseForSweep(): string {
+    return this.resolveSpriteBase();
   }
 
   private resolveSpriteBase(): string {
@@ -150,13 +206,23 @@ class RoleFaker {
     this.originalStyles.clear();
   }
 
+  /**
+   * Прятать — visibility, НЕ display (21.10.2026): display — флаг сайта
+   * (roleDisplay → v-show). Наш display:none Vue перезаписывал на первой же
+   * смене флага (D, пункт меню) — сокомандники проступали посреди подмены,
+   * и состав уезжал в эфир; а возврат снимка затирал актуальный флаг сайта.
+   */
   private hideOtherRoles() {
     document.querySelectorAll<HTMLElement>(SITE.anyRole).forEach((el) => {
       if (el.closest(SITE.myRoleMark) || el.closest(SITE.myPlayerTile)) return;
       if (!this.originalRoles.has(el)) {
-        this.originalRoles.set(el, { display: el.style.display, visibility: el.style.visibility });
+        this.originalRoles.set(el, {
+          visibility: el.style.visibility,
+          visibilityPriority: el.style.getPropertyPriority("visibility"),
+        });
       }
-      el.style.display = "none";
+      el.style.setProperty("visibility", "hidden", "important");
+      el.setAttribute(FAKE_HIDDEN_ATTR, "");
     });
     if (!this.offDom) {
       // Пишем только при реальном расхождении: общий наблюдатель следит за
@@ -166,15 +232,19 @@ class RoleFaker {
         if (!this.isFaked) return;
         document.querySelectorAll<HTMLElement>(SITE.anyRole).forEach((el) => {
           if (el.closest(SITE.myRoleMark) || el.closest(SITE.myPlayerTile)) return;
-          if (el.style.display !== "none") {
+          if (el.style.visibility !== "hidden") {
             // Снимок ДО скрытия: узел, созданный Vue во время подмены,
             // прятался без регистрации — E/disable возвращали только старые,
             // и напарник оставался скрыт до перерисовки сайта (аудит
             // 29.08.2026, №8).
             if (!this.originalRoles.has(el)) {
-              this.originalRoles.set(el, { display: el.style.display, visibility: el.style.visibility });
+              this.originalRoles.set(el, {
+                visibility: el.style.visibility,
+                visibilityPriority: el.style.getPropertyPriority("visibility"),
+              });
             }
-            el.style.display = "none";
+            el.style.setProperty("visibility", "hidden", "important");
+            el.setAttribute(FAKE_HIDDEN_ATTR, "");
           }
         });
         // №3: Vue пересоздал узел СВОЕЙ роли — data-original-* умерли вместе
@@ -188,18 +258,24 @@ class RoleFaker {
           if (!own.hasAttribute("data-original-role")) this.reapplyFake();
           else this.ensureFakePainted(own);
         }
-        document.querySelectorAll<HTMLElement>(SITE.playerMenuWithRole).forEach((menu) => {
-          if (menu.closest(SITE.myRoleMark) || menu.closest(SITE.myPlayerTile)) return;
-          if (menu.style.right !== "0.5rem") menu.style.right = "0.5rem";
-        });
+        // Меню, появившиеся во время подмены, — через тот же снимок, иначе
+        // E их не возвращал (внешний аудит 21.10.2026).
+        if (
+          Array.from(document.querySelectorAll<HTMLElement>(SITE.playerMenuWithRole)).some(
+            (m) => !m.closest(SITE.myRoleMark) && !m.closest(SITE.myPlayerTile) && m.style.right !== "0.5rem",
+          )
+        ) {
+          this.fixMenuPositions();
+        }
       });
     }
   }
 
   private resetRoles() {
     this.originalRoles.forEach((s, el) => {
-      el.style.display = s.display;
-      el.style.visibility = s.visibility;
+      el.style.removeProperty("visibility");
+      if (s.visibility) el.style.setProperty("visibility", s.visibility, s.visibilityPriority);
+      el.removeAttribute(FAKE_HIDDEN_ATTR);
     });
     this.originalRoles.clear();
     this.resetMenuPositions();
@@ -210,17 +286,28 @@ class RoleFaker {
     const myRole = document.querySelector<HTMLElement>(SITE.myRole);
     if (myRole) {
       const use = myRole.querySelector("use");
+      // E раньше флаша наблюдателя: новая настоящая роль ещё не схвачена —
+      // хватаем сейчас, иначе E вернул бы прежнюю (внешний аудит №3, §4 п.3).
+      if (use && myRole.hasAttribute("data-original-role") && this.isFaked) this.captureRealRole(myRole, use);
       if (use && myRole.hasAttribute("data-original-role")) {
         const role = myRole.getAttribute("data-original-role");
         const base = myRole.getAttribute("data-original-sprite-base") || this.resolveSpriteBase();
         const href = `${base}#${role}`;
         use.setAttribute("href", href);
         use.setAttribute("xlink:href", href);
+        if (use.hasAttributeNS("http://www.w3.org/1999/xlink", "href")) {
+          use.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", href);
+        }
       }
       const tip = myRole.querySelector(SITE.siteTooltipText);
       if (tip && myRole.hasAttribute("data-original-role-name")) {
         tip.textContent = `Ваша роль - ${myRole.getAttribute("data-original-role-name")}`;
       }
+      // Снимок «настоящей роли» живёт только до E: сайт может сменить роль в
+      // том же узле, и следующий F→E вернул бы прежнюю (внешний аудит).
+      myRole.removeAttribute("data-original-role");
+      myRole.removeAttribute("data-original-role-name");
+      myRole.removeAttribute("data-original-sprite-base");
     }
     this.setFaked(false);
   }
@@ -238,14 +325,48 @@ class RoleFaker {
     const href = use.getAttribute("href") || use.getAttribute("xlink:href") || "";
     if (href.includes("#stop")) return;
     const role = this.roles[this.currentRoleIndex];
-    if (href.endsWith(`#${role.icon}`)) return;
-    const base = el.getAttribute("data-original-sprite-base") || this.resolveSpriteBase();
-    const fake = `${base}#${role.icon}`;
-    use.setAttribute("href", fake);
-    use.setAttribute("xlink:href", fake);
+    const xlink = this.captureRealRole(el, use);
+    if (!href.endsWith(`#${role.icon}`) || !xlink.endsWith(`#${role.icon}`)) {
+      const base = el.getAttribute("data-original-sprite-base") || this.resolveSpriteBase();
+      const fake = `${base}#${role.icon}`;
+      use.setAttribute("href", fake);
+      use.setAttribute("xlink:href", fake);
+      // И пространственный атрибут сайта — иначе перекраска шла бы на каждом
+      // флаше (он так и оставался бы настоящим).
+      if (use.hasAttributeNS("http://www.w3.org/1999/xlink", "href")) {
+        use.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", fake);
+      }
+    }
+    // Подпись сверяем ВСЕГДА: сайт мог вернуть настоящую при фальшивом
+    // значке — и она всплывала по наведению (внешний аудит 21.10.2026).
     const tip = el.querySelector(SITE.siteTooltipText);
     const text = `Ваша роль - ${role.name}`;
     if (tip && tip.textContent !== text) tip.textContent = text;
+  }
+
+  /**
+   * Сайт поставил НАСТОЯЩУЮ роль (в том числе новую — смена роли в том же
+   * узле): её и вернёт E, а не снимок прежней (внешний аудит №2, §4 п.2).
+   * RoomIcon сайта патчит xlink:href — наш href при этом остаётся фальшивым
+   * (браузер рисует href), поэтому смотрим оба. Возвращает xlink.
+   */
+  private captureRealRole(el: HTMLElement, use: Element): string {
+    const role = this.roles[this.currentRoleIndex];
+    const href = use.getAttribute("href") || use.getAttribute("xlink:href") || "";
+    const xlink =
+      use.getAttributeNS("http://www.w3.org/1999/xlink", "href") || use.getAttribute("xlink:href") || "";
+    const realHref = !href.endsWith(`#${role.icon}`) ? href : !xlink.endsWith(`#${role.icon}`) ? xlink : "";
+    if (realHref && !realHref.includes("#stop")) {
+      const real = realHref.split("#")[1];
+      if (real && real !== el.getAttribute("data-original-role")) {
+        el.setAttribute("data-original-role", real);
+        const tipNow = el.querySelector(SITE.siteTooltipText)?.textContent ?? "";
+        if (tipNow && tipNow !== `Ваша роль - ${role.name}`) {
+          el.setAttribute("data-original-role-name", tipNow.replace("Ваша роль - ", ""));
+        }
+      }
+    }
+    return xlink;
   }
 
   /** Перенаклад текущей подмены на пересозданный узел (без сдвига по кругу). */
@@ -300,6 +421,7 @@ class RoleFaker {
     const tip = el.querySelector(SITE.siteTooltipText);
     const text = `Ваша роль - ${role.name}`;
     if (tip && tip.textContent !== text) tip.textContent = text;
+    if (this.isFaked) setFakeShield(true, role.icon);
     return true;
   }
 
@@ -340,6 +462,9 @@ export const roleFakerFeature: Feature = {
   settingKey: "enable_role_faker",
   enable(ctx: FeatureContext) {
     faker = new RoleFaker();
+    const fresh = faker;
+    sweepOrphanFake(() => fresh.spriteBaseForSweep());
+    setLiveFaker(true);
     faker.hideKeyCode = ctx.settings.hotkey_role_hide || "KeyD";
     boundFake = ctx.settings.hotkey_role_fake || "KeyF";
     boundReset = ctx.settings.hotkey_role_reset || "KeyE";
@@ -361,5 +486,6 @@ export const roleFakerFeature: Feature = {
     offKeys = [];
     faker?.teardown();
     faker = null;
+    setLiveFaker(false);
   },
 };

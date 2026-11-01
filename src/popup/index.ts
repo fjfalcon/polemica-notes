@@ -30,6 +30,7 @@ import { formatKeyCode, isModifierCode } from "@core/keyboard";
 // Список углов — общий с content-скриптом (см. shared/nick-plate).
 import { PLATE_POSITIONS } from "@shared/nick-plate";
 import { setupPlayerSearch } from "./player-search";
+import { setupOwnAvatarSection } from "./own-avatar-section";
 import {
   DEFAULT_PROTOCOL_EMOJI,
   PROTOCOL_EMOJI_PALETTE,
@@ -134,6 +135,7 @@ const SCOPE = "popup";
 document.addEventListener("DOMContentLoaded", () => {
   installErrorCapture("popup");
   setupPlayerSearch();
+  setupOwnAvatarSection();
 
   // Онбординг: попап открыт — настройки найдены. Снимаем точку с иконки и
   // больше никогда не навязываем страницу-приветствие (см. background,
@@ -1382,6 +1384,10 @@ document.addEventListener("DOMContentLoaded", () => {
       pauseHotkeyCode = patch.pause_hotkey_code;
       renderPauseKey();
     }
+    if (typeof patch.mic_sync_hotkey === "string") {
+      micHotkeyCode = patch.mic_sync_hotkey;
+      renderMicKey();
+    }
     if (typeof patch.hotkey_role_fake === "string") roleFakeCode = patch.hotkey_role_fake;
     if (typeof patch.hotkey_role_reset === "string") roleResetCode = patch.hotkey_role_reset;
     if (typeof patch.hotkey_role_hide === "string") roleHideCode = patch.hotkey_role_hide;
@@ -1436,6 +1442,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     set("extension_enabled", items.extension_enabled);
     applyExtOff(items.extension_enabled);
+    set("hide_rating", items.hide_rating);
     set("show_mmr", items.show_mmr);
     set("show_games", items.show_games);
     set("show_id", items.show_id);
@@ -1474,6 +1481,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (msv) msv.value = items.match_stats_view || "hints";
 
     set("auto_hide_roles_enabled", items.auto_hide_roles_enabled);
+    set("roles_reveal_on_game_end", items.roles_reveal_on_game_end);
+    set("obs_day_scene_when_out", items.obs_day_scene_when_out);
     const rpase = $<HTMLInputElement>("role_phase_auto_switch_enabled");
     if (rpase) {
       rpase.checked = items.auto_hide_roles_enabled ? items.role_phase_auto_switch_enabled : false;
@@ -1487,6 +1496,9 @@ document.addEventListener("DOMContentLoaded", () => {
     set("stream_lost_icon_enabled", items.stream_lost_icon_enabled);
     set("player_mute_enabled", items.player_mute_enabled);
     set("nick_colors_enabled", items.nick_colors_enabled);
+    set("nick_aliases_enabled", items.nick_aliases_enabled);
+    set("nick_aliases_on_stream", items.nick_aliases_on_stream);
+    set("nick_aliases_hide_condemned_on_stream", items.nick_aliases_hide_condemned_on_stream);
     const nfw = $<HTMLSelectElement>("note_frame_width");
     if (nfw) {
       // Нормализация: импорт бэкапа проверяет только typeof, и мусорная
@@ -1535,6 +1547,11 @@ document.addEventListener("DOMContentLoaded", () => {
     set("obs_auto_record_enabled", items.obs_auto_record_enabled);
     set("obs_clip_enabled", items.obs_clip_enabled);
     set("profile_mmr_chart_enabled", items.profile_mmr_chart_enabled);
+    set("profile_photo_enabled", items.profile_photo_enabled);
+    set("search_avatars_enabled", items.search_avatars_enabled);
+    set("search_card_avatar_enabled", items.search_card_avatar_enabled);
+    const avatarSource = $<HTMLSelectElement>("own_avatar_source");
+    if (avatarSource) avatarSource.value = items.own_avatar_source === "custom" ? "custom" : "site";
     const clipMin = $<HTMLSelectElement>("obs_clip_minutes");
     if (clipMin) clipMin.value = String(items.obs_clip_minutes || 1);
     set("hotkey_hints_enabled", items.hotkey_hints_enabled);
@@ -1619,6 +1636,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const autoHideRolesEnabled = cb("auto_hide_roles_enabled", false);
     const settings: Settings = {
       extension_enabled: cb("extension_enabled", true),
+      hide_rating: cb("hide_rating", false),
       show_mmr: cb("show_mmr"),
       show_games: cb("show_games"),
       show_id: cb("show_id"),
@@ -1634,6 +1652,9 @@ document.addEventListener("DOMContentLoaded", () => {
       stream_lost_icon_enabled: cb("stream_lost_icon_enabled", true),
       player_mute_enabled: cb("player_mute_enabled", true),
       nick_colors_enabled: cb("nick_colors_enabled", true),
+      nick_aliases_enabled: cb("nick_aliases_enabled", true),
+      nick_aliases_on_stream: cb("nick_aliases_on_stream", true),
+      nick_aliases_hide_condemned_on_stream: cb("nick_aliases_hide_condemned_on_stream", true),
       note_frame_width: noteFrameWidthValue(),
       btn_stats_enabled: cb("btn_stats_enabled", true),
       btn_note_enabled: cb("btn_note_enabled", true),
@@ -1692,6 +1713,11 @@ document.addEventListener("DOMContentLoaded", () => {
       mic_sync_input: ($<HTMLInputElement>("mic_sync_input")?.value ?? "").trim() || "Mic/Aux",
       mic_sync_hotkey: micHotkeyCode,
       profile_mmr_chart_enabled: cb("profile_mmr_chart_enabled", true),
+      profile_photo_enabled: cb("profile_photo_enabled", true),
+      search_avatars_enabled: cb("search_avatars_enabled", true),
+      search_card_avatar_enabled: cb("search_card_avatar_enabled", true),
+      own_avatar_source:
+        $<HTMLSelectElement>("own_avatar_source")?.value === "custom" ? "custom" : "site",
       match_page_stats_enabled: cb("match_page_stats_enabled", true),
       match_stats_view: $<HTMLSelectElement>("match_stats_view")?.value || "hints",
       stats_button_theme: ($<HTMLSelectElement>("stats_button_theme")?.value || "default"),
@@ -1699,6 +1725,7 @@ document.addEventListener("DOMContentLoaded", () => {
       auto_hide_roles_enabled: autoHideRolesEnabled,
       role_phase_auto_switch_enabled:
         autoHideRolesEnabled && cb("role_phase_auto_switch_enabled", false),
+      roles_reveal_on_game_end: cb("roles_reveal_on_game_end", true),
       // OBS
       obs_enabled: cb("obs_enabled", false),
       // Санитайзер SEC26-1: userinfo/query отрезаются при сохранении —
@@ -1717,6 +1744,7 @@ document.addEventListener("DOMContentLoaded", () => {
       obs_auto_mode_enabled: cb("obs_auto_mode_enabled", false),
       obs_day_scene: sceneVal("obs_day_scene", knownDayScene),
       obs_night_scene: sceneVal("obs_night_scene", knownNightScene),
+      obs_day_scene_when_out: cb("obs_day_scene_when_out", true),
       // Twitch
       twitch_chat_enabled: cb("twitch_chat_enabled", false),
       twitch_channel_name: val("twitch_channel_name", ""),
@@ -1796,6 +1824,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // ───────────────────────── Подписка контролов на change ─────────────────────────
   const simpleChangeIds = [
     "extension_enabled",
+    "hide_rating",
     "show_mmr",
     "show_games",
     "show_id",
@@ -1820,6 +1849,10 @@ document.addEventListener("DOMContentLoaded", () => {
     "mic_sync_enabled",
     "mic_sync_input",
     "profile_mmr_chart_enabled",
+    "profile_photo_enabled",
+    "search_avatars_enabled",
+    "search_card_avatar_enabled",
+    "own_avatar_source",
     "obs_auto_record_enabled",
     "obs_clip_enabled",
     "obs_clip_minutes",
@@ -1828,6 +1861,8 @@ document.addEventListener("DOMContentLoaded", () => {
     "match_stats_view",
     "auto_hide_roles_enabled",
     "role_phase_auto_switch_enabled",
+    "roles_reveal_on_game_end",
+    "obs_day_scene_when_out",
     "disable_webcam_clicks",
     "auto_accept_enabled",
     "auto_ready_enabled",
@@ -1836,6 +1871,9 @@ document.addEventListener("DOMContentLoaded", () => {
     "stream_lost_icon_enabled",
     "player_mute_enabled",
     "nick_colors_enabled",
+    "nick_aliases_enabled",
+    "nick_aliases_on_stream",
+    "nick_aliases_hide_condemned_on_stream",
     "note_frame_width",
     "btn_stats_enabled",
     "btn_note_enabled",

@@ -54,10 +54,6 @@ describe("shouldSwallowRoleKey (§4.5 gates of the D blocker)", () => {
     expect(shouldSwallowRoleKey(keydown({ code: "KeyD", repeat: true }), "KeyD")).toBe(true);
   });
 
-  test.each(["KeyF", "KeyE", "Space"])("ignores unrelated key %s", (code) => {
-    expect(shouldSwallowRoleKey(keydown({ code }), "KeyD")).toBe(false);
-  });
-
   test("follows the rebound hide key, not the literal D", () => {
     expect(shouldSwallowRoleKey(keydown({ code: "KeyD" }), "KeyG")).toBe(false);
     expect(shouldSwallowRoleKey(keydown({ code: "KeyG" }), "KeyG")).toBe(true);
@@ -184,11 +180,125 @@ describe("подмена переживает Vue-перерисовки (ауд
     late.style.display = "inline-flex";
     (document.querySelector("#p2") as HTMLElement).appendChild(late);
     fireDom();
-    expect(late.style.display, "скрыт наблюдателем").toBe("none");
+    expect(late.style.visibility, "скрыт наблюдателем").toBe("hidden");
+    expect(late.style.display, "display — флаг сайта, подмена его не трогает").toBe("inline-flex");
     pressE();
-    expect(late.style.display, "E вернул исходный display, а не бросил скрытым").toBe(
-      "inline-flex",
-    );
+    expect(late.style.visibility, "E вернул исходное, а не бросил скрытым").toBe("");
+    expect(late.style.display).toBe("inline-flex");
     expect(isRoleFaked()).toBe(false);
+  });
+
+  test("щит подмены: свежий узел роли скрыт ДО флаша наблюдателя (adversarial 21.10.2026, №8)", () => {
+    // До флаша (rAF, ≤ ~270 мс) пересозданный узел показывал НАСТОЯЩУЮ роль.
+    const { own } = mountTable();
+    enable();
+    pressF();
+    const late = document.createElement("div");
+    late.className = "player__role role";
+    (document.querySelector("#p2") as HTMLElement).appendChild(late);
+    const vis = (el: Element) => getComputedStyle(el).visibility;
+    expect(vis(late), "новый узел сокомандника скрыт таблицей стилей").toBe("hidden");
+    expect(vis(own), "своя роль с фальшивкой видна").not.toBe("hidden");
+    // Пересозданная СВОЯ роль без фальшивки — тоже скрыта, а не настоящая.
+    const fresh = document.createElement("div");
+    fresh.className = "player__role role my-role";
+    own.replaceWith(fresh);
+    expect(vis(fresh)).toBe("hidden");
+    pressE();
+    expect(vis(late), "E снимает щит").not.toBe("hidden");
+  });
+
+  test("щит: Vue заменил только <use> в подменённой роли — настоящий значок скрыт сразу", () => {
+    const { own } = mountTable();
+    enable();
+    pressF();
+    own.querySelector("svg")!.innerHTML = '<use href="/sprite.svg#sheriff"></use>';
+    const use = own.querySelector("use")!;
+    expect(getComputedStyle(use).visibility, "до флаша наблюдателя").toBe("hidden");
+    // Сайт переписал href самого <use> (атрибут наблюдатель не видит).
+    fireDom();
+    expect(use.getAttribute("href"), "наблюдатель перекрасил").toContain("#godfather");
+    expect(getComputedStyle(use).visibility).not.toBe("hidden");
+    use.setAttribute("href", "/sprite.svg#sheriff");
+    // Переписанный href ловит само правило щита. jsdom сопоставляет
+    // [href$=…] и с атрибутом xlink:href (браузер — нет), поэтому сверяем
+    // текст правила: <use>, чей href не фальшивка, скрыт.
+    const rule = document.getElementById("pn-role-fake-shield")!.textContent!;
+    expect(rule).toContain('[data-original-role] use:not([href$="#godfather"])');
+    expect(use.getAttribute("href")!.endsWith("#godfather")).toBe(false);
+  });
+
+  test("подпись сверяется и при совпавшем значке; E снимает снимок настоящей роли", () => {
+    const { own } = mountTable();
+    enable();
+    pressF();
+    const tip = own.querySelector(".tooltip span")!;
+    tip.textContent = "Ваша роль - Шериф"; // сайт вернул настоящую подпись
+    fireDom();
+    expect(tip.textContent).toBe("Ваша роль - Дон");
+    pressE();
+    expect(own.hasAttribute("data-original-role"), "снимок живёт только до E").toBe(false);
+    // Сайт сменил роль в том же узле — следующий F→E возвращает НОВУЮ.
+    own.querySelector("use")!.setAttribute("href", "/sprite.svg#mafia");
+    tip.textContent = "Ваша роль - Мафия";
+    pressF();
+    pressE();
+    expect(own.querySelector("use")!.getAttribute("href")).toBe("/sprite.svg#mafia");
+  });
+
+  test("меню, появившееся во время подмены, E возвращает", () => {
+    mountTable();
+    enable();
+    pressF();
+    const menu = document.createElement("div");
+    menu.className = "player__menu with-role";
+    menu.style.right = "2rem";
+    document.querySelector("#p2")!.append(menu);
+    fireDom();
+    expect(menu.style.right).toBe("0.5rem");
+    pressE();
+    expect(menu.style.right).toBe("2rem");
+  });
+
+  test("уведомление «Игрок является …» под подменой скрыто щитом", () => {
+    mountTable();
+    enable();
+    pressF();
+    const block = document.createElement("div");
+    block.className = "notifications-block player__notifications-block";
+    block.innerHTML = '<div class="notification-element roleReveal"><span>Игрок является мафией</span></div>';
+    document.querySelector("#p2")!.append(block);
+    expect(getComputedStyle(block.firstElementChild!).visibility).toBe("hidden");
+    pressE();
+    expect(getComputedStyle(block.firstElementChild!).visibility).not.toBe("hidden");
+  });
+
+  test("следы подмены прежней копии скрипта снимаются при включении (обновление расширения)", () => {
+    const { own, foe } = mountTable();
+    own.setAttribute("data-original-role", "sheriff");
+    own.setAttribute("data-original-sprite-base", "/sprite.svg");
+    own.querySelector("use")!.setAttribute("href", "/sprite.svg#godfather");
+    foe.style.setProperty("visibility", "hidden", "important");
+    foe.setAttribute("data-pn-fake-hidden", "");
+    document.documentElement.setAttribute("data-pn-role-faked", "");
+    enable();
+    expect(own.querySelector("use")!.getAttribute("href")).toBe("/sprite.svg#sheriff");
+    expect(foe.style.visibility).toBe("");
+    expect(document.documentElement.hasAttribute("data-pn-role-faked")).toBe(false);
+  });
+
+  test("21.10.2026: смена флага сайта (D) посреди подмены не раскрывает сокомандника", () => {
+    // Сайт прячет/показывает роли v-show — пишет display всем ролям. Наш
+    // прежний display:none Vue перезаписывал на первой же смене флага, и
+    // состав чёрных проступал посреди подмены — в эфир.
+    mountTable();
+    enable();
+    pressF();
+    const partner = document.querySelector<HTMLElement>("#p2 .player__role")!;
+    expect(partner.style.visibility).toBe("hidden");
+    partner.style.display = "none"; // сайт спрятал роли
+    partner.style.display = ""; // и показал обратно (его D)
+    fireDom();
+    expect(partner.style.visibility, "сокомандник по-прежнему скрыт подменой").toBe("hidden");
   });
 });

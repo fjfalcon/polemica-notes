@@ -164,6 +164,125 @@ describe("сохранение", () => {
   });
 });
 
+describe("свой ник", () => {
+  const aliasInput = () => modal().querySelector("input[maxlength='32']") as HTMLInputElement;
+  const flush = async () => {
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+  };
+
+  test("поле заполнено сохранённым своим ником, заголовок — «Ник (свой)»", async () => {
+    const { port, model } = makePort({ "u:42": { text: "", timestamp: 1, alias: "Анечка", nick: "Аня" } });
+    await model.load();
+    showNoteModal(port, "Аня");
+    expect(aliasInput().value).toBe("Анечка");
+    expect(modal().querySelector("h3")?.textContent).toBe("Заметка для игрока Аня (Анечка)");
+  });
+
+  test("свой ник без текста и цвета — это запись, она сохраняется", async () => {
+    const { port, model } = makePort();
+    await model.load();
+    showNoteModal(port, "Аня");
+    aliasInput().value = "  Анечка\u202e  ";
+    buttonByText("Сохранить")?.click();
+    await flush();
+    expect((h.saved["u:42"] as { alias?: string }).alias, "очищен и сохранён").toBe("Анечка");
+  });
+
+  test("стёртый свой ник снимается, заметка остаётся", async () => {
+    const { port, model } = makePort({ "u:42": { text: "льёт", timestamp: 1, alias: "Анечка", nick: "Аня" } });
+    await model.load();
+    showNoteModal(port, "Аня");
+    aliasInput().value = "";
+    buttonByText("Сохранить")?.click();
+    await flush();
+    const rec = h.saved["u:42"] as { text: string; alias?: string };
+    expect(rec.text).toBe("льёт");
+    expect(rec.alias).toBeUndefined();
+  });
+
+  test("«Осуждёнка»: галочка сохраняется вместе со своим ником и без него не живёт", async () => {
+    const { port, model } = makePort({ "u:42": { text: "", timestamp: 1, nick: "Аня", alias: "Анечка", aliasCondemned: true } });
+    await model.load();
+    showNoteModal(port, "Аня");
+    const box = modal().querySelector<HTMLInputElement>("input[type=checkbox]")!;
+    expect(box.checked, "пометка показана").toBe(true);
+    aliasInput().value = "";
+    buttonByText("Сохранить")?.click();
+    await flush();
+    expect(h.saved["u:42"], "без своего ника пометка не сохраняется").toBeUndefined();
+  });
+
+  test("«Осуждёнка» ставится галочкой", async () => {
+    const { port, model } = makePort({ "u:42": { text: "x", timestamp: 1, nick: "Аня" } });
+    await model.load();
+    showNoteModal(port, "Аня");
+    aliasInput().value = "Грубость";
+    modal().querySelector<HTMLInputElement>("input[type=checkbox]")!.checked = true;
+    buttonByText("Сохранить")?.click();
+    await flush();
+    expect(h.saved["u:42"]).toMatchObject({ alias: "Грубость", aliasCondemned: true });
+  });
+
+  test("на эфире осуждёнка не видна в кадре: заголовок без неё, поле точками, «показать» раскрывает", async () => {
+    const { port, model } = makePort(
+      { "u:42": { text: "", timestamp: 1, nick: "Аня", alias: "Грубость", aliasCondemned: true } },
+      { maskCondemned: () => true },
+    );
+    await model.load();
+    showNoteModal(port, "Аня");
+    expect(modal().querySelector("h3")?.textContent).toBe("Заметка для игрока Аня");
+    expect(modal().textContent).not.toContain("Грубость");
+    expect(aliasInput().type).toBe("password");
+    buttonByText("показать")!.click();
+    expect(aliasInput().type).toBe("text");
+  });
+
+  test("окно открыто до эфира — начался эфир: осуждёнка прячется без переоткрытия; закрытие отписывает", async () => {
+    let live = false;
+    let cb: (() => void) | null = null;
+    let unsubscribed = false;
+    const { port, model } = makePort(
+      { "u:42": { text: "", timestamp: 1, nick: "Аня", alias: "Грубость", aliasCondemned: true } },
+      {
+        maskCondemned: () => live,
+        onStreamChange: (fn) => {
+          cb = fn;
+          return () => {
+            unsubscribed = true;
+          };
+        },
+      },
+    );
+    await model.load();
+    showNoteModal(port, "Аня");
+    expect(modal().querySelector("h3")?.textContent).toContain("Грубость");
+    live = true;
+    cb!();
+    expect(modal().querySelector("h3")?.textContent).toBe("Заметка для игрока Аня");
+    expect(aliasInput().type).toBe("password");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(unsubscribed).toBe(true);
+  });
+
+  test("вне эфира — как обычно", async () => {
+    const { port, model } = makePort(
+      { "u:42": { text: "", timestamp: 1, nick: "Аня", alias: "Грубость", aliasCondemned: true } },
+      { maskCondemned: () => false },
+    );
+    await model.load();
+    showNoteModal(port, "Аня");
+    expect(modal().querySelector("h3")?.textContent).toBe("Заметка для игрока Аня (Грубость)");
+    expect(aliasInput().type).toBe("text");
+  });
+
+  test("свой ник не подставляется в разметку сырым", async () => {
+    const { port, model } = makePort({ "u:42": { text: "", timestamp: 1, alias: '<img src=x onerror="1">' } });
+    await model.load();
+    showNoteModal(port, "Аня");
+    expect(modal().querySelector("img")).toBeNull();
+  });
+});
+
 describe("закрытие снимает за собой", () => {
   test("после Esc клавиатура больше не перехватывается", () => {
     const { port } = makePort();

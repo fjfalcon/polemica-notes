@@ -178,6 +178,28 @@ export const gameSearchProbes: Record<string, Probe> = {
     /isSearchBtnLoading\?\w+\("div",\{staticClass:"p-play__profile-game p-play__profile-game--search p-play__profile-game-loader-gradient"\}/,
     "isSearchBtnLoading ⇔ лоадер p-play__profile-game-loader-gradient вместо «Играть»",
   ),
+  /**
+   * Строка «Участников»: ссылка, ник и картинка — из ОДНОГО объекта игрока
+   * (search-avatars сверяет ник карточки профиля по id из ссылки с ником той
+   * же строки). Разъедутся — гейт «тот же игрок» перестанет что-то значить.
+   */
+  participantsRowBinding: re(
+    /key:(\w+)\.username\+"_participant",staticClass:"participants-item",attrs:\{href:"\/profile\/"\.concat\(\1\.id\)[\s\S]{0,160}?staticClass:"participants-image",attrs:\{src:\w+\.getUserAvatarUrl\(\1\.avatar_url,"100x"\)[\s\S]{0,80}?UsernameLabel",\{attrs:\{username:\1\.use/,
+    "строка участника: href /profile/{id}, картинка и ник — из одного объекта",
+  ),
+  /** Список очереди живёт в галочке режима — по ней search-avatars отличает его от витрины лобби. */
+  queueParticipantsInModeItem: inWindow(
+    't("label",{staticClass:"p-play__profile-modes-item"',
+    1200,
+    ['staticClass:"p-play__participants"', 'ParticipantsList",{attrs:{participants:'],
+    [],
+    "список «Участники» очереди внутри label.p-play__profile-modes-item",
+  ),
+  /** Адрес аватара: file_name и size — query-параметры /image/user-avatar. */
+  avatarUrlBuilder: re(
+    /\w+\.append\("file_name",\w+\),\w+&&\w+\.append\("size",\w+\),"\/image\/user-avatar\?"\.concat\(/,
+    "getUserAvatarUrl: /image/user-avatar?file_name=…&size=…",
+  ),
   /** Пока userInGame — поиск запрещён; «Играть» в DOM не существует. */
   searchDisabledWhileInGame: re(
     /searchDisabled:function\(\)\{return (?:\w+|this)\.gameSearchDisabled\|\|(?:\w+|this)\.userInGame&&!(?:\w+|this)\.inGameUsersAllowed\}/,
@@ -510,6 +532,43 @@ export const ruLocaleProbes: Record<string, Probe> = {
     'readiness_timeout:"Игра будет распущена через"',
     "префикс отсчёта роспуска (парсер MM:SS в queue-requeue)",
   ),
+};
+
+/**
+ * Режим «Скрыть рейтинг» (28.10.2026): rating-hide.css прячет рейтинг по
+ * классам сайта. Переименование класса вернуло бы рейтинг МОЛЧА — поэтому
+ * пригвождаем связь «класс ↔ что в нём рисуется».
+ */
+export const roomRatingProbes: Record<string, Probe> = {
+  mmrLabelClass: re(
+    /\w+=\{class:"mmrLabel"\}[\s\S]{0,700}image:"\/images\/user_mmr\//,
+    "значок MMR комнаты — .mmrLabel с иконками /images/user_mmr/",
+  ),
+  mmrLabelValue: has(
+    "value:e.playerView.user.mmr",
+    "в .mmrLabel лобби рисуется MMR игрока (playerView.user.mmr)",
+  ),
+  previewRatingLines: re(
+    /\{class:"player-preview default-modal"\},\w+=\{class:"profile-info"\}[\s\S]{0,80}\{class:"wrapper"\},\w+=\{class:"username"\}/,
+    "карточка игрока: .player-preview .profile-info .wrapper > p.username",
+  ),
+  previewRatingText: re(
+    /ratingTypeText\[\w+\.type\]\(\w+\.player\.position\)[\s\S]{0,120}" ранг"/,
+    "место в рейтинге и ранг — абзацы .wrapper рядом с ником (не .username)",
+  ),
+};
+
+export const profileRatingProbes: Record<string, Probe> = {
+  mmrLabelClass: has('return"mmrLabel ".concat', "значок MMR профиля — тот же класс .mmrLabel"),
+  levelCardMmr: re(
+    /t\("UserMmrLabel",\{attrs:\{containerClass:"avatarlvl__info-block avatarlvl__info-block-mmr"[\s\S]{0,200}value:Number\(\w+\.user\.mmr\)/,
+    "MMR в карточке уровня — компонент UserMmrLabel",
+  ),
+  historyMmrCell: re(
+    /"Итоговый MMR: "[\s\S]{0,120}staticClass:"profileGames__table-body-row-item-cont-mmr"/,
+    "± истории игр — profileGames__table-body-row-item-cont-mmr",
+  ),
+  historyMmrColumn: has('{title:"MMR",key:"mmr"}', "колонка истории игр подписана «MMR» (метка по подписи)"),
 };
 
 export function runProbes(

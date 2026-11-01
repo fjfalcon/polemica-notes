@@ -14,6 +14,8 @@ import type { Settings, SettingKey } from "@shared/types";
 
 export const DEFAULT_SETTINGS: Settings = {
   extension_enabled: true,
+  // Скрыть рейтинг — выбор игрока против тильта, по умолчанию рейтинг виден.
+  hide_rating: false,
   show_mmr: true,
   show_games: true,
   show_id: false,
@@ -30,6 +32,11 @@ export const DEFAULT_SETTINGS: Settings = {
   // Окно поверх стола — дело вкуса: выключено, как «Мой вечер» (09.10.2026).
   table_summary_enabled: false,
   profile_mmr_chart_enabled: true,
+  // Внешний вид без действий за игрока — включены (22.10.2026).
+  profile_photo_enabled: true,
+  search_avatars_enabled: true,
+  search_card_avatar_enabled: true,
+  own_avatar_source: "site",
   obs_auto_record_enabled: false,
   obs_clip_enabled: false,
   obs_clip_hotkey_code: "F9",
@@ -50,10 +57,15 @@ export const DEFAULT_SETTINGS: Settings = {
   disable_webcam_clicks: false,
   enable_role_faker: false,
   auto_hide_roles_enabled: false,
+  // Игра окончена — прятать нечего: стол открывается сам (23.10.2026).
+  roles_reveal_on_game_end: true,
   role_phase_auto_switch_enabled: false,
   camera_rotate_enabled: true,
   player_mute_enabled: true,
   nick_colors_enabled: true,
+  nick_aliases_enabled: true,
+  nick_aliases_on_stream: true,
+  nick_aliases_hide_condemned_on_stream: true,
   // "thick" (3px) — вид, каким рамки были всегда; тонкие/средние — по вкусу.
   note_frame_width: "thick",
   btn_stats_enabled: true,
@@ -154,6 +166,7 @@ export const DEFAULT_SETTINGS: Settings = {
   obs_auto_mode_enabled: false,
   obs_day_scene: "",
   obs_night_scene: "",
+  obs_day_scene_when_out: true,
   twitch_chat_enabled: false,
   twitch_channel_name: "",
   // true: настройка теперь реально гейтит показ панели (раньше не читалась

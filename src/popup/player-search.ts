@@ -11,7 +11,7 @@
  */
 import { browser } from "@core/env";
 import { log } from "@core/log";
-import { NOTES_KEY, isIdKey, ID_KEY_PREFIX, type NotesMap } from "@core/notes-store";
+import { NOTES_KEY, isIdKey, ID_KEY_PREFIX, nickWithAlias, normalizeAlias, type NotesMap } from "@core/notes-store";
 import { fetchActiveGames, fetchRatingList } from "@core/polemica-api";
 import { readSeenPlayers } from "@core/seen-players";
 
@@ -32,6 +32,8 @@ export interface Candidate {
   source: SearchSource;
   /** Прежние ники (из заметок) — тоже ищутся. */
   oldNicks?: string[];
+  /** Свой ник из заметки — ищется наравне с ником и показывается «Ник (свой)». */
+  alias?: string;
 }
 
 /** Итоговая строка выдачи (кандидаты одного id слиты). */
@@ -42,6 +44,8 @@ export interface SearchHit {
   sources: SearchSource[];
   /** Совпало по прежнему нику — показываем, по какому. */
   matchedOldNick?: string;
+  /** Свой ник из заметки. */
+  alias?: string;
   score: number;
 }
 
@@ -62,8 +66,14 @@ function matchScore(nick: string, q: string): number | null {
  * Ранжировать кандидатов по запросу. Чистая функция.
  * Порядок: совпадение по id → точный ник → начало ника → подстрока →
  * прежний ник; внутри — по MMR. Один id — одна строка, источники слиты.
+ * byRating=false (режим «Скрыть рейтинг»): внутри — по нику, порядок
+ * найденных не выдаёт, кто выше в рейтинге.
  */
-export function rankPlayerMatches(query: string, candidates: readonly Candidate[]): SearchHit[] {
+export function rankPlayerMatches(
+  query: string,
+  candidates: readonly Candidate[],
+  byRating = true,
+): SearchHit[] {
   const q = query.trim().toLowerCase();
   if (q.length < MIN_QUERY && !/^\d+$/.test(q)) return [];
   const byId = new Map<string, SearchHit>();
@@ -72,6 +82,8 @@ export function rankPlayerMatches(query: string, candidates: readonly Candidate[
     .sort((a, b) => SOURCE_ORDER.indexOf(a.source) - SOURCE_ORDER.indexOf(b.source));
   for (const c of sorted) {
     let score: number | null = c.id === q ? -1 : matchScore(c.nick, q);
+    // Свой ник — как сам ник: «Игорь» находит того, кого ты так назвал.
+    if (score === null && c.alias) score = matchScore(c.alias, q);
     let matchedOldNick: string | undefined;
     if (score === null) {
       for (const old of c.oldNicks ?? []) {
@@ -87,6 +99,7 @@ export function rankPlayerMatches(query: string, candidates: readonly Candidate[
     if (prev) {
       if (!prev.sources.includes(c.source)) prev.sources.push(c.source);
       if (prev.mmr === null && typeof c.mmr === "number") prev.mmr = c.mmr;
+      if (!prev.alias && c.alias) prev.alias = c.alias;
       if (score !== null && score < prev.score) {
         prev.score = score;
         prev.matchedOldNick = matchedOldNick;
@@ -98,6 +111,7 @@ export function rankPlayerMatches(query: string, candidates: readonly Candidate[
     byId.set(c.id, {
       nick: c.nick,
       id: c.id,
+      alias: c.alias,
       mmr: typeof c.mmr === "number" ? c.mmr : null,
       sources: [c.source],
       matchedOldNick,
@@ -106,7 +120,12 @@ export function rankPlayerMatches(query: string, candidates: readonly Candidate[
   }
   return [...byId.values()]
     .filter((h) => Number.isFinite(h.score))
-    .sort((a, b) => a.score - b.score || (b.mmr ?? -1) - (a.mmr ?? -1) || a.nick.localeCompare(b.nick))
+    .sort(
+      (a, b) =>
+        a.score - b.score ||
+        (byRating ? (b.mmr ?? -1) - (a.mmr ?? -1) : 0) ||
+        a.nick.localeCompare(b.nick),
+    )
     .slice(0, MAX_HITS);
 }
 
@@ -122,6 +141,7 @@ export function candidatesFromNotes(notes: NotesMap): Candidate[] {
       id,
       source: "note",
       oldNicks: Array.isArray(rec.nicks) ? rec.nicks.filter((n) => typeof n === "string") : [],
+      alias: normalizeAlias(rec.alias),
     });
   }
   return out;
@@ -184,6 +204,11 @@ export async function gatherCandidates(): Promise<{ candidates: Candidate[]; fai
 const PROFILE_URL = (id: string) => `https://polemicagame.com/profile/${encodeURIComponent(id)}`;
 
 /** Подключить поиск к разметке попапа. Без разметки — тихо ничего. */
+/** Режим «Скрыть рейтинг» — по тумблеру попапа (он и есть настройка на экране). */
+function ratingHidden(): boolean {
+  return document.querySelector<HTMLInputElement>("#hide_rating")?.checked === true;
+}
+
 export function setupPlayerSearch(): void {
   const input = document.getElementById("player_search_input") as HTMLInputElement | null;
   const button = document.getElementById("player_search_btn") as HTMLButtonElement | null;
@@ -216,7 +241,7 @@ export function setupPlayerSearch(): void {
       return;
     }
     if (my !== runId) return;
-    const hits = rankPlayerMatches(q, data.candidates);
+    const hits = rankPlayerMatches(q, data.candidates, !ratingHidden());
     renderHits(results, hits, q);
     const note = data.failed.length ? ` (недоступно: ${data.failed.join(", ")})` : "";
     status.textContent = hits.length
@@ -247,13 +272,15 @@ function hitRow(h: SearchHit): HTMLElement {
   row.rel = "noopener noreferrer";
   const left = document.createElement("span");
   const nick = document.createElement("b");
-  nick.textContent = h.nick;
+  nick.textContent = nickWithAlias(h.nick, h.alias);
   left.appendChild(nick);
   const hint = document.createElement("span");
   hint.className = "hint";
   const parts = [`id ${h.id}`];
   if (h.matchedOldNick) parts.push(`раньше: ${h.matchedOldNick}`);
-  if (h.sources.length) parts.push(h.sources.map((s) => SOURCE_LABEL[s]).join(", "));
+  // «рейтинг» как источник = «игрок в топ-1000» — в режиме скрытия молчим.
+  const sources = ratingHidden() ? h.sources.filter((s) => s !== "rating") : h.sources;
+  if (sources.length) parts.push(sources.map((s) => SOURCE_LABEL[s]).join(", "));
   hint.textContent = parts.join(" · ");
   left.appendChild(hint);
   const right = document.createElement("span");

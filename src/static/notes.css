@@ -240,3 +240,94 @@
 .player:has(> .pn-tag-ring) {
     position: relative !important;
 }
+
+/* Картинка в карточке профиля на странице поиска (search-card-avatar,
+   22.10.2026): размеры и скругление прежнего блока 3D-аватара сайта
+   (game-search.css). Класс наш — CSS сайта может исчезнуть молча. */
+.pn-search-avatar {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 2;
+  width: 10.125rem;
+  height: 11.8125rem;
+  overflow: hidden;
+  border-radius: .875rem;
+  background: hsla(0, 0%, 100%, .09);
+  border: 1px solid hsla(0, 0%, 100%, .18);
+}
+.pn-search-avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+@media (max-width: 768px) {
+  .pn-search-avatar {
+    width: 5.25rem;
+    height: 7.0625rem;
+  }
+}
+
+/* Свой ник игрока (nick-alias.ts, 22.10.2026). Текст сайта не меняется —
+   его читают ключ заметки и сторожа; свой ник рисует псевдоэлемент из
+   data-атрибута, и в textContent он не попадает.
+   Замена (плитка в игре): текст сайта схлопнут font-size:0, свой ник —
+   ::before с размерами шрифта ника комнаты (0.875rem, десктоп 1rem,
+   мобильная 0.8125rem — room/bundle/style.css; при редизайне сверить).
+   Длинный свой ник обрезается краем плашки без «…»: многоточие рисуется
+   шрифтом самого узла, а он нулевой. */
+.info__name[data-pn-alias] {
+  font-size: 0 !important;
+  /* Строку держит ::before: схлопнутый текст сайта со своей «опорой»
+     строки делал узел выше (18 px вместо 13.5) и сдвигал ник в плашке
+     относительно соседей — жалоба 22.10.2026, «1 3 5 не ровно стоят». */
+  line-height: 0 !important;
+}
+.info__name[data-pn-alias]::before {
+  content: attr(data-pn-alias);
+  display: inline-block;
+  vertical-align: top;
+  font-size: .875rem;
+  line-height: 1.1875rem;
+  /* Как у ника сайта: от схлопнутого узла ::before наследовал бы 0. */
+  letter-spacing: -.005em;
+}
+.player.desktop-version .info__name[data-pn-alias]::before {
+  font-size: 1rem;
+}
+.player.mobile-version .info__name[data-pn-alias]::before {
+  font-size: .8125rem;
+  line-height: 1.125rem;
+}
+/* «Ник (свой)»: списки, профиль, таблица разбора. */
+[data-pn-alias-suffix]::after {
+  content: " (" attr(data-pn-alias-suffix) ")";
+  opacity: .75;
+}
+/* Ник с градиентом (paintNickEl: прозрачный текст + background-clip:text):
+   прозрачность выносит ::after в отдельный слой, и движки Chromium старше
+   нашего не включают его текст в маску градиента — свой ник оставался
+   прозрачным, видны были только пустое место и «…» (жалоба 27.10.2026,
+   «ники не видны, именно на моём нике»). Без прозрачности суффикс — часть
+   текста узла и красится тем же градиентом. */
+[data-pn-nick-color*="gradient"][data-pn-alias-suffix]::after {
+  opacity: 1;
+}
+
+/* «Участники»: ник со своим ником — одной строкой, как без него. Перенос
+   на вторую строку делал блок текста выше аватара (выглядело как «ники
+   съехали вверх»), а значки подписки/Twitch уезжали к краю (жалоба
+   22.10.2026). Не влезающее — многоточие; целиком — в title. Колонка ника
+   сайта (auto) иначе растёт по тексту и не даёт сжаться. */
+.participants-item:has(.participants-name > span[data-pn-alias-suffix]) {
+  grid-template-columns: 2.375rem minmax(0, 1fr);
+}
+.participants-name:has(> span[data-pn-alias-suffix]) {
+  min-width: 0;
+}
+.participants-name > span[data-pn-alias-suffix] {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -29,7 +29,7 @@ vi.mock("@core/own-user", () => ({
   rememberOwnUserId: async () => {},
 }));
 
-vi.mock("@core/dom", () => ({
+vi.mock("@core/dom", () => ({ onDomChangeImmediate: vi.fn(() => () => undefined),
   onDomChange: vi.fn((cb: (muts: MutationRecord[]) => void) => {
     seam.subs.push(cb);
     return () => {
@@ -52,12 +52,18 @@ vi.mock("@core/env", () => ({ browser: browserMock }));
 vi.mock("@core/log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-const msgSeam = vi.hoisted(() => ({ handler: null as ((m: unknown) => void) | null }));
+const msgSeam = vi.hoisted(() => ({
+  handler: null as ((m: unknown) => void) | null,
+  /** Все подписчики: в браузере сообщение получают все, а не последний. */
+  all: new Set<(m: unknown) => void>(),
+}));
 vi.mock("@core/messaging", () => ({
   onMessage: vi.fn((cb: (m: unknown) => void) => {
     msgSeam.handler = cb;
+    msgSeam.all.add(cb);
     return () => {
-      msgSeam.handler = null;
+      msgSeam.all.delete(cb);
+      if (msgSeam.handler === cb) msgSeam.handler = null;
     };
   }),
   sendRuntime: vi.fn(async () => ({ success: true })),
@@ -76,9 +82,15 @@ import { resetMatchBriefCache } from "@core/match-brief";
 import {
   resetActiveGamesCacheForTest,
   resetRatingCacheForTest,
+  resetRoleBreakdownCacheForTest,
 } from "@core/polemica-api";
 import { releaseOwnHistory } from "@core/crossover";
 import type { Settings } from "@shared/types";
+import {
+  PlayerStatsStore,
+  STATS_TTL_MS,
+  type PlayerStatsEntry,
+} from "@content/features/player-notes/player-stats";
 
 const ctx = {
   settings: { statistics_enabled: true, nick_colors_enabled: true } as unknown as Settings,
@@ -870,5 +882,294 @@ describe("сворачивание ряда: ВСЕ кнопки, а не пар
       group.querySelector(".pn-collapse-button"),
       "тумблер «⋯» есть и в свёрнутом ряду",
     ).not.toBeNull();
+  });
+});
+
+describe("промах резолва id повторяется после паузы", () => {
+  const site = { games: [] as unknown[] };
+  const localGet = () => browserMock.storage.local.get as ReturnType<typeof vi.fn>;
+
+  async function start(): Promise<() => Promise<void>> {
+    site.games = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("/api/games")) return { ok: true, json: async () => site.games };
+        if (url.includes("/ratings/default/get-list")) return { ok: true, json: async () => [] };
+        return { ok: false, status: 404 };
+      }) as unknown as typeof fetch,
+    );
+    localGet().mockImplementation(async (q: unknown) => {
+      if (q && typeof q === "object" && "playerNotes" in (q as object)) {
+        return {
+          playerNotes: { "u:55": { text: "держит линию" } },
+          tagCustomColors: [],
+          pn_notes_migrated_v1: true,
+        };
+      }
+      return {};
+    });
+    await restart();
+    document.body.className = "";
+    document.body.innerHTML = `
+      <div class="players"><div class="player" id="p0">
+        <div class="player__info info"><span class="info__name">Gamma</span></div>
+      </div></div>`;
+    return async () => {
+      fire([rec({ target: document.body, added: [document.querySelector(".player") as Node] })]);
+      for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(1);
+    };
+  }
+
+  async function restart(): Promise<void> {
+    playerNotesFeature.disable();
+    seam.subs = [];
+    resetRatingCacheForTest();
+    resetActiveGamesCacheForTest();
+    await playerNotesFeature.enable({
+      settings: {
+        statistics_enabled: true,
+        btn_note_enabled: true,
+        note_indicator_enabled: true,
+        show_mmr: true,
+        show_id: true,
+      } as never,
+    });
+  }
+
+  const seated = [{ players: [{ username: "Gamma", id: 55, mmr: 1500 }] }];
+
+  test("id, появившийся после паузы, показывает заметку без перезагрузки", async () => {
+    try {
+      const pass = await start();
+      await pass();
+      expect(document.querySelector(".pn-note-dot"), "id ещё неизвестен").toBeNull();
+
+      site.games = seated;
+      await vi.advanceTimersByTimeAsync(20_000);
+      resetActiveGamesCacheForTest();
+      await pass();
+      expect(document.querySelector(".pn-note-dot"), "внутри паузы повтора нет").toBeNull();
+
+      await vi.advanceTimersByTimeAsync(41_000);
+      await pass();
+      expect(
+        document.querySelector(".pn-note-dot"),
+        "после паузы резолв повторён, заметка видна",
+      ).not.toBeNull();
+    } finally {
+      localGet().mockImplementation(async () => ({}));
+    }
+  });
+
+  test("игрок вне топ-1000 ушёл из игры: после TTL наведение держит статистику и точку заметки", async () => {
+    // Головной сценарий фикса: id взят проходом по плиткам из /api/games, игрока нет
+    // в рейтинге; после вылета и TTL наведение обязано показать статистику с устаревшим
+    // MMR, а точка заметки u:55 остаться. Без rememberId в ensurePlayerIdsResolved
+    // заглушка "рейтинг недоступен" затирает и то, и другое.
+    try {
+      const pass = await start();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string) => {
+          if (url.includes("/api/games")) return { ok: true, json: async () => site.games };
+          if (url.includes("/ratings/default/get-list")) return { ok: true, json: async () => [] };
+          if (url.includes("/profile/default/get-role-statistic")) {
+            return {
+              ok: true,
+              json: async () => [{ games_count: 10, wins_count: 5, first_killed_count: 1 }],
+            };
+          }
+          if (url.includes("/profile/default/get-statistic")) return { ok: true, json: async () => ({}) };
+          return { ok: false, status: 404 };
+        }) as unknown as typeof fetch,
+      );
+      site.games = seated;
+      await pass();
+      expect(document.querySelector(".pn-note-dot"), "id взят из активных игр").not.toBeNull();
+
+      site.games = [];
+      resetActiveGamesCacheForTest();
+      resetRoleBreakdownCacheForTest();
+      await vi.advanceTimersByTimeAsync(STATS_TTL_MS + 1000);
+      await pass();
+
+      const statsButton = document.querySelector<HTMLElement>(".stats-button");
+      expect(statsButton, "кнопка статистики есть").not.toBeNull();
+      statsButton?.dispatchEvent(new Event("mouseenter"));
+      for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(1);
+
+      const tooltip = document.querySelector<HTMLElement>(
+        '[data-pn-stats="1"][data-username="Gamma"]',
+      );
+      expect(tooltip?.innerHTML).toContain("MMR: 1500 (устар.)");
+      expect(tooltip?.innerHTML).toContain("ID: 55");
+      expect(document.querySelector(".pn-note-dot"), "точка заметки u:55 осталась").not.toBeNull();
+    } finally {
+      localGet().mockImplementation(async () => ({}));
+    }
+  });
+
+  test("страница профиля: заглушка статистики не заслоняет id из URL", async () => {
+    // lookupId берёт id статистики только годный: «—» заглушки «рейтинг недоступен» иначе
+    // перекрыл бы id из URL профиля, и заметка u:55 на кнопке «Заметка» не нашлась бы.
+    try {
+      const pass = await start();
+      await pass();
+      // Наведение за столом: ни игр, ни рейтинга — в кэше статистики встаёт заглушка с id «—».
+      const statsButton = document.querySelector<HTMLElement>(".stats-button");
+      expect(statsButton, "кнопка статистики есть").not.toBeNull();
+      statsButton?.dispatchEvent(new Event("mouseenter"));
+      await vi.advanceTimersByTimeAsync(1_000);
+      const tooltip = document.querySelector<HTMLElement>('[data-pn-stats="1"][data-username="Gamma"]');
+      expect(tooltip?.innerHTML, "заглушка в кэше").toContain("Нет данных рейтинга");
+
+      window.history.replaceState(null, "", "/profile/55");
+      document.body.innerHTML = `<div class="profileinfo"><span class="profileinfo__main-info-username">Gamma</span></div>`;
+      // Плиток нет, мутации профиля фильтр не пропускает: страницу добирает страховочный проход раз в 2 с.
+      await vi.advanceTimersByTimeAsync(2_100);
+      const btn = document.querySelector<HTMLElement>(".pn-profile-note-btn");
+      expect(btn, "кнопка «Заметка» на профиле").not.toBeNull();
+      expect(btn?.querySelector(".pn-note-dot"), "заметка u:55 найдена по id профиля").not.toBeNull();
+    } finally {
+      window.history.replaceState(null, "", "/game");
+      localGet().mockImplementation(async () => ({}));
+    }
+  });
+});
+
+describe("stale MMR in the stats tooltip", () => {
+  const entry = (extra: Partial<PlayerStatsEntry>): PlayerStatsEntry => ({
+    mmr: 1500,
+    totalGames: 10,
+    id: 55,
+    generalStats: { gamesCount: 10, winsCount: 5, firstKilledCount: 1, killpercent: 10, winrate: "50" },
+    roleStats: {
+      civilian: { winrate: "50" },
+      sheriff: { winrate: "50" },
+      mafia: { winrate: "50" },
+      godfather: { winrate: "50" },
+    },
+    ...extra,
+  });
+
+  async function tooltipFor(stats: PlayerStatsEntry, showMmr: boolean): Promise<string> {
+    vi.spyOn(PlayerStatsStore.prototype, "get").mockReturnValue(stats);
+    playerNotesFeature.disable();
+    seam.subs = [];
+    await playerNotesFeature.enable({
+      settings: { statistics_enabled: true, show_mmr: showMmr, show_id: true } as never,
+    });
+    document.body.innerHTML = `
+      <div class="players"><div class="player" id="p0">
+        <div class="player__info info"><span class="info__name">Gamma</span></div>
+      </div></div>`;
+    fire([rec({ target: document.body, added: [document.querySelector(".player") as Node] })]);
+    for (let i = 0; i < 6; i++) await vi.advanceTimersByTimeAsync(1);
+    const tooltip = document.querySelector<HTMLElement>('[data-pn-stats="1"][data-username="Gamma"]');
+    if (!tooltip) throw new Error("no stats tooltip rendered");
+    return tooltip.innerHTML;
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test("a stale MMR keeps its number and gets the qualifier", async () => {
+    const html = await tooltipFor(entry({ mmrStale: true }), true);
+    expect(html).toContain("MMR: 1500 (устар.)");
+    expect(html).toContain("ID: 55");
+  });
+
+  test("a fresh MMR has no qualifier", async () => {
+    const html = await tooltipFor(entry({}), true);
+    expect(html).toContain("MMR: 1500<br>");
+    expect(html).not.toContain("устар.");
+  });
+
+  test("hidden MMR hides the qualifier too", async () => {
+    const html = await tooltipFor(entry({ mmrStale: true }), false);
+    expect(html).not.toContain("MMR:");
+    expect(html).not.toContain("устар.");
+    expect(html).toContain("ID: 55");
+  });
+
+  test("unavailable rating keeps its placeholder and invents no number", async () => {
+    const html = await tooltipFor(entry({ mmrStale: true, ratingUnavailable: true }), true);
+    expect(html).not.toContain("MMR:");
+    expect(html).not.toContain("устар.");
+  });
+});
+
+describe("свой ник на плитке (22.10.2026)", () => {
+  const mountTile = () => {
+    document.body.innerHTML = `
+      <div class="players"><div class="player desktop-version" id="p1"><div class="player__botleftmenu">
+        <div class="player__info info"><div class="player-number player-0">1</div>
+        <span class="info__name">fj</span></div></div></div></div>`;
+    return document.querySelector("#p1") as HTMLElement;
+  };
+  const reEnable = async (settings: Record<string, unknown>) => {
+    playerNotesFeature.disable();
+    browserMock.storage.local.get.mockImplementation((async () => ({
+      playerNotes: { fj: { text: "", timestamp: 1, alias: "Паша" } },
+      notes_migrated_to_local: true,
+    })) as never);
+    await playerNotesFeature.enable({ settings: { ...ctx.settings, ...settings } as unknown as Settings });
+    await vi.advanceTimersByTimeAsync(0);
+  };
+
+  afterEach(() => {
+    browserMock.storage.local.get.mockImplementation((async () => ({})) as never);
+  });
+
+  test("в игре — свой ник атрибутом, ник сайта в узле нетронут", async () => {
+    await reEnable({});
+    const tile = mountTile();
+    fire([rec({ target: document.body, added: [tile] })]);
+    const name = document.querySelector<HTMLElement>(".info__name")!;
+    expect(name.getAttribute("data-pn-alias")).toBe("Паша");
+    expect(name.textContent, "по тексту ищется заметка — менять нельзя").toBe("fj");
+    expect(name.title).toBe("fj");
+  });
+
+  test("тумблер «Свои ники в игре» выключен — в игре ник сайта", async () => {
+    await reEnable({ nick_aliases_enabled: false });
+    const tile = mountTile();
+    fire([rec({ target: document.body, added: [tile] })]);
+    expect(document.querySelector(".info__name")!.hasAttribute("data-pn-alias")).toBe(false);
+  });
+});
+
+describe("осуждёнка на плитке и эфир (ревью 22.10.2026)", () => {
+  const mountTile = () => {
+    document.body.innerHTML = `
+      <div class="players"><div class="player desktop-version" id="p1"><div class="player__botleftmenu">
+        <div class="player__info info"><div class="player-number player-0">1</div>
+        <span class="info__name">fj</span></div></div></div></div>`;
+    return document.querySelector("#p1") as HTMLElement;
+  };
+
+  afterEach(() => {
+    browserMock.storage.local.get.mockImplementation((async () => ({})) as never);
+  });
+
+  test("интеграция OBS включена, эфир неизвестен — осуждёнку не ставим; «эфира нет» — ставим без прохода", async () => {
+    playerNotesFeature.disable();
+    browserMock.storage.local.get.mockImplementation((async () => ({
+      playerNotes: { fj: { text: "", timestamp: 1, alias: "Грубость", aliasCondemned: true } },
+      notes_migrated_to_local: true,
+    })) as never);
+    await playerNotesFeature.enable({ settings: { ...ctx.settings, obs_enabled: true } as unknown as Settings });
+    await vi.advanceTimersByTimeAsync(0);
+    const tile = mountTile();
+    fire([rec({ target: document.body, added: [tile] })]);
+    const name = document.querySelector<HTMLElement>(".info__name")!;
+    expect(name.hasAttribute("data-pn-alias"), "первый кадр при неизвестном эфире").toBe(false);
+    const broadcast = (m: unknown) => [...msgSeam.all].forEach((cb) => cb(m));
+    broadcast({ type: "obs_event", eventType: "obs_stream_state", data: { streaming: false } });
+    expect(name.getAttribute("data-pn-alias"), "эфира нет — сразу, не ждём прохода").toBe("Грубость");
+    broadcast({ type: "obs_event", eventType: "obs_stream_state", data: { streaming: true } });
+    expect(name.hasAttribute("data-pn-alias"), "эфир начался — сразу прячем").toBe(false);
   });
 });

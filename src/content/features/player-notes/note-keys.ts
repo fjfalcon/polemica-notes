@@ -11,7 +11,8 @@
  * Состояние — только кэш ник-индекса. Записи и резолв id приходят снаружи:
  * модуль не знает ни про настройки, ни про DOM, ни про сеть.
  */
-import { idKey, isIdKey, type NoteRecord, type NotesMap } from "@core/notes-store";
+import { idKey, isIdKey, normalizeAlias, type NoteRecord, type NotesMap } from "@core/notes-store";
+import { validPlayerId } from "@shared/player-id";
 
 export interface NoteKeyContext {
   /** Актуальная карта заметок (менеджер владеет ею и меняет её). */
@@ -45,12 +46,15 @@ export class NoteKeys {
    * из недоступной статистики чуть не отправил заметки ВСЕХ недоступных
    * игроков в один общий ключ `u:—` (чужая заметка в тултипе соседа +
    * взаимная перезапись). Блокер ревью 8.1.29.
+   *
+   * Валидатор ОДИН на вкладку, статистику и координатор (validPlayerId; canonicalUserId
+   * координатора — его обёртка): свой принимал "007" и небезопасные целые, и игрок
+   * получал ключ u:007, который статистика не признавала, а миграцию под него
+   * координатор отвергал: запись под ником не сливалась никогда (ревью апстрима
+   * 09.10.2026).
    */
   userId(username: string): number | string | undefined {
-    const id = this.ctx.lookupId(username.toLowerCase());
-    if (typeof id === "number") return Number.isInteger(id) && id > 0 ? id : undefined;
-    if (typeof id === "string" && /^\d+$/.test(id) && id !== "0") return id;
-    return undefined;
+    return validPlayerId(this.ctx.lookupId(username.toLowerCase()));
   }
 
   /**
@@ -106,6 +110,31 @@ export class NoteKeys {
   tag(username: string): string {
     const note = this.get(username);
     return note && typeof note !== "string" ? note.tag || "" : "";
+  }
+
+  /**
+   * Свой ник для ЗАМЕНЫ ника на плитке — только при уверенной привязке:
+   * резолвленный id (его запись, иначе точный легаси-ключ) или точный ключ-
+   * ник. Без фолбэка idKeyByNick по rec.nick: для заметки он — принятый
+   * компромисс, а в замене настоящий ник спрятан, и чужой свой ник выдал бы
+   * другого человека за этого (ревью 22.10.2026, В3).
+   */
+  displayAlias(username: string, hideCondemned = false): string {
+    const notes = this.ctx.notes();
+    const id = this.userId(username);
+    let key: string | undefined;
+    if (id !== undefined && Object.hasOwn(notes, idKey(id))) key = idKey(id);
+    else if (Object.hasOwn(notes, username)) key = username;
+    const note = key === undefined ? undefined : notes[key];
+    if (!note || typeof note === "string") return "";
+    if (hideCondemned && note.aliasCondemned === true) return ""; // эфир: осуждёнку не показываем
+    return normalizeAlias(note.alias) ?? "";
+  }
+
+  /** Свой ник игрока (очищенный на чтении — запись могла прийти из старого хранилища). */
+  alias(username: string): string {
+    const note = this.get(username);
+    return note && typeof note !== "string" ? normalizeAlias(note.alias) ?? "" : "";
   }
 
   /** Сохранённый цвет ника (без учёта настройки — для диалогов). */
