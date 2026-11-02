@@ -154,6 +154,9 @@ describe("ни одна настройка не потерялась при пе
       // сцен означает «OBS не подключён», и сохранённый выбор надо беречь.
       obs_day_scene: /obsDayScene\.addEventListener\("change"/,
       obs_night_scene: /obsNightScene\.addEventListener\("change"/,
+      // Источник микрофона (9.75.0): список приходит из OBS, правда — в
+      // knownMicInput, как у сцен.
+      mic_sync_input: /micInputSel\.addEventListener\("change"/,
     };
     const missing = controls.filter((id) => {
       if (subscribed.has(id)) return false;

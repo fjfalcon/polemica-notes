@@ -8,6 +8,7 @@
 import { browser } from "@core/env";
 import { log } from "@core/log";
 import { broadcastToGameTabs, sendRuntime } from "@core/messaging";
+import { listMicInputs, withMicInput, type MicInputList } from "./obs-mic";
 import type { ObsConnectionState, ObsScene, ObsSceneData } from "@shared/types";
 
 interface ConnSettings {
@@ -569,6 +570,23 @@ export class ObsClient {
         }
         break;
       }
+      case "InputNameChanged": {
+        // Переименовали источник, которым управляет «авто»: без этого вкладка
+        // узнавала события мьюта по старому имени и пропускала их до
+        // следующего переключения (ревью 02.11.2026, M3).
+        const d = eventData.eventData ?? {};
+        if (typeof d.oldInputName === "string" && typeof d.inputName === "string") {
+          this.notifyAll("obs_input_renamed", { oldInputName: d.oldInputName, inputName: d.inputName });
+        }
+        void sendRuntime({ type: "obs_event", eventType: "obs_inputs_changed", data: null });
+        break;
+      }
+      // Список источников нужен только попапу: вкладкам не рассылаем — смена
+      // коллекции сцен даёт пачку таких событий (контрольное ревью 02.11.2026).
+      case "InputCreated":
+      case "InputRemoved":
+        void sendRuntime({ type: "obs_event", eventType: "obs_inputs_changed", data: null });
+        break;
       case "StreamStateChanged": {
         // Эфир — всё, кроме «остановлен»: при RECONNECTING obs-websocket шлёт
         // outputActive:false, а кадры с задержкой трансляции всё равно уйдут
@@ -595,7 +613,13 @@ export class ObsClient {
     this.pending.delete(data.requestId);
     clearTimeout(p.timer);
     if (data.requestStatus?.result) p.resolve(data.responseData);
-    else p.reject(new Error(data.requestStatus?.comment || "OBS request failed"));
+    else {
+      // Код статуса — в ошибке: «нет такого источника» (600) отличается от
+      // остальных отказов (obs-mic: фолбэк прежнего «Mic/Aux»).
+      const err = new Error(data.requestStatus?.comment || "OBS request failed") as Error & { code?: unknown };
+      err.code = data.requestStatus?.code;
+      p.reject(err);
+    }
   }
 
   private request<T = any>(requestType: string, requestData: object = {}): Promise<T> {
@@ -670,6 +694,16 @@ export class ObsClient {
   /** Заглушить/включить источник звука OBS. Громкость не трогаем. */
   async setInputMute(inputName: string, inputMuted: boolean): Promise<void> {
     await this.request("SetInputMute", { inputName, inputMuted });
+  }
+
+  /** Микрофоны OBS для выбора в попапе (см. obs-mic.ts). */
+  listMicInputs(): Promise<MicInputList> {
+    return listMicInputs((t, d) => this.request(t, d));
+  }
+
+  /** Операция над источником микрофона: «авто» и прежний «Mic/Aux» — см. obs-mic.ts. */
+  withMicInput<T>(requested: string, op: (inputName: string) => Promise<T>): Promise<{ inputName: string; result: T }> {
+    return withMicInput((t, d) => this.request(t, d), requested, op);
   }
 
   // ── запись и буфер повторов (стримерский пакет 26.08.2026) ──

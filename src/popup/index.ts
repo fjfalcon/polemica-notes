@@ -10,6 +10,7 @@
  *  • chrome.* → browser.*, console.* → log.*.
  */
 import { browser, isStoreInstall } from "@core/env";
+import { LEGACY_MIC_DEFAULT } from "@shared/mic-input";
 import { log } from "@core/log";
 import * as wsLog from "@core/ws-log";
 import { installErrorCapture } from "@core/errors";
@@ -1200,6 +1201,83 @@ document.addEventListener("DOMContentLoaded", () => {
   let knownDayScene = "";
   let knownNightScene = "";
 
+  // Источник микрофона (9.75.0): "" — «авто», главный микрофон OBS. Как и у
+  // сцен, правда — в переменной: список приходит из OBS только после
+  // подключения, а сохранение не должно читать недостроенный <select>.
+  let knownMicInput = "";
+  /** Источники из OBS; null — OBS не подключён или не ответил. */
+  let micInputs: { main: string | null; mics: string[]; others: string[] } | null = null;
+  /** Поколение запроса списка: ответ, пришедший после отключения или нового запроса, устарел. */
+  let micListSeq = 0;
+
+  /** Пересобрать список: «Авто», микрофоны, прочие источники и сохранённый выбор, даже если его нет в OBS. */
+  function renderMicInputs(): void {
+    const sel = $<HTMLSelectElement>("mic_sync_input");
+    if (!sel) return;
+    const auto = !micInputs
+      ? "Авто: главный микрофон OBS"
+      : micInputs.main
+        ? `Авто: главный микрофон OBS (${micInputs.main})`
+        : "Авто: главный микрофон OBS — в OBS не задан";
+    const groups: Array<[string | null, Array<[string, string]>]> = [[null, [["", auto]]]];
+    if (micInputs?.mics.length) groups.push(["Микрофоны", micInputs.mics.map((n) => [n, n])]);
+    if (micInputs?.others.length) groups.push(["Другие источники", micInputs.others.map((n) => [n, n])]);
+    const listed = groups.some(([, opts]) => opts.some(([v]) => v === knownMicInput));
+    if (knownMicInput && !listed) {
+      // Прежнее значение по умолчанию фон сам уводит на главный микрофон.
+      const missing =
+        knownMicInput === LEGACY_MIC_DEFAULT ? " — нет в OBS, работает как «Авто»" : " — нет в OBS";
+      groups[0][1].push([knownMicInput, micInputs ? knownMicInput + missing : knownMicInput]);
+    }
+    const sig = JSON.stringify(groups);
+    if (sel.dataset.pnSig !== sig) {
+      // Имена приходят из OBS — только textContent/value, без разметки.
+      const option = ([value, label]: [string, string]) => {
+        const o = document.createElement("option");
+        o.value = value;
+        o.textContent = label;
+        return o;
+      };
+      sel.replaceChildren(
+        ...groups.flatMap(([label, opts]) => {
+          if (label === null) return opts.map(option);
+          const g = document.createElement("optgroup");
+          g.label = label;
+          g.append(...opts.map(option));
+          return [g];
+        }),
+      );
+      sel.dataset.pnSig = sig;
+    }
+    sel.value = knownMicInput;
+  }
+
+  function dropMicInputs(): void {
+    micListSeq++;
+    if (micInputs === null) return;
+    micInputs = null;
+    renderMicInputs();
+  }
+
+  async function refreshMicInputs(): Promise<void> {
+    const my = ++micListSeq;
+    let next: typeof micInputs = null;
+    try {
+      const raw = (await sendOBSCommand("get_mic_inputs")) as {
+        main?: unknown;
+        mics?: unknown;
+        others?: unknown;
+      } | null;
+      const names = (v: unknown) => (Array.isArray(v) ? v.filter((n): n is string => typeof n === "string") : []);
+      next = { main: typeof raw?.main === "string" ? raw.main : null, mics: names(raw?.mics), others: names(raw?.others) };
+    } catch {
+      next = null;
+    }
+    if (my !== micListSeq) return;
+    micInputs = next;
+    renderMicInputs();
+  }
+
   // ───────────────────────── Захват клавиши паузы ─────────────────────────
   let pauseHotkeyCode = "F8";
   const pauseCaptureBtn = $<HTMLButtonElement>("pause_hotkey_capture");
@@ -1377,6 +1455,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (s) s.style.display = patch.twitch_chat_enabled ? "block" : "none";
     }
     if ("obs_day_scene" in patch) knownDayScene = patch.obs_day_scene || "";
+    if (typeof patch.mic_sync_input === "string") {
+      knownMicInput = patch.mic_sync_input.trim();
+      renderMicInputs();
+    }
     if ("obs_night_scene" in patch) knownNightScene = patch.obs_night_scene || "";
     // Хоткеи живут в замыканиях, а не в input.value — без этого чужое
     // изменение хоткея откатывалось следующим же кликом по любому тумблеру.
@@ -1465,10 +1547,8 @@ document.addEventListener("DOMContentLoaded", () => {
     set("session_stats_enabled", items.session_stats_enabled);
     set("table_summary_enabled", items.table_summary_enabled);
     set("mic_sync_enabled", items.mic_sync_enabled);
-    {
-      const mi = $<HTMLInputElement>("mic_sync_input");
-      if (mi) mi.value = typeof items.mic_sync_input === "string" ? items.mic_sync_input : "Mic/Aux";
-    }
+    knownMicInput = typeof items.mic_sync_input === "string" ? items.mic_sync_input.trim() : "";
+    renderMicInputs();
     micHotkeyCode = typeof items.mic_sync_hotkey === "string" ? items.mic_sync_hotkey : "";
     renderMicKey();
     set("match_page_stats_enabled", items.match_page_stats_enabled);
@@ -1710,7 +1790,7 @@ document.addEventListener("DOMContentLoaded", () => {
       session_stats_enabled: cb("session_stats_enabled", false),
       table_summary_enabled: cb("table_summary_enabled", false),
       mic_sync_enabled: cb("mic_sync_enabled", false),
-      mic_sync_input: ($<HTMLInputElement>("mic_sync_input")?.value ?? "").trim() || "Mic/Aux",
+      mic_sync_input: knownMicInput,
       mic_sync_hotkey: micHotkeyCode,
       profile_mmr_chart_enabled: cb("profile_mmr_chart_enabled", true),
       profile_photo_enabled: cb("profile_photo_enabled", true),
@@ -1847,7 +1927,6 @@ document.addEventListener("DOMContentLoaded", () => {
     "session_stats_enabled",
     "table_summary_enabled",
     "mic_sync_enabled",
-    "mic_sync_input",
     "profile_mmr_chart_enabled",
     "profile_photo_enabled",
     "search_avatars_enabled",
@@ -2108,6 +2187,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       case "obs_scene_changed":
         updateCurrentSceneHighlight(data as string);
+        break;
+      // Источник добавили, удалили или переименовали — список микрофонов устарел.
+      case "obs_inputs_changed":
+        if (micInputs !== null) void refreshMicInputs();
         break;
       case "obs_disconnected":
         updateOBSStatus("Отключено", false);
@@ -2399,6 +2482,13 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
+    const micInputSel = $<HTMLSelectElement>("mic_sync_input");
+    if (micInputSel)
+      micInputSel.addEventListener("change", () => {
+        knownMicInput = micInputSel.value;
+        saveSettings();
+      });
+
     const obsDayScene = $<HTMLSelectElement>("obs_day_scene");
     const obsNightScene = $<HTMLSelectElement>("obs_night_scene");
     if (obsDayScene)
@@ -2461,7 +2551,14 @@ document.addEventListener("DOMContentLoaded", () => {
    * Команда OBS в background. Разворачивает ответ { success, data, error }.
    */
   async function sendOBSCommand(
-    command: "connect" | "disconnect" | "get_status" | "set_scene" | "get_scenes" | "replay_save",
+    command:
+      | "connect"
+      | "disconnect"
+      | "get_status"
+      | "set_scene"
+      | "get_scenes"
+      | "replay_save"
+      | "get_mic_inputs",
     data: { url?: string; password?: string; sceneName?: string } = {},
   ): Promise<unknown> {
     const response = await sendRuntime<{ success: boolean; data?: unknown; error?: string }>({
@@ -2500,6 +2597,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const obsDayScene = $<HTMLSelectElement>("obs_day_scene");
     const obsNightScene = $<HTMLSelectElement>("obs_night_scene");
     if (!scenesList) return;
+
+    // Список микрофонов живёт вместе со сценами: есть сцены — OBS на связи.
+    if (scenes && scenes.length > 0) void refreshMicInputs();
+    else dropMicInputs();
 
     if (!scenes || scenes.length === 0) {
       scenesList.innerHTML = '<div class="scenes-empty">Нет доступных сцен</div>';

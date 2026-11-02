@@ -109,7 +109,7 @@ export interface Settings {
   ctl_pos_guess: string;
   /** Микрофон: один клик/клавиша переключает OBS-источник и микрофон игры. */
   mic_sync_enabled: boolean;
-  /** Имя источника микрофона в микшере OBS. */
+  /** Имя источника микрофона в микшере OBS; "" — главный микрофон OBS (авто). */
   mic_sync_input: string;
   /** Клавиша переключения (KeyboardEvent.code); "" — только клик по плашке. */
   mic_sync_hotkey: string;
@@ -235,7 +235,8 @@ export interface ObsCommandMsg {
     | "replay_setup"
     | "room_entered"
     | "get_input_mute"
-    | "set_input_mute";
+    | "set_input_mute"
+    | "get_mic_inputs";
   data?: {
     url?: string;
     password?: string;
@@ -245,7 +246,7 @@ export interface ObsCommandMsg {
     /** true — сцену переключает САМ пользователь (клик в панели): такая
      *  команда всегда проходит и забирает владение автосценой этой вкладке. */
     manual?: boolean;
-    /** get/set_input_mute: имя источника звука в микшере OBS. */
+    /** get/set_input_mute: имя источника звука в микшере OBS; пусто — главный микрофон. */
     inputName?: string;
     /** set_input_mute: заглушить (true) или включить (false). */
     muted?: boolean;
@@ -261,7 +262,13 @@ export interface ObsEventMsg {
     | "obs_disconnected"
     | "obs_connected"
     /** Трансляция в OBS началась/закончилась: data = { streaming: boolean | null }. */
-    | "obs_stream_state";
+    | "obs_stream_state"
+    /** Мьют источника звука: data = { inputName, inputMuted }. */
+    | "obs_input_mute_changed"
+    /** Источник переименован: data = { oldInputName, inputName }. */
+    | "obs_input_renamed"
+    /** Источник добавлен или удалён — список микрофонов в попапе устарел. */
+    | "obs_inputs_changed";
   data?: unknown;
 }
 
