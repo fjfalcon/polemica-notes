@@ -10,6 +10,7 @@ import { sanitizeObsHost } from "@shared/safe-endpoint";
 import { log } from "./log";
 import { DEFAULT_CUSTOM_COLOR } from "@shared/button-theme";
 import { DEFAULT_LAST_GAMES_COUNT } from "@shared/last-games";
+import { DEFAULT_PLAYER_ACTION_KEYS } from "@shared/player-action-keys";
 import type { Settings, SettingKey } from "@shared/types";
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -112,6 +113,17 @@ export const DEFAULT_SETTINGS: Settings = {
   // Тот же принцип, что у остальных «действий за игрока»: включает сам игрок.
   outcry_hotkey_enabled: false,
   outcry_hotkey_code: "KeyC",
+  // ВЫКЛЮЧЕНО по умолчанию (решение владельца 04.11.2026): клавиша жмёт
+  // действие за игрока, а выстрел и голос не отменить. Включив, получаешь
+  // выставление и голос; выстрел и проверку игрок включает сам — промах
+  // клавишей на выстреле это несострел.
+  player_action_keys_enabled: false,
+  player_action_nominate: true,
+  player_action_vote: true,
+  player_action_shot: false,
+  player_action_check: false,
+  player_action_keys: DEFAULT_PLAYER_ACTION_KEYS,
+  player_action_numpad: true,
   // Включено: подсказка ничего не делает за игрока и появляется только там,
   // где клавиша реально сработает.
   hotkey_hints_enabled: true,

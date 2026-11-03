@@ -136,6 +136,20 @@ export interface Settings {
   outcry_hotkey_enabled: boolean;
   /** Клавиша выкрика (дефолт KeyC). */
   outcry_hotkey_code: string;
+  /**
+   * Действия по цифрам (04.11.2026): клавиша места жмёт кнопку действия сайта
+   * на плитке игрока. Выключено по умолчанию: выстрел и голос не отменить.
+   */
+  player_action_keys_enabled: boolean;
+  /** Какие действия клавиша нажимает: выставление, голос, выстрел, проверка. */
+  player_action_nominate: boolean;
+  player_action_vote: boolean;
+  player_action_shot: boolean;
+  player_action_check: boolean;
+  /** Клавиши игроков 1…10 через запятую (KeyboardEvent.code); "" — места без клавиши. */
+  player_action_keys: string;
+  /** Нумпад тоже: NumpadN — игрок N, Numpad0 — игрок 10. */
+  player_action_numpad: boolean;
   /** Писать клавишу прямо на кнопке: «Выкрикнуть (C)», «Пауза (F8)». */
   hotkey_hints_enabled: boolean;
   /** Кнопка «Перезагрузить камеры» в игре (видео пересоздаётся без F5). */

@@ -249,6 +249,11 @@ class KeyboardRouter {
     return this.bindings.has(code);
   }
 
+  /** Держит ли клавишу ИМЕННО этот обработчик (его не вытеснила другая фича). */
+  isBoundTo(code: string, handler: HotkeyHandler): boolean {
+    return this.bindings.get(code)?.handler === handler;
+  }
+
   /**
    * Зарегистрировать хоткей по физической клавише (event.code, напр. "KeyF", "F8").
    * Возвращает функцию отписки.

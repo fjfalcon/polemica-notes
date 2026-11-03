@@ -278,7 +278,7 @@ export const roomProbes: Record<string, Probe> = {
   ),
   /** Пара without-hover/with-hover принадлежит кнопке продолжения паузы. */
   withoutHoverContinue: re(
-    /class:"without-hover",textContent:v\(\w+\.\$parent\.readinessTextWithoutHoverContinue\)/,
+    /class:"without-hover",textContent:\w+\(\w+\.\$parent\.readinessTextWithoutHoverContinue\)/,
     "without-hover привязан к тексту продолжения паузы (F8)",
   ),
   /** Строка суммы в таблице статистики подписана «Итог» (захардкожено сайтом). */
@@ -332,7 +332,7 @@ export const roomProbes: Record<string, Probe> = {
   ),
   /** Номер игрока: класс player-N (id), подпись — id+1. */
   playerNumberBinding: re(
-    /\["player-number","player-"\.concat\(\w+\.id\)\][^)]*\)[^)]*textContent:v\(\w+\.id\+1\)/,
+    /\["player-number","player-"\.concat\(\w+\.id\)\][^)]*\)[^)]*textContent:\w+\(\w+\.id\+1\)/,
     "PlayerNumber: класс player-<id>, текст id+1 (id 0-based, подпись с единицы)",
   ),
   /**
@@ -600,6 +600,56 @@ export const ruPpkProbes: Record<string, Probe> = {
   menuLabel: has('vote_for_menu_stop:"ППК"', "пункт меню — ровно «ППК»"),
   votingTitle: has('stop_voting_title:"Проголосовать за ППК?"', "заголовок голосования за ППК"),
   yesLabel: has('yes:"Да"', "кнопка голоса «за» — ровно «Да»"),
+};
+
+/**
+ * Действия по цифрам (04.11.2026): кнопка действия на плитке (PlayerAction)
+ * подписана по виду действия, клик по ней — doAction(действие) сайта.
+ */
+export const roomPlayerActionProbes: Record<string, Probe> = {
+  actionLabels: re(
+    /case"nominate":return this\.\$root\.Loc\.nominate_player;case"shot":return this\.\$root\.Loc\.aim_player;case"vote":return this\.\$root\.Loc\.vote_player;case"check":return this\.\$root\.Loc\.reveal_role/,
+    "подпись кнопки по действию: nominate/shot/vote/check → Loc.nominate_player/aim_player/vote_player/reveal_role",
+  ),
+  actionRootClick: re(
+    /ao\("div",\{class:\w+\(\["player-action",\w+\.actionClasses\]\),onClick:[^}]*\$emit\("doAction"\)/,
+    "корень кнопки — .player-action, клик по нему — doAction",
+  ),
+  actionContentClass: re(/\w+=\{class:"player-action__content"\}/, "обёртка подписи — .player-action__content"),
+  actionLabelSpan: re(
+    /yo\("span",null,\w+\(\w+\.actionText\),1\)\]\)/,
+    "подпись — <span> прямым ребёнком обёртки (носитель подсказки клавиши)",
+  ),
+  actionsContainer: re(
+    /ao\("div",\{key:\d+,class:\w+\(\["player__actions",[\s\S]{0,260}onDoAction:function\(\)\{return \w+\.doAction\(e\)\}/,
+    "кнопки лежат в .player__actions, клик передаёт действие doAction(e)",
+  ),
+  /**
+   * Цифры сайта зовут doAction() БЕЗ действия — кнопки снимаются, на сервер
+   * ничего не уходит; поэтому, пока кнопки на столе, цифры сайту не отдаём.
+   * Починит сайт — проба упадёт, и глушение надо пересмотреть.
+   */
+  siteDigitKeysWithoutAction: re(
+    /_h\(""\.concat\(\w+,", num_"\)\.concat\(\w+\),\(function\(\)\{return event\.preventDefault\(\),\w+\.doAction\(\),!1\}\)\)/,
+    "цифры сайта (1…0, num_) вызывают doAction() без действия",
+  ),
+  /** …а Player.doAction шлёт РОВНО аргумент: дефолта «текущее действие» нет. */
+  playerDoActionPassesArg: re(
+    /doAction:function\((\w+)\)\{var \w+=\{id:this\.id,position:this\.id\+1,action:\1\};this\.\$EventBus\.\$emit\("player:onAction"/,
+    "Player.doAction(e) отправляет action: e без подстановки",
+  ),
+  /** …и onPlayerAction снимает кнопки ДО разбора действия — потому цифра их и гасит. */
+  onActionClearsFirst: re(
+    /"guess"!==\w+\.action&&this\.preparePlayersToAction\(""\),\w+\.action\)\{case"nominate"/,
+    "onPlayerAction: сначала preparePlayersToAction(\"\"), потом switch по действию",
+  ),
+};
+
+export const ruPlayerActionProbes: Record<string, Probe> = {
+  nominate: has('nominate_player:"Выставить этого игрока"', "кнопка выставления — ровно эта подпись"),
+  vote: has('vote_player:"Проголосовать за этого игрока"', "кнопка голоса — ровно эта подпись"),
+  shot: has('aim_player:"Сделать выстрел"', "кнопка выстрела — ровно эта подпись"),
+  check: has('reveal_role:"Раскрыть роль"', "кнопка проверки — ровно эта подпись"),
 };
 
 export function runProbes(

@@ -311,6 +311,30 @@
             <div class="row"><span>— Клавиша выкрика</span>
                 <button id="outcry_hotkey_code" class="btn-key">C</button>
             </div>
+            <div class="row"><span>Действия по цифрам<span class="hint">клавиша места жмёт кнопку действия на плитке игрока — как клик мышью. Работает только в игре и только когда кнопка есть. «Лучший ход» не трогает. Выключено по умолчанию: выстрел и голос не отменить</span></span>
+                <label class="switch"><input type="checkbox" id="player_action_keys_enabled"><span class="slider"></span></label>
+            </div>
+            <div class="row" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">— Что нажимать<span class="hint">выстрел и проверку включайте сами: промах клавишей на выстреле — несострел</span></span>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="player_action_nominate" checked> Выставление</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="player_action_vote" checked> Голосование</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="player_action_shot"> Выстрел</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="player_action_check"> Проверка</label>
+            </div>
+            <div class="row" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">— Клавиши игроков<span class="hint">нажми на клавишу места, затем новую. Клавиши сайта (V, M, L, G, D, K, R, F1–F10) не назначаются</span></span>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">1<button id="player_action_key_1" class="btn-key" title="Игрок 1: нажми, затем нужную клавишу">1</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">2<button id="player_action_key_2" class="btn-key" title="Игрок 2: нажми, затем нужную клавишу">2</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">3<button id="player_action_key_3" class="btn-key" title="Игрок 3: нажми, затем нужную клавишу">3</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">4<button id="player_action_key_4" class="btn-key" title="Игрок 4: нажми, затем нужную клавишу">4</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">5<button id="player_action_key_5" class="btn-key" title="Игрок 5: нажми, затем нужную клавишу">5</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">6<button id="player_action_key_6" class="btn-key" title="Игрок 6: нажми, затем нужную клавишу">6</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">7<button id="player_action_key_7" class="btn-key" title="Игрок 7: нажми, затем нужную клавишу">7</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">8<button id="player_action_key_8" class="btn-key" title="Игрок 8: нажми, затем нужную клавишу">8</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">9<button id="player_action_key_9" class="btn-key" title="Игрок 9: нажми, затем нужную клавишу">9</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">10<button id="player_action_key_10" class="btn-key" title="Игрок 10: нажми, затем нужную клавишу">0</button></label>
+            </div>
+            <div class="row"><span>— И цифры нумпада<span class="hint">Num 1…9 — игроки 1…9, Num 0 — игрок 10</span></span>
+                <label class="switch"><input type="checkbox" id="player_action_numpad" checked><span class="slider"></span></label>
+            </div>
             <div class="row"><span>Писать клавиши на кнопках<span class="hint">«Выкрикнуть (C)», «Пауза (F8)» — подпись появляется там, где клавиша сейчас сработает</span></span>
                 <label class="switch"><input type="checkbox" id="hotkey_hints_enabled" checked><span class="slider"></span></label>
             </div>

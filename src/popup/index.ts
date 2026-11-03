@@ -11,6 +11,14 @@
  */
 import { browser, isStoreInstall } from "@core/env";
 import { LEGACY_MIC_DEFAULT } from "@shared/mic-input";
+import {
+  DEFAULT_PLAYER_ACTION_KEYS,
+  NUMPAD_PLAYER_KEYS,
+  PLAYER_SLOTS,
+  SITE_ROOM_KEYS,
+  parsePlayerActionKeys,
+  serializePlayerActionKeys,
+} from "@shared/player-action-keys";
 import { log } from "@core/log";
 import * as wsLog from "@core/ws-log";
 import { installErrorCapture } from "@core/errors";
@@ -85,6 +93,11 @@ const OPERATIONAL_KEYS = [
   "twitch_chat_enabled",
   "enable_role_faker",
   "disable_webcam_clicks",
+  "player_action_keys_enabled",
+  // Выключены по умолчанию и необратимы: при уже включённой фиче файл
+  // включал бы выстрел по клавише молча (ревью 04.11.2026, M1).
+  "player_action_shot",
+  "player_action_check",
   // SEC26-8/2 (26.08.2026): авто-действия и сетевые/OBS-операции, которые
   // чужой бэкап не должен включать без явного согласия.
   "skip_start_screen_enabled",
@@ -104,6 +117,9 @@ const OPERATIONAL_LABELS: Record<string, string> = {
   twitch_chat_enabled: "подключение к чату Twitch",
   enable_role_faker: "подмена роли",
   disable_webcam_clicks: "блокировка кликов по камерам",
+  player_action_keys_enabled: "действия по цифрам (выставление, голос, выстрел, проверка с клавиш)",
+  player_action_shot: "выстрел по клавише места",
+  player_action_check: "проверка по клавише места",
   skip_start_screen_enabled: "автоклик стартового экрана игры",
   obs_auto_record_enabled: "автозапись игр в OBS",
   obs_clip_enabled: "клипы OBS (настройка и запуск Replay Buffer)",
@@ -794,13 +810,36 @@ document.addEventListener("DOMContentLoaded", () => {
               "hotkey_role_peek",
               "outcry_hotkey_code",
               "obs_clip_hotkey_code",
+              "mic_sync_hotkey",
             ];
             const seen = new Set<string>();
             for (const k of HOTKEYS) {
               const v = settingsPatch[k];
-              if (typeof v !== "string") continue;
+              // "" — «без клавиши» (микрофон), слота не занимает.
+              if (typeof v !== "string" || !v) continue;
               if (seen.has(v)) delete settingsPatch[k];
               else seen.add(v);
+            }
+            // Клавиши мест (одной строкой) действуют, только когда фича
+            // включена — тогда и сверяем с итогом «файл поверх текущего»
+            // (ревью 04.11.2026, m6): хоткей из файла на месте или нумпаде
+            // не импортируем; места из файла на оставшемся хоткее — тоже.
+            // Включат фичу позже тумблером — сверит сам попап.
+            const final = (k: string): unknown =>
+              k in settingsPatch ? settingsPatch[k] : (lastKnown as Record<string, unknown> | null)?.[k];
+            if (final("player_action_keys_enabled") === true) {
+              const seats = parsePlayerActionKeys(final("player_action_keys")).filter(Boolean);
+              if (final("player_action_numpad") !== false) seats.push(...NUMPAD_PLAYER_KEYS);
+              for (const k of HOTKEYS) {
+                const v = settingsPatch[k];
+                if (typeof v === "string" && v && seats.includes(v)) delete settingsPatch[k];
+              }
+              if (typeof settingsPatch.player_action_keys === "string") {
+                const others = HOTKEYS.map(final);
+                if (parsePlayerActionKeys(settingsPatch.player_action_keys).some((c) => c && others.includes(c))) {
+                  delete settingsPatch.player_action_keys;
+                }
+              }
             }
           }
           // Флаги, включающие ДЕЙСТВИЯ за игрока и сетевые подключения, не
@@ -1303,6 +1342,10 @@ document.addEventListener("DOMContentLoaded", () => {
     get: () => string,
     apply: (code: string) => void,
     render: () => void,
+    /** Почему клавишу этой кнопке не дать; null — можно. */
+    reject: (code: string) => string | null = () => null,
+    /** Коды, которые этой кнопке не конфликт (у места — его же нумпад). */
+    ownCodes: readonly string[] = [],
   ): void => {
     cancelKeyCapture?.();
     // Отложенный render прежнего отказа перетирал бы «Нажми клавишу…»
@@ -1316,9 +1359,14 @@ document.addEventListener("DOMContentLoaded", () => {
       e.preventDefault();
       e.stopPropagation();
       if (isModifierCode(e.code)) return; // ждём не-модификатор
-      if (e.code !== get() && hotkeyGetters.some((g) => g() === e.code)) {
+      const refusal =
+        reject(e.code) ??
+        (e.code !== get() && !ownCodes.includes(e.code) && hotkeyGetters.some((g) => g() === e.code)
+          ? "Занята другим действием"
+          : null);
+      if (refusal) {
         finish();
-        btn.textContent = "Занята другим действием";
+        btn.textContent = refusal;
         captureLabelTimer = setTimeout(() => {
           captureLabelTimer = null;
           render();
@@ -1408,6 +1456,77 @@ document.addEventListener("DOMContentLoaded", () => {
   setupRoleKey("outcry_hotkey_code", () => outcryCode, (c) => (outcryCode = c));
   setupRoleKey("obs_clip_hotkey_code", () => clipCode, (c) => (clipCode = c));
 
+  // ───────────────────────── Клавиши мест (действия по цифрам) ─────────────────────────
+  let playerKeys = parsePlayerActionKeys(DEFAULT_PLAYER_ACTION_KEYS);
+  const playerKeyRenders: Array<() => void> = [];
+  // Места и нумпад занимают клавиши, только пока фича включена: кто ею не
+  // пользуется, волен ставить паузу или микрофон на цифры (ревью, m5).
+  // Конфликты при включении разбирает resolveSeatConflicts.
+  const seatsOn = () => $<HTMLInputElement>("player_action_keys_enabled")?.checked === true;
+  const numpadOn = () => seatsOn() && $<HTMLInputElement>("player_action_numpad")?.checked !== false;
+  const seatGetters = new Set<() => string>();
+  const pushSeatGetter = (g: () => string) => {
+    seatGetters.add(g);
+    hotkeyGetters.push(g);
+  };
+  for (let i = 0; i < PLAYER_SLOTS; i++) {
+    const btn = $<HTMLButtonElement>(`player_action_key_${i + 1}`);
+    if (!btn) continue;
+    const get = () => playerKeys[i] ?? "";
+    const render = () => (btn.textContent = formatKeyCode(get()));
+    playerKeyRenders.push(render);
+    // Пустое место не занимает слот: «—» совпадало бы с другими пустыми.
+    pushSeatGetter(() => (seatsOn() && get()) || `\u0000seat${i}`);
+    btn.addEventListener("click", () =>
+      beginKeyCapture(
+        btn,
+        get,
+        (c) => (playerKeys = playerKeys.map((old, j) => (j === i ? c : old))),
+        render,
+        // Клавишу места, пока на столе кнопки действий, сайт не получает —
+        // его камера/микрофон/роли на ней перестали бы работать.
+        // Место против места — всегда, и при выключенной фиче: дубль при
+        // разборе достался бы первому месту, второе молча осталось бы без
+        // клавиши (контрольный раунд ревью).
+        (c) => {
+          if (SITE_ROOM_KEYS.includes(c)) return "Это клавиша сайта";
+          const j = playerKeys.findIndex((k, idx) => idx !== i && k === c);
+          return j >= 0 ? `Занята игроком ${j + 1}` : null;
+        },
+        [NUMPAD_PLAYER_KEYS[i]],
+      ),
+    );
+  }
+  NUMPAD_PLAYER_KEYS.forEach((code, i) => pushSeatGetter(() => (numpadOn() ? code : `\u0000num${i}`)));
+
+  /**
+   * Включили фичу или нумпад — клавиши мест сверяются с уже назначенными
+   * хоткеями. Место на чужой клавише остаётся без неё (её держит та
+   * функция), нумпад на чужой — тоже; пользователю — что именно.
+   */
+  function resolveSeatConflicts(): void {
+    if (!seatsOn()) return;
+    const others = hotkeyGetters.filter((g) => !seatGetters.has(g)).map((g) => g());
+    const lost: string[] = [];
+    playerKeys = playerKeys.map((code, i) => {
+      if (!code || !others.includes(code)) return code;
+      lost.push(`игрок ${i + 1} — ${formatKeyCode(code)}`);
+      return "";
+    });
+    if (numpadOn()) {
+      NUMPAD_PLAYER_KEYS.forEach((code, i) => {
+        if (others.includes(code)) lost.push(`игрок ${i + 1} — ${formatKeyCode(code)}`);
+      });
+    }
+    if (!lost.length) return;
+    playerKeyRenders.forEach((r) => r());
+    showPopupToast(`Клавиши заняты другими функциями, у мест их нет: ${lost.join(", ")}. Назначьте другие.`, "error", 12000);
+  }
+  // Раньше общего сохранения (simpleChangeIds ниже): очищенные места
+  // уходят в хранилище тем же сохранением.
+  $("player_action_keys_enabled")?.addEventListener("change", resolveSeatConflicts);
+  $("player_action_numpad")?.addEventListener("change", resolveSeatConflicts);
+
   // ───────────────────────── Загрузка настроек в контролы ─────────────────────────
   /**
    * Последнее известное состояние storage. Раньше popup был «слепым писателем»:
@@ -1476,6 +1595,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (typeof patch.hotkey_role_peek === "string") rolePeekCode = patch.hotkey_role_peek;
     if (typeof patch.outcry_hotkey_code === "string") outcryCode = patch.outcry_hotkey_code;
     if (typeof patch.obs_clip_hotkey_code === "string") clipCode = patch.obs_clip_hotkey_code;
+    if (typeof patch.player_action_keys === "string") {
+      playerKeys = parsePlayerActionKeys(patch.player_action_keys);
+      playerKeyRenders.forEach((r) => r());
+    }
     if (
       patch.hotkey_role_fake ||
       patch.hotkey_role_reset ||
@@ -1512,6 +1635,8 @@ document.addEventListener("DOMContentLoaded", () => {
     outcryCode = items.outcry_hotkey_code || "KeyC";
     clipCode = items.obs_clip_hotkey_code || "F9";
     roleKeyRenders.forEach((r) => r());
+    playerKeys = parsePlayerActionKeys(items.player_action_keys);
+    playerKeyRenders.forEach((r) => r());
     const set = (id: string, val: boolean) => {
       const el = $<HTMLInputElement>(id);
       // Строго === true — тем же правилом фичи включает FeatureManager.
@@ -1625,6 +1750,12 @@ document.addEventListener("DOMContentLoaded", () => {
       if (sel) sel.value = readControlPosition(kind, (items as unknown as Record<string, unknown>)[`ctl_pos_${kind}`]);
     }
     set("outcry_hotkey_enabled", items.outcry_hotkey_enabled);
+    set("player_action_keys_enabled", items.player_action_keys_enabled);
+    set("player_action_nominate", items.player_action_nominate);
+    set("player_action_vote", items.player_action_vote);
+    set("player_action_shot", items.player_action_shot);
+    set("player_action_check", items.player_action_check);
+    set("player_action_numpad", items.player_action_numpad);
     set("obs_auto_record_enabled", items.obs_auto_record_enabled);
     set("obs_clip_enabled", items.obs_clip_enabled);
     set("profile_mmr_chart_enabled", items.profile_mmr_chart_enabled);
@@ -1783,6 +1914,13 @@ document.addEventListener("DOMContentLoaded", () => {
       hotkey_role_peek: rolePeekCode,
       outcry_hotkey_enabled: cb("outcry_hotkey_enabled", false),
       outcry_hotkey_code: outcryCode,
+      player_action_keys_enabled: cb("player_action_keys_enabled", false),
+      player_action_nominate: cb("player_action_nominate", true),
+      player_action_vote: cb("player_action_vote", true),
+      player_action_shot: cb("player_action_shot", false),
+      player_action_check: cb("player_action_check", false),
+      player_action_keys: serializePlayerActionKeys(playerKeys),
+      player_action_numpad: cb("player_action_numpad", true),
       obs_auto_record_enabled: cb("obs_auto_record_enabled", false),
       obs_clip_enabled: cb("obs_clip_enabled", false),
       obs_clip_hotkey_code: clipCode,
@@ -1982,6 +2120,12 @@ document.addEventListener("DOMContentLoaded", () => {
     "ctl_pos_guess",
     "outcry_hotkey_enabled",
     "outcry_hotkey_code",
+    "player_action_keys_enabled",
+    "player_action_nominate",
+    "player_action_vote",
+    "player_action_shot",
+    "player_action_check",
+    "player_action_numpad",
     "hotkey_hints_enabled",
     "f5_refresh_fix_enabled",
     "update_check_enabled",

@@ -24,6 +24,7 @@ import { cameraHealthFeature } from "./features/camera-health";
 import { freezeWatchFeature } from "./features/freeze-watch";
 import { hotkeyHintsFeature } from "./features/hotkey-hints";
 import { outcryHotkeyFeature } from "./features/outcry-hotkey";
+import { playerActionKeysFeature } from "./features/player-action-keys";
 import { playerNotesFeature, syncPlayerNotesRoute } from "./features/player-notes";
 import { matchStatsFeature, syncMatchStatsRoute } from "./features/match-stats";
 import { tooltipFeature } from "./features/tooltip";
@@ -76,7 +77,6 @@ const manager = new FeatureManager().register(
   tooltipFeature,
   pauseHotkeyFeature,
   outcryHotkeyFeature,
-  hotkeyHintsFeature,
   cameraHealthFeature,
   freezeWatchFeature,
   f5RefreshFeature,
@@ -103,6 +103,12 @@ const manager = new FeatureManager().register(
   obsRecordFeature,
   obsClipFeature,
   contractWatchFeature,
+  // Последней из клавишных: при загрузке занятую другими фичами клавишу
+  // место не отнимает (пауза, роли, выкрик, микрофон, клип — все раньше).
+  playerActionKeysFeature,
+  // После действий по цифрам: в одном проходе update подсказка читает уже
+  // новую привязку мест, а не прежнюю (контрольный раунд ревью).
+  hotkeyHintsFeature,
 );
 
 function setupUrlRouter(extensionEnabledAtBoot: boolean): void {

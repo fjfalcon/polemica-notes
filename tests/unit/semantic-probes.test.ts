@@ -13,6 +13,8 @@ import {
   profileRatingProbes,
   roomPpkProbes,
   ruPpkProbes,
+  roomPlayerActionProbes,
+  ruPlayerActionProbes,
   siteCssProbes,
   siteRollerAnimationMs,
 } from "../contract/semantic-probes";
@@ -38,6 +40,8 @@ const ROOM_RATING = snip("room-rating.txt");
 const PROFILE_RATING = snip("profile-rating.txt");
 const ROOM_PPK = snip("room-ppk.txt");
 const RU_PPK = snip("ru-ppk.txt");
+const ROOM_PA = snip("room-player-actions.txt");
+const RU_PA = snip("ru-player-actions.txt");
 
 describe("пробы зелёные на реальных фрагментах бандлов", () => {
   test.each([
@@ -50,6 +54,8 @@ describe("пробы зелёные на реальных фрагментах �
     ["profile: рейтинг", profileRatingProbes, PROFILE_RATING],
     ["room-main: ППК", roomPpkProbes, ROOM_PPK],
     ["RU: ППК", ruPpkProbes, RU_PPK],
+    ["room-main: действия игрока", roomPlayerActionProbes, ROOM_PA],
+    ["RU: действия игрока", ruPlayerActionProbes, RU_PA],
   ] as const)("%s", (_name, probes, text) => {
     const failed = runProbes(probes, text).filter((r) => !r.ok);
     expect(failed, failed.map((f) => `${f.name}: ${f.detail}`).join("\n")).toEqual([]);
@@ -240,6 +246,31 @@ describe("каждая проба умирает от своего дрифта"
       (t) => t.replace("Проголосовать за ППК?", "ППК?")],
     ["ppk RU yesLabel: «Да» переименована", ruPpkProbes, "yesLabel", RU_PPK,
       (t) => t.replace('yes:"Да"', 'yes:"За"')],
+    // Действия по цифрам
+    ["pa actionLabels: выстрел подписан другим ключом", roomPlayerActionProbes, "actionLabels", ROOM_PA,
+      (t) => t.replace("Loc.aim_player", "Loc.shot_player")],
+    ["pa actionRootClick: клик больше не doAction", roomPlayerActionProbes, "actionRootClick", ROOM_PA,
+      (t) => t.replace('$emit("doAction")', '$emit("act")')],
+    ["pa actionContentClass: обёртка переименована", roomPlayerActionProbes, "actionContentClass", ROOM_PA,
+      (t) => t.replace('class:"player-action__content"', 'class:"player-action__body"')],
+    ["pa actionLabelSpan: подпись не span", roomPlayerActionProbes, "actionLabelSpan", ROOM_PA,
+      (t) => t.replace('yo("span",null,g(o.actionText),1)', 'yo("p",null,g(o.actionText),1)')],
+    ["pa actionsContainer: контейнер переименован", roomPlayerActionProbes, "actionsContainer", ROOM_PA,
+      (t) => t.replace('["player__actions",', '["player__buttons",')],
+    ["pa siteDigitKeysWithoutAction: сайт починил цифры", roomPlayerActionProbes, "siteDigitKeysWithoutAction", ROOM_PA,
+      (t) => t.replace("e.doAction(),!1", "e.doAction(e.action),!1")],
+    ["pa playerDoActionPassesArg: doAction подставляет текущее действие", roomPlayerActionProbes, "playerDoActionPassesArg", ROOM_PA,
+      (t) => t.replace("position:this.id+1,action:e}", "position:this.id+1,action:e||this.playerAction}")],
+    ["pa onActionClearsFirst: кнопки снимаются после разбора", roomPlayerActionProbes, "onActionClearsFirst", ROOM_PA,
+      (t) => t.replace('"guess"!==e.action&&this.preparePlayersToAction(""),e.action){', 'e.action){')],
+    ["pa RU nominate: подпись сменилась", ruPlayerActionProbes, "nominate", RU_PA,
+      (t) => t.replace("Выставить этого игрока", "Выставить игрока")],
+    ["pa RU vote: подпись сменилась", ruPlayerActionProbes, "vote", RU_PA,
+      (t) => t.replace("Проголосовать за этого игрока", "Голосовать")],
+    ["pa RU shot: подпись сменилась", ruPlayerActionProbes, "shot", RU_PA,
+      (t) => t.replace("Сделать выстрел", "Выстрелить")],
+    ["pa RU check: подпись сменилась", ruPlayerActionProbes, "check", RU_PA,
+      (t) => t.replace("Раскрыть роль", "Проверить")],
   ];
 
   test.each(cases)("%s", (_name, probes, probeName, original, mutate) => {

@@ -185,6 +185,15 @@ export const SITE = {
   penaltyVoting: ".voting",
   penaltyVotingTitle: ".voting__top-title",
   penaltyVotingButton: "button.voting__bottom-button",
+  /**
+   * Кнопка действия на плитке игрока (PlayerAction, 04.11.2026): выставить,
+   * проголосовать, выстрел, проверка. Лежит в `.player__actions`, пока у
+   * игрока есть действие (v-if); у выставления контейнер `show-on-hover` —
+   * opacity:0 до наведения, поэтому «видимость» по стилю не проверяем.
+   */
+  playerActionButton: ".player__actions .player-action",
+  /** Подпись кнопки действия (Loc.nominate_player и др.) — носитель подсказки клавиши. */
+  playerActionLabel: ".player-action__content > span",
   // Роли (SVG-спрайты)
   roleUse: "use[href], use[xlink\\:href]",
   /** МЁРТВЫЙ по текущей разметке: роли берутся из внешнего SVG-спрайта,
@@ -447,6 +456,17 @@ export const TEXT = {
    */
   finishSpeechButton: ["завершите речь", "end the speech"] as readonly string[],
   outcryButton: ["выкрикнуть", "outcry"] as readonly string[],
+  /**
+   * ТОЧНЫЕ подписи кнопки действия на плитке (PlayerAction.actionText, RU и EN
+   * локали комнаты, сверено 04.11.2026). Действие узнаём по подписи: в
+   * isolated world вид действия из стора сайта не прочитать.
+   */
+  playerAction: {
+    nominate: ["выставить этого игрока", "nominate this player"],
+    vote: ["проголосовать за этого игрока", "vote for this player"],
+    shot: ["сделать выстрел", "make a shot"],
+    check: ["раскрыть роль", "reveal role"],
+  } as Readonly<Record<"nominate" | "vote" | "shot" | "check", readonly string[]>>,
   /**
    * ТОЧНЫЕ подписи пункта «пауза» в меню настроек игры. Держатся здесь, а не
    * внутри pause-hotkey: их читает ещё и подсказка клавиши на кнопке, а два

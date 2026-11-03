@@ -57,6 +57,8 @@ const NO_CONTROL = new Set([
   "hotkey_role_fake",
   "hotkey_role_reset",
   "hotkey_role_hide",
+  // Десять кнопок захвата player_action_key_1…10, значение — одной строкой.
+  "player_action_keys",
   "note_frame_width",
   "match_stats_view",
   "stats_button_theme",
