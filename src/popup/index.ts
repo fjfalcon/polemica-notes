@@ -1547,6 +1547,7 @@ document.addEventListener("DOMContentLoaded", () => {
     set("session_stats_enabled", items.session_stats_enabled);
     set("table_summary_enabled", items.table_summary_enabled);
     set("mic_sync_enabled", items.mic_sync_enabled);
+    set("ppk_confirm_enabled", items.ppk_confirm_enabled);
     knownMicInput = typeof items.mic_sync_input === "string" ? items.mic_sync_input.trim() : "";
     renderMicInputs();
     micHotkeyCode = typeof items.mic_sync_hotkey === "string" ? items.mic_sync_hotkey : "";
@@ -1717,6 +1718,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const settings: Settings = {
       extension_enabled: cb("extension_enabled", true),
       hide_rating: cb("hide_rating", false),
+      ppk_confirm_enabled: cb("ppk_confirm_enabled", true),
       show_mmr: cb("show_mmr"),
       show_games: cb("show_games"),
       show_id: cb("show_id"),
@@ -1905,6 +1907,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const simpleChangeIds = [
     "extension_enabled",
     "hide_rating",
+    "ppk_confirm_enabled",
     "show_mmr",
     "show_games",
     "show_id",

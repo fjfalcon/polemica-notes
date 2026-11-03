@@ -10,6 +10,8 @@ import {
   roomCssProbes,
   roomRatingProbes,
   profileRatingProbes,
+  roomPpkProbes,
+  ruPpkProbes,
   runProbes,
   siteCssProbes,
   siteRollerAnimationMs,
@@ -61,6 +63,8 @@ describe("живые семантические контракты бандло�
       ...runProbes(roomCssProbes, roomCss).map((r) => ({ ...r, bundle: "room/style.css" })),
       ...runProbes(roomRatingProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
       ...runProbes(profileRatingProbes, profile).map((r) => ({ ...r, bundle: "profile" })),
+      ...runProbes(roomPpkProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
+      ...runProbes(ruPpkProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
     ].filter((r) => !r.ok);
     expect(
       failed,

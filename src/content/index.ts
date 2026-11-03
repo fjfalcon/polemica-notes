@@ -56,6 +56,7 @@ import { contractWatchFeature, syncContractWatchRoute } from "./features/contrac
 import { isGameRoomPath } from "@shared/routes";
 import { twitchPanelFeature } from "./panels/twitch-panel";
 import { hideRatingFeature } from "./features/hide-rating";
+import { ppkGuardFeature } from "./features/ppk-guard";
 
 const manager = new FeatureManager().register(
   searchFeature,
@@ -63,6 +64,7 @@ const manager = new FeatureManager().register(
   // Скрыть рейтинг — до фич, которые ждут storage: метки колонки и строки
   // MMR не должны ждать загрузки заметок.
   hideRatingFeature,
+  ppkGuardFeature,
   // Приватность ролей — до фич, которые ждут storage (заметки): менеджер
   // включает фичи по очереди с await, и автосцены OBS иначе стартовали
   // только после загрузки заметок — роли были открыты (внешний аудит №5, B04).

@@ -571,6 +571,37 @@ export const profileRatingProbes: Record<string, Probe> = {
   historyMmrColumn: has('{title:"MMR",key:"mmr"}', "колонка истории игр подписана «MMR» (метка по подписи)"),
 };
 
+/**
+ * Подтверждение ППК (04.11.2026): ppk-guard узнаёт пункт меню и голос «Да»
+ * по разметке и подписям. Дрейф — и защита от бана молча перестаёт спрашивать.
+ */
+export const roomPpkProbes: Record<string, Probe> = {
+  menuContainer: re(
+    /\w+=\{class:"menu"\},\w+=\{class:"menu__container"\}/,
+    "меню игрока: .menu > .menu__container (селектор пункта ППК)",
+  ),
+  menuItemStartsVoting: re(
+    /yo\("li",\{class:\w+\(\{disabled:!e\.\$parent\.canStartVotingForStop\}\),onClick:[\s\S]{0,160}startStopVoting[\s\S]{0,60}Loc\.vote_for_menu_stop/,
+    "пункт <li> «ППК» запускает голосование, недоступный — класс disabled",
+  ),
+  votingTitleByType: has(
+    'title:function(){var e="".concat(this.type,"_voting_title")',
+    "заголовок голосования — `${type}_voting_title` (ППК узнаём по нему)",
+  ),
+  votingTitleClass: re(/\w+=\{key:0,class:"voting__top-title"\}/, "заголовок голосования — .voting__top-title"),
+  votingRoot: has('ao("div",{class:d(["voting",', "корень голосования — .voting (closest от кнопки «Да»)"),
+  votingYesButton: re(
+    /yo\("button",\{class:"voting__bottom-button",onClick:[^}]*o\.vote\(!0\)\}\)\},g\(this\.\$root\.Loc\.yes\)/,
+    "голос «за» — button.voting__bottom-button с подписью Loc.yes",
+  ),
+};
+
+export const ruPpkProbes: Record<string, Probe> = {
+  menuLabel: has('vote_for_menu_stop:"ППК"', "пункт меню — ровно «ППК»"),
+  votingTitle: has('stop_voting_title:"Проголосовать за ППК?"', "заголовок голосования за ППК"),
+  yesLabel: has('yes:"Да"', "кнопка голоса «за» — ровно «Да»"),
+};
+
 export function runProbes(
   probes: Record<string, Probe>,
   text: string,

@@ -171,6 +171,20 @@ export const SITE = {
    *  отсутствии узла просто ничего не делает — оставлен как безопасный
    *  фолбэк до правки самой фичи. */
   playerMenuWithRole: ".player__menu.with-role",
+  /**
+   * Подтверждение ППК (04.11.2026). Пункт меню игрока на плитке: `<li>` с
+   * подписью Loc.vote_for_menu_stop («ППК»); клик сразу запускает голосование
+   * (подтверждение у сайта только судье). Меню судьи — тот же контейнер.
+   */
+  playerMenuItem: ".player .menu__container li",
+  /**
+   * Голосование за наказание на плитке обвиняемого (PenaltyVoting): заголовок
+   * `${type}_voting_title` и кнопки «Да»/«Нет». Тот же блок у технического фола
+   * и удаления — ППК узнаём по заголовку.
+   */
+  penaltyVoting: ".voting",
+  penaltyVotingTitle: ".voting__top-title",
+  penaltyVotingButton: "button.voting__bottom-button",
   // Роли (SVG-спрайты)
   roleUse: "use[href], use[xlink\\:href]",
   /** МЁРТВЫЙ по текущей разметке: роли берутся из внешнего SVG-спрайта,

@@ -11,6 +11,8 @@ import {
   roomCssProbes,
   roomRatingProbes,
   profileRatingProbes,
+  roomPpkProbes,
+  ruPpkProbes,
   siteCssProbes,
   siteRollerAnimationMs,
 } from "../contract/semantic-probes";
@@ -34,6 +36,8 @@ const CSS = snip("main-css.txt");
 const ROOM_CSS = snip("room-css.txt");
 const ROOM_RATING = snip("room-rating.txt");
 const PROFILE_RATING = snip("profile-rating.txt");
+const ROOM_PPK = snip("room-ppk.txt");
+const RU_PPK = snip("ru-ppk.txt");
 
 describe("пробы зелёные на реальных фрагментах бандлов", () => {
   test.each([
@@ -44,6 +48,8 @@ describe("пробы зелёные на реальных фрагментах �
     ["room/style.css", roomCssProbes, ROOM_CSS],
     ["room-main: рейтинг", roomRatingProbes, ROOM_RATING],
     ["profile: рейтинг", profileRatingProbes, PROFILE_RATING],
+    ["room-main: ППК", roomPpkProbes, ROOM_PPK],
+    ["RU: ППК", ruPpkProbes, RU_PPK],
   ] as const)("%s", (_name, probes, text) => {
     const failed = runProbes(probes, text).filter((r) => !r.ok);
     expect(failed, failed.map((f) => `${f.name}: ${f.detail}`).join("\n")).toEqual([]);
@@ -215,6 +221,25 @@ describe("каждая проба умирает от своего дрифта"
       (t) => t.replace('staticClass:"profileGames__table-body-row-item-cont-mmr"', 'staticClass:"profileGames__mmr"')],
     ["profile historyMmrColumn: колонка переподписана", profileRatingProbes, "historyMmrColumn", PROFILE_RATING,
       (t) => t.replace('{title:"MMR",key:"mmr"}', '{title:"Рейтинг",key:"mmr"}')],
+    // Подтверждение ППК
+    ["ppk menuContainer: контейнер меню переименован", roomPpkProbes, "menuContainer", ROOM_PPK,
+      (t) => t.replace('{class:"menu__container"}', '{class:"menu__list"}')],
+    ["ppk menuItemStartsVoting: пункт больше не запускает ППК", roomPpkProbes, "menuItemStartsVoting", ROOM_PPK,
+      (t) => t.replaceAll("startStopVoting", "startOtherVoting")],
+    ["ppk votingTitleByType: заголовок не по типу", roomPpkProbes, "votingTitleByType", ROOM_PPK,
+      (t) => t.replace('"_voting_title"', '"_title"')],
+    ["ppk votingTitleClass: класс заголовка сменился", roomPpkProbes, "votingTitleClass", ROOM_PPK,
+      (t) => t.replace('class:"voting__top-title"', 'class:"voting__title"')],
+    ["ppk votingRoot: корень голосования переименован", roomPpkProbes, "votingRoot", ROOM_PPK,
+      (t) => t.replace('ao("div",{class:d(["voting",', 'ao("div",{class:d(["penalty",')],
+    ["ppk votingYesButton: «за» больше не Loc.yes", roomPpkProbes, "votingYesButton", ROOM_PPK,
+      (t) => t.replace("o.vote(!0)})},g(this.$root.Loc.yes)", "o.vote(!0)})},g(this.$root.Loc.agree)")],
+    ["ppk RU menuLabel: пункт переименован", ruPpkProbes, "menuLabel", RU_PPK,
+      (t) => t.replace('vote_for_menu_stop:"ППК"', 'vote_for_menu_stop:"Стоп-игра"')],
+    ["ppk RU votingTitle: заголовок переименован", ruPpkProbes, "votingTitle", RU_PPK,
+      (t) => t.replace("Проголосовать за ППК?", "ППК?")],
+    ["ppk RU yesLabel: «Да» переименована", ruPpkProbes, "yesLabel", RU_PPK,
+      (t) => t.replace('yes:"Да"', 'yes:"За"')],
   ];
 
   test.each(cases)("%s", (_name, probes, probeName, original, mutate) => {

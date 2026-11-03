@@ -107,6 +107,11 @@ export interface Settings {
   ctl_pos_finish: string;
   ctl_pos_outcry: string;
   ctl_pos_guess: string;
+  /**
+   * Подтверждение ППК (04.11.2026): перед запуском ППК и голосом «Да» за ППК
+   * — короткое напоминание по правилам и практике модерации.
+   */
+  ppk_confirm_enabled: boolean;
   /** Микрофон: один клик/клавиша переключает OBS-источник и микрофон игры. */
   mic_sync_enabled: boolean;
   /** Имя источника микрофона в микшере OBS; "" — главный микрофон OBS (авто). */
