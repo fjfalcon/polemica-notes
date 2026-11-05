@@ -476,6 +476,86 @@ describe("история ников", () => {
   });
 });
 
+describe("mergeNickKeysIntoId: мусор под ник-ключом и история проигравших", () => {
+  test("null под ник-ключом рядом с u:42: без исключения, u:42 цел, мусорный ключ удаляется", () => {
+    const notes = { "u:42": rec("на месте", NOW - 5, { tag: "#aa0000" }), Аня: null } as unknown as NotesMap;
+    let merged: ReturnType<typeof mergeNickKeysIntoId> = null;
+    expect(() => {
+      merged = mergeNickKeysIntoId(notes, "Аня", 42);
+    }).not.toThrow();
+    expect(merged).toEqual({
+      key: "u:42",
+      nickKeys: ["Аня"],
+      record: { text: "на месте", timestamp: NOW - 5, tag: "#aa0000", nick: "Аня" },
+    });
+  });
+
+  test("число под ник-ключом рядом с u:42 пропускается и удаляется", () => {
+    const notes = { "u:42": rec("на месте", NOW - 5), Аня: 7 } as unknown as NotesMap;
+    expect(mergeNickKeysIntoId(notes, "Аня", 42)).toEqual({
+      key: "u:42",
+      nickKeys: ["Аня"],
+      record: { text: "на месте", timestamp: NOW - 5, nick: "Аня" },
+    });
+  });
+
+  test("единственный кандидат-число не превращается в запись без текста", () => {
+    const notes = { Аня: 7 } as unknown as NotesMap;
+    expect(mergeNickKeysIntoId(notes, "Аня", 42)).toBeNull();
+  });
+
+  test("мусор под одним ник-ключом не мешает слить запись из другого", () => {
+    const notes = { аня: rec("настоящая", NOW - 5, { nickColor: "#123456" }), Аня: null } as unknown as NotesMap;
+    let merged: ReturnType<typeof mergeNickKeysIntoId> = null;
+    expect(() => {
+      merged = mergeNickKeysIntoId(notes, "Аня", 42);
+    }).not.toThrow();
+    expect(merged).toEqual({
+      key: "u:42",
+      nickKeys: ["аня", "Аня"],
+      record: { text: "настоящая", timestamp: NOW - 5, nickColor: "#123456", nick: "Аня" },
+    });
+  });
+
+  test("история ников проигравшей записи переходит в победителя без повторов", () => {
+    const notes: NotesMap = {
+      "u:42": rec("свежая", NOW, { nick: "Петя", nicks: ["W1"] }),
+      Аня: rec("старая", NOW - 1000, { nick: "Вася", nicks: ["L1", "w1", "Аня"] }),
+    };
+    const record = mergeNickKeysIntoId(notes, "Аня", 42)?.record;
+    expect(record?.nick).toBe("Аня");
+    expect(record?.nicks).toEqual(["Петя", "W1", "Вася", "L1"]);
+  });
+
+  test("история проигравших укладывается в MAX_NICK_HISTORY, свежая запись первой", () => {
+    const notes: NotesMap = {
+      "u:42": rec("свежая", NOW, { nick: "Петя", nicks: ["W1", "W2"] }),
+      Аня: rec("старая", NOW - 1000, { nicks: ["L1", "L2", "L3", "L4"] }),
+    };
+    const record = mergeNickKeysIntoId(notes, "Аня", 42)?.record;
+    expect(record?.nick).toBe("Аня");
+    expect(record?.nicks).toHaveLength(MAX_NICK_HISTORY);
+    expect(record?.nicks).toEqual(["Петя", "W1", "W2", "L1", "L2"]);
+  });
+
+  test("объект без строкового text не становится победителем", () => {
+    const notes = { "u:42": rec("на месте", NOW - 5), Аня: { text: 42, timestamp: NOW } } as unknown as NotesMap;
+    expect(mergeNickKeysIntoId(notes, "Аня", 42)?.record.text).toBe("на месте");
+  });
+
+  test("нестроковые nicks победителя отбрасываются без исключения", () => {
+    const notes = {
+      Аня: { text: "заметка", timestamp: NOW - 5, nicks: [null, 42, "Вася"] },
+      аня: { text: "старая", timestamp: NOW - 10, nicks: {} },
+    } as unknown as NotesMap;
+    let merged: ReturnType<typeof mergeNickKeysIntoId> = null;
+    expect(() => {
+      merged = mergeNickKeysIntoId(notes, "Аня", 42);
+    }).not.toThrow();
+    expect(merged!.record.nicks).toEqual(["Вася"]);
+  });
+});
+
 describe("round-trip своего бэкапа не режет заметку (ревью 27.08.2026)", () => {
   test("длинная СВОЯ заметка переживает импорт при явном потолке", () => {
     const long = "я".repeat(12_000); // между 5000 (чужой ввод) и 20000 (своя)

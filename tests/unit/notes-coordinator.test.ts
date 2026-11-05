@@ -403,4 +403,14 @@ describe("миграция ник → id интентом", () => {
     expect(res.ok).toBe(true);
     expect(Object.keys(state.notes)).toEqual(["u:42"]);
   });
+
+  test("null под ник-ключом: миграция успешна, мусор убран, очередь жива", async () => {
+    state.notes = { "u:42": { text: "на месте", timestamp: 50 }, Аня: null };
+    await expect(migrateNickToIdViaCoordinator("Аня", 42)).resolves.toMatchObject({ ok: true });
+    expect(state.saves).toBe(1);
+    expect(state.notes).toEqual({ "u:42": { text: "на месте", timestamp: 50, nick: "Аня" } });
+    const next = await applyNoteOps([{ key: "u:7", record: { text: "другой", timestamp: 1 } }]);
+    expect(next.ok).toBe(true);
+    expect(state.notes["u:7"]).toEqual({ text: "другой", timestamp: 1 });
+  });
 });
