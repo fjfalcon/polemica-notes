@@ -212,6 +212,94 @@ describe("метки колонки и строки MMR", () => {
 describe("CSS под флагом", () => {
   const block = readFileSync("src/static/rating-hide.css", "utf8");
 
+  /** /ratings как в bundle/rating.js: карточка и таблица; mmr — вкладка по MMR. */
+  function ratingsPage(mmr: boolean): string {
+    const label = '<span class="mmrLabel p-rating-table__mmr-block"><span>6,224</span></span>';
+    const row = (n: number) =>
+      `<div class="p-rating-table__row"><span class="p-rating-table__cell p-rating-table__place">${n}</span>` +
+      '<div class="p-rating-table__cell p-rating-table__player">nick</div>' +
+      (mmr
+        ? `<span class="p-rating-table__cell p-rating-table__amount">${label}</span>`
+        : '<div class="p-rating-table__cell p-rating-table__amount p-rating-table__chip"><span>120</span></div>') +
+      '<span class="p-rating-table__cell">33</span></div>';
+    const heads = (mmr ? ["Место", "Игрок", "MMR", "Игры"] : ["Место", "Игрок", "Мафпоинты", "Игры"])
+      .map((t) => `<span class="p-rating-table__cell">${t}</span>`)
+      .join("");
+    return (
+      '<div class="p-rating-person"><div class="p-rating-person__container"><div class="p-rating-person__info">' +
+      '<p class="p-rating-person__info-name">Shalizan</p><div class="p-rating-person__info-achievements">' +
+      '<span class="p-rating-person__info-item p-rating-person__info-level">16 lvl</span>' +
+      (mmr ? '<span class="mmrLabel p-rating-person__info-stat-mmr"><span>6,224</span></span>' : "") +
+      '</div></div><div class="p-rating-person__statistic">' +
+      '<div class="p-rating-person__statistic-item"><span>Место</span><span>984</span></div>' +
+      "</div></div></div>" +
+      '<div class="p-rating-table p-rating-table--players"><div class="p-rating-table__inner">' +
+      `<div class="p-rating-table__head">${heads}</div>${row(1)}${row(2)}</div></div>`
+    );
+  }
+
+  test("/ratings, вкладка по MMR: место и MMR в карточке и таблице не видны, колонки на месте", () => {
+    const style = document.createElement("style");
+    style.textContent = block;
+    document.head.appendChild(style);
+    document.body.innerHTML = ratingsPage(true);
+    const css = (sel: string) => getComputedStyle(document.querySelector(sel)!);
+    const heads = () => Array.from(document.querySelectorAll(".p-rating-table__head > *"));
+    expect(css(".p-rating-person__statistic").display, "без флага не тронуто").not.toBe("none");
+    root().setAttribute(HIDE_RATING_ATTR, "");
+    expect(css(".p-rating-person__statistic").display).toBe("none");
+    expect(css(".p-rating-table__place").visibility, "место гасим visibility: сетка не едет").toBe("hidden");
+    expect(css(".p-rating-table__place").display).not.toBe("none");
+    expect(heads().map((h) => getComputedStyle(h).visibility)).toEqual(["hidden", "visible", "hidden", "visible"]);
+    expect(css(".p-rating-person__info-level").display, "уровень остаётся").not.toBe("none");
+    style.remove();
+  });
+
+  test("/ratings, смена вкладки: пока список грузится (вкладки disabled), места не видны", () => {
+    const style = document.createElement("style");
+    style.textContent = block;
+    document.head.appendChild(style);
+    // Первый заход на «Зрители»: строки ещё по MMR, значка в них нет.
+    document.body.innerHTML =
+      '<div class="p-rating"><button class="p-rating__filterbtns-btn" disabled>Зрители</button>' +
+      `<div class="p-rating-main">${ratingsPage(false)}</div></div>`;
+    root().setAttribute(HIDE_RATING_ATTR, "");
+    const css = (sel: string) => getComputedStyle(document.querySelector(sel)!);
+    expect(css(".p-rating-person__statistic").visibility).toBe("hidden");
+    expect(css(".p-rating-table__place").visibility).toBe("hidden");
+    document.querySelector("button")!.removeAttribute("disabled");
+    expect(css(".p-rating-table__place").visibility, "загрузилось — места зрителей видны").not.toBe("hidden");
+    expect(css(".p-rating-person__statistic").visibility, "и карточка зрителей вернулась").not.toBe("hidden");
+    style.remove();
+  });
+
+  test("/ratings: значка в карточке нет, а таблица по MMR — блок «Место / MMR» всё равно скрыт", () => {
+    const style = document.createElement("style");
+    style.textContent = block;
+    document.head.appendChild(style);
+    document.body.innerHTML = `<div class="p-rating-main">${ratingsPage(true)
+      .replace('<span class="mmrLabel p-rating-person__info-stat-mmr"><span>6,224</span></span>', "")
+      .replace('<div class="p-rating-table p-rating-table--players">', '<div class="p-rating__tablecont"><div class="p-rating-table p-rating-table--players">')}</div></div>`;
+    root().setAttribute(HIDE_RATING_ATTR, "");
+    expect(document.querySelector(".p-rating-person .mmrLabel"), "значка в карточке нет").toBeNull();
+    expect(getComputedStyle(document.querySelector(".p-rating-person__statistic")!).display).toBe("none");
+    style.remove();
+  });
+
+  test("/ratings, «Зрители»: место по мафпоинтам — баллы Полемики — остаётся", () => {
+    const style = document.createElement("style");
+    style.textContent = block;
+    document.head.appendChild(style);
+    document.body.innerHTML = ratingsPage(false);
+    root().setAttribute(HIDE_RATING_ATTR, "");
+    const css = (sel: string) => getComputedStyle(document.querySelector(sel)!);
+    expect(css(".p-rating-person__statistic").display).not.toBe("none");
+    expect(css(".p-rating-table__place").visibility).not.toBe("hidden");
+    const heads = Array.from(document.querySelectorAll(".p-rating-table__head > *"));
+    expect(heads.map((h) => getComputedStyle(h).visibility)).toEqual(["visible", "visible", "visible", "visible"]);
+    style.remove();
+  });
+
   test("каждое правило режима заякорено на флаг: без режима сайт не тронут", () => {
     const selectors = [...block.matchAll(/([^{}]+)\{[^}]*\}/g)].flatMap((m) =>
       m[1]

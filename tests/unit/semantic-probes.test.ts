@@ -15,6 +15,7 @@ import {
   ruPpkProbes,
   roomPlayerActionProbes,
   ruPlayerActionProbes,
+  ratingPageProbes,
   siteCssProbes,
   siteRollerAnimationMs,
 } from "../contract/semantic-probes";
@@ -42,6 +43,7 @@ const ROOM_PPK = snip("room-ppk.txt");
 const RU_PPK = snip("ru-ppk.txt");
 const ROOM_PA = snip("room-player-actions.txt");
 const RU_PA = snip("ru-player-actions.txt");
+const RATING_PAGE = snip("rating-page.txt");
 
 describe("пробы зелёные на реальных фрагментах бандлов", () => {
   test.each([
@@ -56,6 +58,7 @@ describe("пробы зелёные на реальных фрагментах �
     ["RU: ППК", ruPpkProbes, RU_PPK],
     ["room-main: действия игрока", roomPlayerActionProbes, ROOM_PA],
     ["RU: действия игрока", ruPlayerActionProbes, RU_PA],
+    ["rating: страница лидеров", ratingPageProbes, RATING_PAGE],
   ] as const)("%s", (_name, probes, text) => {
     const failed = runProbes(probes, text).filter((r) => !r.ok);
     expect(failed, failed.map((f) => `${f.name}: ${f.detail}`).join("\n")).toEqual([]);
@@ -271,6 +274,35 @@ describe("каждая проба умирает от своего дрифта"
       (t) => t.replace("Сделать выстрел", "Выстрелить")],
     ["pa RU check: подпись сменилась", ruPlayerActionProbes, "check", RU_PA,
       (t) => t.replace("Раскрыть роль", "Проверить")],
+    // Страница лидеров /ratings
+    ["rating columnsOrder: колонка MMR переехала", ratingPageProbes, "columnsOrder", RATING_PAGE,
+      (t) => t.replace('{key:"name",title:"Игрок"},{key:"mmr",title:"MMR"}', '{key:"mmr",title:"MMR"},{key:"name",title:"Игрок"}')],
+    ["rating headInInner: заголовок вынесен из inner", ratingPageProbes, "headInInner", RATING_PAGE,
+      (t) => t.replace('staticClass:"p-rating-table__head"', 'staticClass:"p-rating-table__header"')],
+    ["rating rowPlaceCell: место сменило класс", ratingPageProbes, "rowPlaceCell", RATING_PAGE,
+      (t) => t.replace('staticClass:"p-rating-table__cell p-rating-table__place"', 'staticClass:"p-rating-table__cell p-rating-table__rank"')],
+    ["rating mmrCellLabel: MMR в строке не значком", ratingPageProbes, "mmrCellLabel", RATING_PAGE,
+      (t) => t.replace('p-rating-table__amount"},[e("UserMmrLabel"', 'p-rating-table__amount"},[e("span"')],
+    ["rating personMmrLabel: значок карточки не по вкладке", ratingPageProbes, "personMmrLabel", RATING_PAGE,
+      (t) => t.replace('t.ratingInfo.mmr?e("UserMmrLabel"', 't.user?e("UserMmrLabel"')],
+    ["rating personStatistic: блок карточки переименован", ratingPageProbes, "personStatistic", RATING_PAGE,
+      (t) => t.replace('staticClass:"p-rating-person__statistic"}', 'staticClass:"p-rating-person__stats"}')],
+    ["rating mmrLabelClass: значок без mmrLabel", ratingPageProbes, "mmrLabelClass", RATING_PAGE,
+      (t) => t.replace('return"mmrLabel ".concat(this.containerClass)', 'return"userRating ".concat(this.containerClass)')],
+    ["rating mmrLabelOnRoot: класс ушёл с корня", ratingPageProbes, "mmrLabelOnRoot", RATING_PAGE,
+      (t) => t.replace('expression:"show"}],class:t.contClassname}', 'expression:"show"}],class:"mmr-wrap"}')],
+    ["rating userInfoMmrBranch: ключ mmr переименован", ratingPageProbes, "userInfoMmrBranch", RATING_PAGE,
+      (t) => t.replace('mmr:{label:"MMR",value:this.toLocaleNumber(n.mmr)}', 'rating:{label:"MMR",value:this.toLocaleNumber(n.mmr)}')],
+    ["rating viewerColumns: у зрителей появился MMR", ratingPageProbes, "viewerColumns", RATING_PAGE,
+      (t) => t.replaceAll('{key:"points",title:"Мафпоинты"}', '{key:"mmr",title:"MMR"}')],
+    ["rating personInMain: карточка вне p-rating-main", ratingPageProbes, "personInMain", RATING_PAGE,
+      (t) => t.replace('staticClass:"p-rating-main"},[t.userRatingInfo', 'staticClass:"p-rating-side"},[t.userRatingInfo')],
+    ["rating tabsDisabledAttr: вкладки не блокируются", ratingPageProbes, "tabsDisabledAttr", RATING_PAGE,
+      (t) => t.replace("attrs:{disabled:t.tabsDisabled}", "attrs:{}")],
+    ["rating loadingWired: загрузка не блокирует вкладки", ratingPageProbes, "loadingWired", RATING_PAGE,
+      (t) => t.replace("on:{ratingLoading:t.changeTabsDisabled}", "on:{ratingLoading:t.showSpinner}")],
+    ["rating rowsWithLoadingEnd: блок снимается до строк", ratingPageProbes, "rowsWithLoadingEnd", RATING_PAGE,
+      (t) => t.replace('t.rows=n,t.$emit("ratingLoading",!1)', 't.$emit("ratingLoading",!1),t.rows=n')],
   ];
 
   test.each(cases)("%s", (_name, probes, probeName, original, mutate) => {

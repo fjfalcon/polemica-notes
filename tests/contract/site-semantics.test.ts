@@ -14,6 +14,7 @@ import {
   ruPpkProbes,
   roomPlayerActionProbes,
   ruPlayerActionProbes,
+  ratingPageProbes,
   runProbes,
   siteCssProbes,
   siteRollerAnimationMs,
@@ -36,9 +37,9 @@ describe("живые семантические контракты бандло�
   test("состояния, ветки и матрицы кнопок означают то, что мы им приписываем", async ({
     skip,
   }) => {
-    let gs: string, room: string, ru: string, css: string, roomCss: string, profile: string;
+    let gs: string, room: string, ru: string, css: string, roomCss: string, profile: string, ratingPage: string;
     try {
-      [gs, room, ru, css, roomCss, profile] = (
+      [gs, room, ru, css, roomCss, profile, ratingPage] = (
         await Promise.all([
           download(siteFixture.bundles.gameSearch.url),
           download(siteFixture.bundles.roomMain.url),
@@ -50,6 +51,8 @@ describe("живые семантические контракты бандло�
           download(siteFixture.bundles.roomCss.url),
           // Профиль: рейтинг в карточке уровня и истории игр (скрыть рейтинг).
           download(siteFixture.bundles.profile.url),
+          // Страница лидеров /ratings (скрыть рейтинг).
+          download(siteFixture.bundles.ratingPage.url),
         ])
       ).map((d) => d.text);
     } catch (error) {
@@ -69,6 +72,7 @@ describe("живые семантические контракты бандло�
       ...runProbes(ruPpkProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
       ...runProbes(roomPlayerActionProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
       ...runProbes(ruPlayerActionProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
+      ...runProbes(ratingPageProbes, ratingPage).map((r) => ({ ...r, bundle: "rating" })),
     ].filter((r) => !r.ok);
     expect(
       failed,

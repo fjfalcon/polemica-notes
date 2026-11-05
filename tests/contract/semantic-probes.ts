@@ -603,6 +603,61 @@ export const ruPpkProbes: Record<string, Probe> = {
 };
 
 /**
+ * Скрыть рейтинг на странице лидеров /ratings (05.11.2026, bundle/rating.js):
+ * rating-hide.css узнаёт вкладку по MMR по значку .mmrLabel в строке и
+ * карточке, а заголовки колонок — по порядку.
+ */
+export const ratingPageProbes: Record<string, Probe> = {
+  columnsOrder: has(
+    '[{key:"position",title:"Место"},{key:"name",title:"Игрок"},{key:"mmr",title:"MMR"},{key:"total_games",title:"Игры"}]',
+    "колонки вкладки по MMR: Место, Игрок, MMR, Игры (CSS гасит 1-й и 3-й заголовок)",
+  ),
+  headInInner: re(
+    /staticClass:"p-rating-table__inner"\},\[\w+\("div",\{staticClass:"p-rating-table__head"\},\w+\._l\(\w+\.columns/,
+    "заголовок — .p-rating-table__head внутри .p-rating-table__inner, ячейки по columns",
+  ),
+  rowPlaceCell: re(
+    /staticClass:"p-rating-table__row"\},\[\w+\.position\?\w+\("span",\{staticClass:"p-rating-table__cell p-rating-table__place"\}/,
+    "место в рейтинге — .p-rating-table__place прямым ребёнком строки",
+  ),
+  mmrCellLabel: re(
+    /showMmrColumn\?\w+\("span",\{staticClass:"p-rating-table__cell p-rating-table__amount"\},\[\w+\("UserMmrLabel"/,
+    "MMR в строке — UserMmrLabel прямо в .p-rating-table__amount, только при колонке MMR",
+  ),
+  personMmrLabel: re(/\w+\.ratingInfo\.mmr\?\w+\("UserMmrLabel"/, "значок MMR в карточке — только на вкладке по MMR"),
+  personStatistic: re(
+    /staticClass:"p-rating-person__statistic"\},\w+\._l\(\w+\.ratingInfo/,
+    "блок «Место / MMR» карточки — .p-rating-person__statistic по ratingInfo",
+  ),
+  mmrLabelClass: has('return"mmrLabel ".concat(this.containerClass)', "UserMmrLabel — класс mmrLabel на корне"),
+  mmrLabelOnRoot: re(
+    /directives:\[\{name:"show"[^\]]*\}\],class:\w+\.contClassname\}/,
+    "contClassname висит на корне UserMmrLabel (иначе > .mmrLabel не найдёт)",
+  ),
+  userInfoMmrBranch: re(
+    /\{place:\{label:"Место",value:\w+\+1\},mmr:\{label:"MMR",value:this\.toLocaleNumber\(\w+\.mmr\)\}\}/,
+    "карточка вкладки по MMR — ровно {place, mmr}: значок карточки и скрытый блок",
+  ),
+  viewerColumns: has(
+    '[{key:"place",title:"Место"},{key:"name",title:"Игрок"},{key:"points",title:"Мафпоинты"},{key:"total_games",title:"Игры"}]',
+    "«Зрители» — мафпоинты без MMR (их места остаются)",
+  ),
+  personInMain: re(
+    /staticClass:"p-rating-main"\},\[\w+\.userRatingInfo\?\w+\("UserBlock"[\s\S]{0,200}staticClass:"p-rating__tablecont"/,
+    "карточка и таблица — в одном .p-rating-main (запасной селектор карточки)",
+  ),
+  tabsDisabledAttr: re(
+    /staticClass:"p-rating__filterbtns-btn",class:\{[^}]*\},attrs:\{disabled:\w+\.tabsDisabled\}/,
+    "кнопки вкладок disabled на время загрузки",
+  ),
+  loadingWired: re(/on:\{ratingLoading:\w+\.changeTabsDisabled\}/, "ratingLoading списка → блок кнопок вкладок"),
+  rowsWithLoadingEnd: re(
+    /\w+\.rows=\w+,\w+\.\$emit\("ratingLoading",!1\)/,
+    "строки подменяются в том же такте, что снимается блок вкладок",
+  ),
+};
+
+/**
  * Действия по цифрам (04.11.2026): кнопка действия на плитке (PlayerAction)
  * подписана по виду действия, клик по ней — doAction(действие) сайта.
  */

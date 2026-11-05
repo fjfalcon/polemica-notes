@@ -671,6 +671,19 @@ describe("settings, release and manifest consistency", () => {
         "mmr_diff",
         "positive-mmr",
         "negative-mmr",
+        // Страница лидеров /ratings (05.11.2026): карточка и таблица.
+        "p-rating-person",
+        "p-rating-person__statistic",
+        "p-rating-table__inner",
+        "p-rating-table__head",
+        "p-rating-table__row",
+        "p-rating-table__cell",
+        "p-rating-table__place",
+        "p-rating-table__amount",
+        "p-rating",
+        "p-rating__filterbtns-btn",
+        "p-rating-main",
+        "p-rating__tablecont",
       ],
     };
     for (const [file, known] of Object.entries(cssKnown)) {
