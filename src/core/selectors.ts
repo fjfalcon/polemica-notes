@@ -23,6 +23,9 @@
 
 /** CSS-селекторы элементов сайта. */
 export const SITE = {
+  searchBootstrap: "game-search",
+  csrfParam: 'meta[name="csrf-param"]',
+  csrfToken: 'meta[name="csrf-token"]',
   // Игроки и их панели
   player: ".player",
   playerDesktop:

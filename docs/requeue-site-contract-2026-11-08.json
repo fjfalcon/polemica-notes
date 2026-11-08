@@ -1,0 +1,101 @@
+{
+  "date": "2026-11-08",
+  "source": "https://polemicagame.com/bundle/game-search.js",
+  "httpStatus": 200,
+  "bytes": 960162,
+  "sha256": "0c567ff21de3c93d9d09ae8aab66071d24087ef24c4148f2cc079e7df40e027b",
+  "lastModified": "2026-11-03T05:33:39Z",
+  "matchesRepositoryFixture": true,
+  "html": {
+    "source": "https://polemicagame.com/game-search",
+    "httpStatus": 200,
+    "rootId": "app",
+    "runtime": "Vue 2; new Vue({el:\"#app\"}); $children tree",
+    "xFrameOptions": null,
+    "frameAncestorsPolicy": null,
+    "authentication": "anonymous; current-user null"
+  },
+  "confirmed": {
+    "startGuards": [
+      "root isUserLogin",
+      "league requires isVerified",
+      "isBanned",
+      "isIniSearch or isSearching prevents duplicate start"
+    ],
+    "socketOptions": {
+      "transports": [
+        "websocket"
+      ],
+      "forceNew": true,
+      "reconnection": false,
+      "intention": "game_search"
+    },
+    "startEvent": "start_game_search",
+    "payloadFields": [
+      "gameMode",
+      "role",
+      "userId",
+      "authKey",
+      "censorship"
+    ],
+    "handshake": "session_initialized; no own timeInSearch -> emit start_game_search; own timeInSearch -> restore searching state and elapsed time without another start",
+    "recovery": "POST /api/search/me with site-owned userId/authKey; connected === false invokes startSearch",
+    "result": "on_start_game_search.success is confirmation; game_search/in_game/ban/etc are separate errors",
+    "handoff": "on_game_found builds POST form for /game with CSRF, gameMode player, notify true, roleRequired, game_id, dynamicFilling; delay random 0-10000 ms"
+  },
+  "edgeCases": [
+    "session_initialized may restore existing timeInSearch during preparation; then start_game_search is not emitted and adapter must handle existing queue explicitly"
+  ],
+  "notProven": [
+    "authenticated server queue priority is unchanged after disconnect/reconnect",
+    "real network latency",
+    "exact server behavior when another connection with the same account is prepared while in a room"
+  ],
+  "publicOnly": true,
+  "ssrMapping": {
+    "userAttribute": "current-user",
+    "userAttributeHasColon": false,
+    "userPropType": "String",
+    "userDecodedBySite": "JSON.parse(this.currentUser)",
+    "ratingSearchServiceAttribute": "rating-game-search-service-url",
+    "ratingSearchServiceValue": "https://game.polemicagame.com/search",
+    "panelServiceMapping": "GameSearchPanel.searchServiceUrl = outer.ratingGameSearchServiceUrl",
+    "lobbyServiceAttribute": "game-search-service-url",
+    "lobbyServiceValue": "https://het1.polemicagame.com:4242",
+    "panelDefaults": {
+      "gameType": "league",
+      "role": "player"
+    },
+    "jsonBoundAttributes": [
+      ":verification-statuses",
+      ":new-game-service"
+    ],
+    "csrf": {
+      "parameterMeta": "csrf-param",
+      "observedParameterName": "_csrf-maf11front",
+      "valueMeta": "csrf-token",
+      "valueOmitted": true
+    },
+    "censorshipDefaults": "user && user.mmr && user.mmr.value !== 1000 ? [standard] : [polite]; valid nonempty localStorage.searchCensorshipModes array overrides, with modes restricted to standard/polite/prime"
+  },
+  "wireProtocol": {
+    "socketIoParserProtocol": 4,
+    "engineIoParserProtocol": 3,
+    "managerDefaultPath": "/socket.io",
+    "namespaceFromUrl": "/search",
+    "exactNpmClientVersion": "not identified"
+  },
+  "gameFoundPost": {
+    "action": "location.origin + /game",
+    "method": "POST",
+    "fields": {
+      "gameMode": "player",
+      "notify": "true",
+      "roleRequired": "e.roleRequired (no definition found in full panel props/data/computed or metric-only mixin; normal undefined becomes string undefined via setAttribute)",
+      "game_id": "t.gameId",
+      "dynamicFilling": "t.dynamicFilling || false",
+      "csrf": "field name from meta csrf-param; value from meta csrf-token"
+    },
+    "roleRequiredUnknownServerSemantics": true
+  }
+}

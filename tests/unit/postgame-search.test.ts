@@ -46,6 +46,11 @@ import {
   BAR_ID,
   QUEUES_ID,
   postgameSearchFeature,
+  setDirectPostgamePort,
+  canPostgameDirectAct,
+  notePostgameDirectResult,
+  postgameDirectResumeFinished,
+  type DirectPostgamePort,
 } from "@content/features/postgame-search";
 import { log } from "@core/log";
 import { showToast } from "@core/toast";
@@ -529,7 +534,9 @@ describe("поиск: машина «выйти из игры → Играть»
     // Мутант «любая модалка = стоп»: наш же confirmQuit убил бы машину.
     plantMark();
     confirmQuitModal();
-    foreignModal(); // родовая обёртка вокруг живого confirmQuit
+    const confirm = document.querySelector(".confirmQuit")!;
+    foreignModal(); // настоящая родовая обёртка вокруг живого confirmQuit
+    document.body.lastElementChild!.appendChild(confirm);
     enableOnSearch();
     // Модалка открыта НЕ нашим quit-шагом → сторож бегает и здесь.
     await vi.advanceTimersByTimeAsync(200);
@@ -1073,4 +1080,501 @@ describe("плашки не лезут на камеры (скриншот 12.08
     expect(document.getElementById(BAR_ID), "пустой полосы на экране не остаётся").toBeNull();
     vi.unstubAllGlobals();
   });
+});
+
+describe("postgame: cancellation and overlapping UI regressions", () => {
+  test("old false live-match reply cannot override a fresh pending episode", async () => {
+    let oldReply!: (value: { live: boolean }) => void;
+    let newReply!: (value: { live: boolean }) => void;
+    vi.mocked(sendRuntime).mockImplementationOnce(() => new Promise(resolve => { oldReply = resolve; }));
+    vi.mocked(sendRuntime).mockImplementationOnce(() => new Promise(resolve => { newReply = resolve; }));
+    plantMark(); decideBlock(); enableOnSearch(); await vi.advanceTimersByTimeAsync(0);
+    postgameSearchFeature.disable(); document.body.innerHTML = "";
+    plantMark(); decideBlock(); enableOnSearch(); await vi.advanceTimersByTimeAsync(0);
+    oldReply({ live: false }); await vi.advanceTimersByTimeAsync(100);
+    expect(clicked()).toHaveLength(0);
+    newReply({ live: true }); await vi.advanceTimersByTimeAsync(100);
+    expect(clicked()).toHaveLength(0); expect(warnHas("в другой вкладке идёт ваш матч")).toBe(true);
+  });
+
+  test("old true reply cannot replace a current false verdict and block a legitimate exit", async () => {
+    let oldReply!: (value: { live: boolean }) => void;
+    let newReply!: (value: { live: boolean }) => void;
+    vi.mocked(sendRuntime).mockImplementationOnce(() => new Promise(resolve => { oldReply = resolve; }));
+    vi.mocked(sendRuntime).mockImplementationOnce(() => new Promise(resolve => { newReply = resolve; }));
+    plantMark(); decideBlock(); enableOnSearch(); await vi.advanceTimersByTimeAsync(0);
+    postgameSearchFeature.disable(); document.body.innerHTML = "";
+    plantMark(); decideBlock(); enableOnSearch(); await vi.advanceTimersByTimeAsync(0);
+    newReply({ live: false }); await vi.advanceTimersByTimeAsync(100);
+    expect(clicked().at(-1)?.className).toBe("p-play__profile-quit");
+    oldReply({ live: true }); await vi.advanceTimersByTimeAsync(100);
+    expect(warnHas("в другой вкладке идёт ваш матч")).toBe(false);
+    confirmQuitModal(); domSubscriber?.(); await vi.advanceTimersByTimeAsync(300);
+    expect(clicked().at(-1)?.className).toBe("confirmQuit__content-btn");
+  });
+
+  test("a late live-match reply after disable cannot recreate a decision timer", async () => {
+    let reply!: (value: { live: boolean }) => void;
+    vi.mocked(sendRuntime).mockImplementationOnce(() => new Promise(resolve => { reply = resolve; }));
+    plantMark(); decideBlock(); enableOnSearch(); await vi.advanceTimersByTimeAsync(0);
+    postgameSearchFeature.disable(); expect(vi.getTimerCount()).toBe(0);
+    reply({ live: false }); await vi.advanceTimersByTimeAsync(0);
+    expect(vi.getTimerCount()).toBe(0); expect(clicked()).toHaveLength(0);
+  });
+
+  test("stale room button cannot navigate after the ended screen changes before a DOM tick", () => {
+    endedScreen(); postgameSearchFeature.enable(ctx);
+    const button = document.getElementById(BUTTON_ID)!;
+    document.querySelector(".roller")!.remove(); runningStage();
+    button.click();
+    expect(sessionStorage.getItem(POSTGAME_PENDING_KEY)).toBeNull();
+    expect(document.getElementById(BUTTON_ID)).toBeNull();
+  });
+
+  test("stale room button rechecks its route before writing a handoff", () => {
+    endedScreen(); postgameSearchFeature.enable(ctx); const button = document.getElementById(BUTTON_ID)!;
+    history.replaceState(null, "", "/profile/7"); button.click();
+    expect(sessionStorage.getItem(POSTGAME_PENDING_KEY)).toBeNull();
+  });
+
+  test("a setting change invalidates a still-mounted button before the next DOM tick", () => {
+    endedScreen(); postgameSearchFeature.enable(ctx); const button = document.getElementById(BUTTON_ID)!;
+    postgameSearchFeature.update?.({ settings: { postgame_requeue_enabled: false } as Settings }); button.click();
+    expect(sessionStorage.getItem(POSTGAME_PENDING_KEY)).toBeNull();
+  });
+
+  test("an unrelated modal remains a stop gate beside the expected confirm", async () => {
+    plantMark(); confirmQuitModal(); foreignModal(); enableOnSearch();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(clicked()).toHaveLength(0); expect(warnHas("открыта модалка сайта")).toBe(true);
+  });
+
+  test("an unrelated modal remains a stop gate beside the in-progress modal", async () => {
+    plantMark(); inProgressModal(); foreignModal(); enableOnSearch();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(clicked()).toHaveLength(0); expect(warnHas("открыта модалка сайта")).toBe(true);
+  });
+
+  test("an expected modal's wrapper does not hide another nested alert", async () => {
+    plantMark(); confirmQuitModal(); const confirm = document.querySelector(".confirmQuit")!;
+    foreignModal(); const wrapper = document.body.lastElementChild!; wrapper.appendChild(confirm);
+    foreignModal(); wrapper.appendChild(document.body.lastElementChild!);
+    enableOnSearch(); await vi.advanceTimersByTimeAsync(200);
+    expect(clicked()).toHaveLength(0); expect(warnHas("открыта модалка сайта")).toBe(true);
+  });
+});
+
+describe("postgame: final exit authorization", () => {
+  test.each([
+    ["confirm quit", () => confirmQuitModal()],
+    ["in-progress game", () => inProgressModal()],
+  ] as const)("%s rechecks the live-match verdict after a long manual confirmation", async (_name, showModal) => {
+    let reply!: (value: { live: boolean }) => void;
+    vi.mocked(sendRuntime).mockReset()
+      .mockResolvedValue({ live: false })
+      .mockResolvedValueOnce({ live: false })
+      .mockImplementationOnce(() => new Promise(resolve => { reply = resolve; }));
+    plantMark();
+    decideBlock();
+    history.replaceState(null, "", "/game-search");
+    postgameSearchFeature.enable({
+      settings: {
+        postgame_requeue_enabled: true,
+        postgame_skip_confirm_enabled: false,
+      } as Settings,
+    });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(clicked()).toHaveLength(1);
+    expect(clicked()[0].className).toBe("p-play__profile-quit");
+    showModal();
+    domSubscriber?.();
+    await vi.advanceTimersByTimeAsync(6_000);
+    expect(clicked()).toHaveLength(1);
+
+    // A new match can begin in another tab while the user is deciding.
+    // The old quit verdict has expired, so update must await a new reply.
+    postgameSearchFeature.update?.({
+      settings: {
+        postgame_requeue_enabled: true,
+        postgame_skip_confirm_enabled: true,
+      } as Settings,
+    });
+    await vi.advanceTimersByTimeAsync(400);
+    expect(sendRuntime).toHaveBeenCalledTimes(2);
+    expect(clicked()).toHaveLength(1);
+    reply({ live: true });
+    await vi.advanceTimersByTimeAsync(200);
+    expect(clicked()).toHaveLength(1);
+    expect(warnHas("в другой вкладке идёт ваш матч")).toBe(true);
+  });
+});
+
+describe("postgame: prepared search after a finished match", () => {
+  let nextGame = 700_000;
+  let port: DirectPostgamePort;
+
+  const mark = (): Record<string, unknown> | null => {
+    const raw = sessionStorage.getItem(POSTGAME_PENDING_KEY);
+    return raw ? JSON.parse(raw) as Record<string, unknown> : null;
+  };
+  const button = (): HTMLButtonElement => document.getElementById(BUTTON_ID) as HTMLButtonElement;
+  const result = (state: string, signalAt: number): void => {
+    notePostgameDirectResult(state, signalAt, Date.now(), Date.now());
+  };
+  const prepareFinished = (options: Partial<Settings> = {}): number => {
+    history.replaceState(null, "", `/game?game_id=${++nextGame}`);
+    endedScreen();
+    postgameSearchFeature.enable({ settings: { ...ctx.settings, ...options } as Settings });
+    return Date.now();
+  };
+  const landOnSearch = (): void => {
+    window.dispatchEvent(new Event("pagehide"));
+    postgameSearchFeature.disable();
+    document.body.innerHTML = "";
+    decideBlock();
+    playButton();
+    history.replaceState(null, "", "/game-search");
+    postgameSearchFeature.enable(ctx);
+  };
+
+  beforeEach(() => {
+    vi.mocked(sendRuntime).mockReset().mockResolvedValue({ live: false });
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(() => new AbortController().signal);
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true, json: async () => ({ queues: { standard: { players: 1 } } }),
+    })));
+    port = {
+      prepare: vi.fn(), cancel: vi.fn(), start: vi.fn(() => true),
+      resume: vi.fn(), enterGame: vi.fn(() => true),
+    };
+    setDirectPostgamePort(port);
+  });
+  afterEach(() => {
+    postgameSearchFeature.disable();
+    setDirectPostgamePort(null);
+    vi.unstubAllGlobals();
+  });
+
+  test("finished screen only prepares a connection; an explicit click starts the flow", async () => {
+    const signalAt = prepareFinished();
+    domSubscriber?.();
+    domSubscriber?.();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(port.prepare).toHaveBeenCalledTimes(1);
+    expect(port.start).not.toHaveBeenCalled();
+    expect(sendRuntime).not.toHaveBeenCalled();
+    expect(mark()).toBeNull();
+    button().click();
+    expect(port.start).toHaveBeenCalledExactlyOnceWith(signalAt + 100);
+    expect(mark()).toMatchObject({ issuedAt: signalAt + 100 });
+    expect(mark()?.direct).toBeUndefined();
+    expect(button().disabled).toBe(true);
+    button().click();
+    expect(port.start).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(["viewer", "eliminated", "manual confirmation", "unknown identity"])(
+    "%s keeps the existing handoff and never warms or starts fast search", scenario => {
+      if (scenario === "viewer") history.replaceState(null, "", `/game?role=viewer&game_id=${++nextGame}`);
+      else if (scenario === "eliminated") { playerTile(true, "state-killed"); runningStage(); }
+      else endedScreen();
+      const settings = { ...ctx.settings, postgame_skip_confirm_enabled: scenario !== "manual confirmation" } as Settings;
+      postgameSearchFeature.enable({ settings });
+      expect(button()).not.toBeNull();
+      button().click();
+      expect(port.prepare).not.toHaveBeenCalled();
+      expect(port.start).not.toHaveBeenCalled();
+      expect(mark()?.direct).toBeUndefined();
+      expect(mark()?.issuedAt).toBe(Date.now());
+    },
+  );
+
+  test("numeric DOM identity supports the site's plain /game route", () => {
+    endedScreen();
+    const game = document.createElement("div");
+    game.setAttribute("data-game-id", String(++nextGame));
+    document.body.append(game);
+    postgameSearchFeature.enable(ctx);
+    expect(port.prepare).toHaveBeenCalledOnce();
+    button().click();
+    expect(port.start).toHaveBeenCalledOnce();
+  });
+
+  test("conflicting route and DOM game ids do not prepare the unsafe path", () => {
+    history.replaceState(null, "", `/game?game_id=${++nextGame}`);
+    endedScreen();
+    const game = document.createElement("div");
+    game.setAttribute("data-game-id", String(nextGame + 1));
+    document.body.append(game);
+    postgameSearchFeature.enable(ctx);
+    expect(port.prepare).not.toHaveBeenCalled();
+    button().click();
+    expect(port.start).not.toHaveBeenCalled();
+  });
+
+  test("a cold prepared client falls back before any direct quit is authorized", () => {
+    vi.mocked(port.start).mockReturnValue(false);
+    prepareFinished();
+    button().click();
+    expect(mark()?.direct).toBeUndefined();
+    expect(port.cancel).toHaveBeenCalled();
+    expect(sendRuntime).not.toHaveBeenCalled();
+  });
+
+  test("storage failure prevents a direct operation whose handoff could be lost", () => {
+    prepareFinished();
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("blocked"); });
+    try { button().click(); expect(port.start).not.toHaveBeenCalled(); }
+    finally { write.mockRestore(); }
+  });
+
+  test("quit grants persist quitting before the caller may send HTTP; each game gets one grant", async () => {
+    const signalAt = prepareFinished();
+    noteTrustedInput(); // initiating pointerdown belongs to this explicit click
+    button().click();
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(true);
+    expect(mark()).toMatchObject({ direct: true, stage: "quitting", signalAt });
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(false);
+    expect(await canPostgameDirectAct(signalAt, "start")).toBe(false);
+    expect(sendRuntime).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(["query id", "DOM id", "finished screen", "hidden", "setting", "confirmation setting", "input"])(
+    "late live:false cannot authorize quit after a change in %s", async change => {
+      let reply!: (value: { live: boolean }) => void;
+      vi.mocked(sendRuntime).mockImplementationOnce(() => new Promise(resolve => { reply = resolve; }));
+      const signalAt = prepareFinished();
+      button().click();
+      const authorization = canPostgameDirectAct(signalAt, "quit");
+      if (change === "query id") history.replaceState(null, "", `/game?game_id=${++nextGame}`);
+      if (change === "DOM id") {
+        const game = document.createElement("div");
+        game.setAttribute("data-game-id", String(nextGame + 1));
+        document.body.append(game);
+      }
+      if (change === "finished screen") document.querySelector(".roller")!.remove();
+      if (change === "hidden") Object.defineProperty(document, "hidden", { configurable: true, value: true });
+      if (change === "setting") postgameSearchFeature.update?.({ settings: { ...ctx.settings, postgame_requeue_enabled: false } as Settings });
+      if (change === "confirmation setting") postgameSearchFeature.update?.({ settings: { ...ctx.settings, postgame_skip_confirm_enabled: false } as Settings });
+      if (change === "input") noteTrustedInput();
+      reply({ live: false });
+      expect(await authorization).toBe(false);
+      expect(mark()?.stage).not.toBe("quitting");
+      if (change === "hidden") Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    },
+  );
+
+  test("a live match in another tab denies direct quit", async () => {
+    vi.mocked(sendRuntime).mockResolvedValueOnce({ live: true });
+    const signalAt = prepareFinished();
+    button().click();
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(false);
+    result("deferred", signalAt);
+    expect(mark()).toBeNull();
+    expect(port.cancel).toHaveBeenCalled();
+    expect(clicked()).toHaveLength(0);
+  });
+
+  test("a silent live probe remains bounded and disable resolves pending authorization", async () => {
+    vi.mocked(sendRuntime).mockImplementation(() => new Promise(() => {}));
+    let signalAt = prepareFinished();
+    button().click();
+    const timed = canPostgameDirectAct(signalAt, "quit");
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(await timed).toBe(true); // same existing fail-open policy
+    postgameSearchFeature.disable();
+    document.body.innerHTML = "";
+    signalAt = prepareFinished();
+    button().click();
+    const cancelled = canPostgameDirectAct(signalAt, "quit");
+    postgameSearchFeature.disable();
+    expect(await cancelled).toBe(false);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test.each(["lost response", "quit-unknown"])("%s survives navigation as manual-only, without any repeat quit or search", async outcome => {
+    const signalAt = prepareFinished();
+    button().click();
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(true);
+    if (outcome === "quit-unknown") result(outcome, signalAt);
+    landOnSearch();
+    await vi.advanceTimersByTimeAsync(10_000);
+    domSubscriber?.();
+    expect(port.resume).not.toHaveBeenCalled();
+    expect(clicked()).toHaveLength(0);
+    expect(canPostgameDirectAct(signalAt, "resume")).toBe(false);
+    expect(warnHas("результат выхода из игры неизвестен")).toBe(true);
+    expect(mark()).toBeNull();
+  });
+
+  test("HTTP confirmation permits start only after another current authorization", async () => {
+    const signalAt = prepareFinished();
+    button().click();
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(true);
+    result("quit-confirmed", signalAt);
+    expect(mark()).toMatchObject({ stage: "search", signalAt });
+    vi.mocked(sendRuntime).mockResolvedValueOnce({ live: true });
+    expect(await canPostgameDirectAct(signalAt, "start")).toBe(false);
+    expect(sendRuntime).toHaveBeenCalledTimes(2);
+    result("deferred", signalAt);
+    expect(mark()).toBeNull();
+  });
+
+  test.each([false, true])("confirmed quit resumes safely after redirect (queue ACK=%s)", async queued => {
+    const signalAt = prepareFinished();
+    button().click();
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(true);
+    result("quit-confirmed", signalAt);
+    if (queued) result("queued", signalAt);
+    landOnSearch();
+    expect(port.resume).toHaveBeenCalledExactlyOnceWith(signalAt, queued);
+    expect(clicked()).toHaveLength(0);
+    expect(canPostgameDirectAct(signalAt, "resume")).toBe(true);
+    postgameDirectResumeFinished("refused", signalAt);
+    domSubscriber?.();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(clicked()).toHaveLength(0);
+    expect(mark()).toBeNull();
+  });
+
+  test("deferred resume waits for foreground and does not authorize hidden work", async () => {
+    const signalAt = prepareFinished();
+    button().click();
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(true);
+    result("quit-confirmed", signalAt);
+    landOnSearch();
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    postgameDirectResumeFinished("deferred", signalAt);
+    expect(canPostgameDirectAct(signalAt, "resume")).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(port.resume).toHaveBeenCalledTimes(1);
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(port.resume).toHaveBeenCalledTimes(2);
+  });
+
+  test.each(["found first", "ACK first"])("%s hands off the assigned game once", async order => {
+    const signalAt = prepareFinished();
+    button().click();
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(true);
+    result("quit-confirmed", signalAt);
+    if (order === "ACK first") result("queued", signalAt);
+    result("found", signalAt);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(port.enterGame).toHaveBeenCalledTimes(1);
+    expect(mark()).toBeNull();
+    result("queued", signalAt);
+    domSubscriber?.();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(port.enterGame).toHaveBeenCalledTimes(1);
+    expect(port.resume).not.toHaveBeenCalled();
+  });
+
+  test("an unrelated result cannot advance or navigate the current finished game", async () => {
+    const signalAt = prepareFinished();
+    button().click();
+    result("quit-confirmed", signalAt - 1);
+    result("queued", signalAt - 1);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(mark()?.direct).toBeUndefined();
+    expect(port.enterGame).not.toHaveBeenCalled();
+  });
+  test("new input after a quit grant cancels intent without allowing another automatic quit", async () => {
+    const signalAt = prepareFinished();
+    button().click();
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(true);
+    noteTrustedInput();
+    expect(mark()).toBeNull();
+    domSubscriber?.();
+    button().click();
+    expect(port.start).toHaveBeenCalledTimes(1);
+    expect(mark()).toBeNull();
+    result("quit-confirmed", signalAt);
+    expect(mark()).toBeNull();
+  });
+
+  test("a stalled direct episode terminates without an autonomous retry", async () => {
+    prepareFinished();
+    button().click();
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(port.start).toHaveBeenCalledTimes(1);
+    expect(port.resume).not.toHaveBeenCalled();
+    expect(mark()).toBeNull();
+    expect(vi.mocked(showToast).mock.calls.some(([message]) => message.includes("Не удалось подтвердить поиск"))).toBe(true);
+  });
+
+  test("failure before a quit grant keeps only the ordinary legacy handoff", async () => {
+    const signalAt = prepareFinished();
+    button().click();
+    result("unavailable", signalAt);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(mark()?.direct).toBeUndefined();
+    landOnSearch();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(port.resume).not.toHaveBeenCalled();
+    expect(clicked().at(-1)?.className).toBe("p-play__profile-quit");
+  });
+
+  test("an invalid direct marker fails closed instead of becoming a legacy quit", async () => {
+    plantMark(0, { direct: true, stage: "unexpected", signalAt: Date.now() });
+    enableOnSearch();
+    decideBlock();
+    playButton();
+    domSubscriber?.();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(port.resume).not.toHaveBeenCalled();
+    expect(clicked()).toHaveLength(0);
+    expect(mark()).toBeNull();
+  });
+
+  test("hiding between an authorized start and its retry cancels PAGE immediately", async () => {
+    const signalAt = prepareFinished();
+    button().click();
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(true);
+    result("quit-confirmed", signalAt);
+    expect(await canPostgameDirectAct(signalAt, "start")).toBe(true);
+    vi.mocked(port.cancel).mockClear();
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(port.cancel).toHaveBeenCalledTimes(1);
+    expect(await canPostgameDirectAct(signalAt, "start")).toBe(false);
+    expect(mark()).toBeNull();
+    result("queued", signalAt);
+    await vi.advanceTimersByTimeAsync(150);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(port.enterGame).not.toHaveBeenCalled();
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+  });
+
+  test("pagehide preserves an unknown-quit checkpoint and removes delayed actions", async () => {
+    const signalAt = prepareFinished();
+    button().click();
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(true);
+    window.dispatchEvent(new Event("pagehide"));
+    expect(mark()).toMatchObject({ direct: true, stage: "quitting" });
+    const notices = vi.mocked(showToast).mock.calls.length;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(port.start).toHaveBeenCalledTimes(1);
+    expect(port.resume).not.toHaveBeenCalled();
+    expect(vi.mocked(showToast).mock.calls).toHaveLength(notices);
+    const back = new Event("pageshow");
+    Object.defineProperty(back, "persisted", { value: true });
+    window.dispatchEvent(back);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(port.start).toHaveBeenCalledTimes(1);
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(false);
+  });
+
+  test("a settings-driven disable clears direct intent rather than reviving it on enable", async () => {
+    const signalAt = prepareFinished();
+    button().click();
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(true);
+    postgameSearchFeature.disable();
+    expect(mark()).toBeNull();
+    postgameSearchFeature.enable(ctx);
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(false);
+  });
+
 });

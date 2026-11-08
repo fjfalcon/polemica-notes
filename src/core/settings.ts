@@ -92,6 +92,9 @@ export const DEFAULT_SETTINGS: Settings = {
   // Включено: точка — прежнее поведение с 8.1.x; выключают те, кому мешает.
   note_indicator_enabled: true,
   role_marker_enabled: false,
+  // Выключено по умолчанию: панель вероятностей — нишевый аналитический
+  // инструмент, и она занимает место на экране. Включать осознанно.
+  roles_predictor_enabled: false,
   // Иконки включены: это и есть новый вид (9.26.0); текст — для тех, кому
   // подписи привычнее.
   role_marker_icons_enabled: true,

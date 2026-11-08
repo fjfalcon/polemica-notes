@@ -1724,6 +1724,7 @@ document.addEventListener("DOMContentLoaded", () => {
     set("last_games_first_killed", items.last_games_first_killed);
     set("note_indicator_enabled", items.note_indicator_enabled);
     set("role_marker_enabled", items.role_marker_enabled);
+    set("roles_predictor_enabled", items.roles_predictor_enabled);
     set("role_marker_icons_enabled", items.role_marker_icons_enabled);
     syncRoleMarkerIconsRow();
     set("unicorn_hearts_enabled", items.unicorn_hearts_enabled);
@@ -1879,6 +1880,7 @@ document.addEventListener("DOMContentLoaded", () => {
       last_games_first_killed: cb("last_games_first_killed", true),
       note_indicator_enabled: cb("note_indicator_enabled", true),
       role_marker_enabled: cb("role_marker_enabled", false),
+      roles_predictor_enabled: cb("roles_predictor_enabled", false),
       role_marker_icons_enabled: cb("role_marker_icons_enabled", true),
       unicorn_hearts_enabled: cb("unicorn_hearts_enabled", false),
       protocol_emoji_civ: readProtocolEmoji("civ"),
@@ -2105,6 +2107,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "last_games_first_killed",
     "note_indicator_enabled",
     "role_marker_enabled",
+    "roles_predictor_enabled",
     "role_marker_icons_enabled",
     "unicorn_hearts_enabled",
     "protocol_emoji_civ",

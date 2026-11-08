@@ -1,0 +1,84 @@
+{
+  "version": "9.76.1",
+  "date": "2026-11-08",
+  "implementation": "Detached SSR parsing (no executable iframe). Dedicated pinned Socket.IO2/EIO3 client authenticates without enqueueing. Explicit start_game_search follows proven disbandment/readiness. Server ACK and game-found are separate outcomes; ordinary page recovery uses bounded, authorized site methods without DOM clicks.",
+  "siteEvidence": {
+    "source": "https://polemicagame.com/bundle/game-search.js",
+    "downloaded": "2026-11-06",
+    "sha256": "0c567ff21de3c93d9d09ae8aab66071d24087ef24c4148f2cc079e7df40e027b",
+    "fixture": "tests/fixtures/search-start-methods.json",
+    "recovery": "checkIfUserInSearch calls /api/search/me; disconnected search starts a new connection. session_initialized with own timeInSearch restores state without another start_game_search. This demonstrates the intended client recovery path, not a live proof of unchanged server priority.",
+    "verifiedAgain": "2026-11-08",
+    "hashMatches": true
+  },
+  "comparison": {
+    "kind": "deterministic shared-server replay: dedicated DirectSearch protocol versus actual downloaded site methods; assumed timings are not live game latency",
+    "command": "node node_modules/vitest/vitest.mjs run tests/unit/direct-search-live-methods.test.ts --reporter=verbose --disableConsoleIntercept",
+    "assumptionsMs": {
+      "socketHandshake": 150,
+      "serverReply": 40,
+      "manualReaction": 200
+    },
+    "resultsMsAfterDisbandment": [
+      {
+        "scenario": "preconnected direct request",
+        "request": 0,
+        "ack": 40
+      },
+      {
+        "scenario": "already loaded neighboring page, zero reaction",
+        "request": 150,
+        "ack": 190
+      },
+      {
+        "scenario": "already loaded neighboring page, reaction 200 ms",
+        "request": 350,
+        "ack": 390
+      }
+    ],
+    "recoveryReplay": {
+      "serverTimeInSearch": 1000,
+      "restoredTimeInSearch": 1000,
+      "additionalStartRequests": 0
+    },
+    "notMeasured": [
+      "real browser IPC and scheduling cost",
+      "real authenticated search service latency",
+      "actual human reaction",
+      "server queue priority before and after disconnect"
+    ]
+  },
+  "productionTelemetry": [
+    "direct request: stopToRequest, stopToAck, requestToAck",
+    "restored: own timeInSearch observed in session_initialized",
+    "new: successful new start_game_search after handoff, prior position unconfirmed",
+    "already searching: active search observed, prior position unconfirmed"
+  ],
+  "validation": {
+    "productionTypecheck": "passed",
+    "testTypecheck": "passed: tsc --noEmit -p tests/tsconfig.json",
+    "offlineFull": {
+      "files": 172,
+      "testsPassed": 2997
+    },
+    "targeted": "Protocol, bootstrap, PAGE, bounded recovery, source transitions and real loopback wire tests passed; independently rechecked by reviewer",
+    "builds": {
+      "chrome": "passed",
+      "firefox": "passed",
+      "browserBundleSmoke": "passed",
+      "firefoxLint": {
+        "errors": 0,
+        "warnings": 42
+      }
+    },
+    "adversarialReview": "D1-D7 fixed and independently rechecked; prepared path has no executable iframe",
+    "liveAuthenticatedGame": "not run; server queue priority after disconnect/reconnect and real network latency remain unverified"
+  },
+  "hardening": {
+    "preparation": "no evaluated site scripts; no /api/search/me automatic lifecycle before authorization",
+    "recovery": "total deadline10s, at most one authorized reconnect, listeners/async generations cleaned, transient hidden/input waits keep handoff up to45s",
+    "assignedGame": "game-found before/after ACK is stronger than queue ACK; authenticated in_game after handoff returns to assigned game without quit",
+    "transport": "real socket.io-client2.5.0 over loopback WebSocket tested: Engine.IO3, /socket.io path, /search namespace, no start before command, exact one start after; application health poll follows explicit start",
+    "browserArtifact": "actual built PAGE IIFE boots in JSDOM without Node globals; build target is browser"
+  }
+}

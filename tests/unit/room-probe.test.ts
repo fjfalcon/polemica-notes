@@ -13,7 +13,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { WS_LOG_FLAG_KEY, injectProbe, probeAllowed } from "@content/page/room-probe-inject";
+import { REQUEUE_FLAG_KEY, WS_LOG_FLAG_KEY, injectProbe, probeAllowed } from "@content/page/room-probe-inject";
 
 /** Оригинальные ссылки — вернём после каждого теста. */
 const originalOnMessage = Object.getOwnPropertyDescriptor(WebSocket.prototype, "onmessage");
@@ -269,5 +269,73 @@ describe("перехват сокета", () => {
     vi.resetModules();
     await import("@content/page/room-probe-page");
     expect(Object.getOwnPropertyDescriptor(WebSocket.prototype, "onmessage")).toEqual(afterFirst);
+  });
+});
+
+describe("сигналы жизненного цикла для автовозврата (9.75.0)", () => {
+  function startLifecycle(): void {
+    window.dispatchEvent(
+      new MessageEvent("message", { data: { source: "pn-room-events-cmd", on: true }, source: window }),
+    );
+  }
+  function capture(): { posted: Array<Record<string, unknown>>; restore: () => void } {
+    const posted: Array<Record<string, unknown>> = [];
+    const spy = vi.spyOn(window, "postMessage").mockImplementation(((m: Record<string, unknown>) => {
+      posted.push(m);
+    }) as unknown as typeof window.postMessage);
+    return { posted, restore: () => spy.mockRestore() };
+  }
+
+  test("флаг автовозврата тоже ставит зонд — и только значение «1»", () => {
+    const only = (key: string, value: string) => ({ getItem: (k: string) => (k === key ? value : null) });
+    expect(probeAllowed(only(REQUEUE_FLAG_KEY, "1"))).toBe(true);
+    expect(probeAllowed(only(REQUEUE_FLAG_KEY, "0"))).toBe(false);
+    expect(REQUEUE_FLAG_KEY).toBe("pn_requeue_fast");
+  });
+
+  test("ключ зеркала автовозврата пишет content-скрипт", async () => {
+    const fs = await import("node:fs");
+    expect(fs.readFileSync("src/content/index.ts", "utf8")).toContain("REQUEUE_FLAG_KEY");
+  });
+
+  test("без команды сигналов нет — даже у установленного зонда", async () => {
+    await installProbe();
+    const { posted, restore } = capture();
+    const ws = makeSocket();
+    ws.onmessage = () => {};
+    deliver(ws, `42${JSON.stringify(["on_stop_game", { reason: {} }])}`);
+    expect(posted).toEqual([]);
+    restore();
+  });
+
+  test("по команде уходит ТОЛЬКО имя события из белого списка — без тела кадра", async () => {
+    await installProbe();
+    startLifecycle();
+    const { posted, restore } = capture();
+    const ws = makeSocket();
+    const gameHandler = vi.fn();
+    ws.onmessage = gameHandler;
+    deliver(ws, `42${JSON.stringify(["on_stop_game", { reason: { code: "secret" } }])}`);
+    deliver(ws, `42/room,${JSON.stringify(["on_start_stage", { type: "day" }])}`);
+    // Роли и чат — не наше дело: имена вне списка не уходят вовсе.
+    deliver(ws, `42${JSON.stringify(["on_reveal_role", { role: "mafia" }])}`);
+    deliver(ws, `42${JSON.stringify(["chat_message", { text: "on_stop_game" }])}`);
+    expect(gameHandler, "каждый кадр обязан дойти до игры").toHaveBeenCalledTimes(4);
+    expect(posted).toEqual([
+      { source: "pn-room-event", name: "on_stop_game" },
+      { source: "pn-room-event", name: "on_start_stage" },
+    ]);
+    restore();
+  });
+
+  test("сигналы не включают полный лог кадров", async () => {
+    await installProbe();
+    startLifecycle();
+    const { posted, restore } = capture();
+    const ws = makeSocket();
+    ws.onmessage = () => {};
+    deliver(ws, frame);
+    expect(posted.some((m) => "frame" in m)).toBe(false);
+    restore();
   });
 });
