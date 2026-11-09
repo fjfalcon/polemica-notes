@@ -18,6 +18,8 @@ export interface SearchRequest {
 export interface PreparedConfig { endpoint: string; request: SearchRequest }
 export type SearchOutcome = "ready" | "sent" | "queued" | "refused" | "unavailable" | "existing-search" | "found";
 export interface FoundGame { gameId: number; dynamicFilling: boolean | string | number }
+/** Сколько живёт подготовленное, но не запущенное соединение. */
+export const READY_TTL_MS = 120_000;
 export class DirectSearch {
   private socket: SearchSocket | null = null;
   private phase: "idle" | "preparing" | "ready" | "sent" | "queued" | "found" | "closed" = "idle";
@@ -47,6 +49,9 @@ export class DirectSearch {
         }
         this.clearTimers();
         this.phase = "ready";
+        // Потолок жизни готового соединения: осиротевший или забытый
+        // экземпляр не держит лишнее соединение аккаунта (ревью 09.11.2026).
+        this.deadline = setTimeout(() => this.abort("unavailable"), READY_TTL_MS);
         this.result("ready");
       });
       for (const name of ["disconnect", "connect_error", "connect_timeout", "connection_refused"])
@@ -72,6 +77,7 @@ export class DirectSearch {
   ready(): boolean { return this.phase === "ready" && this.socket?.connected === true; }
   start(): boolean {
     if (!this.ready()) return false;
+    this.clearTimers();
     this.phase = "sent";
     this.deadline = setTimeout(() => this.abort("refused"), 8000);
     this.send();
@@ -142,6 +148,20 @@ export class DirectSearch {
     this.dispose(); this.result(state);
   }
   cancel(): void { this.dispose(); }
+  /**
+   * Отмена НАШИМ решением после отправленного запроса (вкладка ушла в фон,
+   * ввод, матч пошёл, фичу выключили): поиск на сервере переживает разрыв
+   * сокета, и без снятия он висел бы без интерфейса — собравшуюся группу
+   * никто бы не принял (ревью 09.11.2026). Снимаем штатно, как сайт
+   * (stop_game_search без аргументов). При передаче на страницу поиска
+   * (pagehide) зовётся dispose, а не stop: там поиск должен выжить.
+   */
+  stop(): void {
+    if ((this.phase === "sent" || this.phase === "queued") && this.socket?.connected) {
+      try { this.socket.emit("stop_game_search"); } catch { /* закрывается всё равно */ }
+    }
+    this.dispose();
+  }
   dispose(): void {
     this.phase = "closed"; this.clearTimers(); this.clearStatePoll();
     for (const [name, handler] of this.handlers) this.socket?.removeListener(name, handler);

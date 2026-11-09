@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 // @vitest-environment-options { "url": "https://polemicagame.com/game-search" }
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 let created: any, events = new Map<string, Set<(value: any) => void>>();
 const makeSocket = vi.hoisted(() => vi.fn());
 vi.mock("@content/page/search-socket", () => ({ connectSearchSocket: makeSocket }));
-import { ENTER_SPREAD_MS, bindPort, gameForm } from "@content/page/direct-requeue-page";
+import { bindPort, gameForm, listenForInit } from "@content/page/direct-requeue-page";
 /** Приватный порт к контент-скрипту — синхронный двойник (транспорт сам — MessageChannel). */
 const pagePort = { postMessage: vi.fn(), onmessage: null as ((event: MessageEvent) => void) | null };
 function answer(id: unknown, epochOf: unknown, ok: boolean) { pagePort.onmessage!({ data: { authority: true, id, epoch: epochOf, ok } } as MessageEvent); }
@@ -215,20 +215,9 @@ test("game found immediately after postgame start enters only once", async () =>
   command("quit-start"); await vi.advanceTimersByTimeAsync(1);
   fire("on_game_found", { gameId: 91, dynamicFilling: true });
   const submit = vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => {});
-  vi.spyOn(Math, "random").mockReturnValue(0.5);
-  command("enter"); command("enter");
-  // Как у сайта: вход — через случайную долю ENTER_SPREAD_MS, не мгновенно.
-  await vi.advanceTimersByTimeAsync(ENTER_SPREAD_MS / 2 - 1); expect(submit).not.toHaveBeenCalled();
-  await vi.advanceTimersByTimeAsync(1); expect(submit).toHaveBeenCalledTimes(1);
+  // Вход сразу: пауза соревновалась бы с навигацией комнаты и отменой попытки.
+  command("enter"); command("enter"); expect(submit).toHaveBeenCalledTimes(1);
   expect(document.querySelector('input[name="game_id"]')?.getAttribute("value")).toBe("91");
-});
-test("отмена попытки снимает отложенный вход в найденную игру", async () => {
-  await preparedPostgame(); vi.mocked(fetch).mockImplementationOnce(async () => ({ ok: true }) as Response);
-  command("quit-start"); await vi.advanceTimersByTimeAsync(1);
-  fire("on_game_found", { gameId: 92, dynamicFilling: false });
-  const submit = vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => {});
-  command("enter"); epoch++; command("cancel");
-  await vi.advanceTimersByTimeAsync(ENTER_SPREAD_MS + 1); expect(submit).not.toHaveBeenCalled();
 });
 test("команды и «разрешено» через window не действуют — только приватный порт", async () => {
   command("prepare"); await vi.advanceTimersByTimeAsync(1); fire("session_initialized", null);
@@ -244,4 +233,84 @@ test("команды и «разрешено» через window не дейст
   command("quit-start"); await vi.advanceTimersByTimeAsync(4001);
   expect(reports.some(x => x.state === "deferred")).toBe(true);
   expect(reports.some(x => x.state === "quit-confirmed"), "выход не ушёл").toBe(false);
+});
+
+describe("рукопожатие и подделки порта", () => {
+  /** init от «контент-скрипта»: MessageEvent на window с портом. */
+  function init(data: Record<string, unknown>, port: unknown, source: Window | null = window) {
+    const ev = new MessageEvent("message", { source, data });
+    Object.defineProperty(ev, "ports", { value: port ? [port] : [] });
+    window.dispatchEvent(ev);
+  }
+  const fakePort = () => ({ postMessage: vi.fn(), onmessage: null as ((e: any) => void) | null });
+
+  test("порт принимается только с nonce своего тега, только с window и только один раз", () => {
+    const stop = listenForInit("own-nonce");
+    try {
+      const foreign = fakePort(), noSource = fakePort(), own = fakePort(), late = fakePort();
+      init({ source: "pn-direct-requeue-init", nonce: "other" }, foreign);
+      init({ source: "pn-direct-requeue-init", nonce: "own-nonce" }, noSource, null);
+      init({ source: "pn-direct-requeue-init", nonce: "own-nonce" }, null);
+      expect(foreign.onmessage).toBeNull();
+      expect(noSource.onmessage).toBeNull();
+      init({ source: "pn-direct-requeue-init", nonce: "own-nonce" }, own);
+      expect(own.onmessage).toBeTypeOf("function");
+      init({ source: "pn-direct-requeue-init", nonce: "own-nonce" }, late);
+      expect(late.onmessage, "второй init — чужой: слушатель снят").toBeNull();
+    } finally {
+      stop();
+      bindPort(pagePort);
+    }
+  });
+
+  test("синтетическое событие порта (isTrusted=false) — не команда", async () => {
+    command("prepare"); await vi.advanceTimersByTimeAsync(1); fire("session_initialized", null);
+    pagePort.onmessage!({ data: { op: "start", signalAt: Date.now(), epoch, queued: false }, isTrusted: false } as unknown as MessageEvent);
+    expect(created.emit).not.toHaveBeenCalled();
+    command("start");
+    expect(created.emit).toHaveBeenCalledTimes(1);
+  });
+
+  test("ответ о разрешении с чужим epoch не даёт выйти из игры", async () => {
+    await preparedPostgame();
+    pagePort.postMessage.mockImplementation((data: any) => {
+      reports.push(data);
+      if (data?.state === "authorize-quit") answer(data.id, data.epoch + 1, true);
+    });
+    vi.mocked(fetch).mockImplementationOnce(async () => ({ ok: true }) as Response);
+    command("quit-start"); await vi.advanceTimersByTimeAsync(4001);
+    expect(reports.some(x => x.state === "quit-confirmed")).toBe(false);
+    expect(reports.some(x => x.state === "deferred")).toBe(true);
+  });
+});
+test("поиск уже подключён в другой вкладке (connected:true) — второе соединение не открываем", async () => {
+  vi.mocked(fetch).mockImplementationOnce(async () => ({ ok: true, text: async () => markup }) as Response)
+    .mockImplementationOnce(async () => ({ ok: true, json: async () => ({ connected: true,
+      queues: { standard: { available: true }, polite: { available: true }, prime: { available: true } } }) }) as Response);
+  command("prepare"); await vi.advanceTimersByTimeAsync(1);
+  expect(makeSocket).not.toHaveBeenCalled();
+  expect(reports.some(x => x.state === "existing-search")).toBe(true);
+});
+describe("отмена после отправленного запроса", () => {
+  async function sent() {
+    command("prepare"); await vi.advanceTimersByTimeAsync(1); fire("session_initialized", null);
+    command("start"); expect(created.emit).toHaveBeenCalledWith("start_game_search", expect.anything());
+  }
+  test("отмена контент-скриптом снимает поиск на сервере (stop_game_search), как сайт", async () => {
+    await sent(); fire("on_start_game_search", { success: true });
+    epoch++; command("cancel");
+    expect(created.emit).toHaveBeenLastCalledWith("stop_game_search");
+    expect(created.disconnect).toHaveBeenCalled();
+  });
+  test("уход со страницы (передача на поиск) поиск НЕ снимает", async () => {
+    await sent(); fire("on_start_game_search", { success: true });
+    window.dispatchEvent(new Event("pagehide"));
+    expect(created.emit).not.toHaveBeenCalledWith("stop_game_search");
+    expect(created.disconnect).toHaveBeenCalled();
+  });
+  test("до отправки запроса отмена ничего лишнего не шлёт", async () => {
+    command("prepare"); await vi.advanceTimersByTimeAsync(1); fire("session_initialized", null);
+    epoch++; command("cancel");
+    expect(created.emit).not.toHaveBeenCalled();
+  });
 });

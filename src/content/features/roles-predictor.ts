@@ -86,7 +86,7 @@ function asRoleId(id: string | null | undefined): RoleId | null {
 /** Читает только отображаемый SVG; служебные оригиналы подмены не читаются. */
 function roleFromElement(el: Element | null): RoleId | null {
   if (!el) return null;
-  const use = el.querySelector("use[href], use[xlink\\:href]");
+  const use = el.querySelector(SITE.roleUse);
   const href = use?.getAttribute("href") || use?.getAttribute("xlink:href");
   return href ? asRoleId(href.split("#")[1]) : null;
 }

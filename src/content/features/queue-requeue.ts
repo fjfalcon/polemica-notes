@@ -148,6 +148,14 @@ export interface DirectRequeuePort {
 let directPort: DirectRequeuePort | null = null;
 export function setDirectRequeuePort(port: DirectRequeuePort | null): void { directPort = port; }
 let directPending = false, directQueued = false, directGameFound = false, directHandoffAt = 0;
+/**
+ * Сторож молчания страницы: запрос ушёл в мир страницы, а ответа нет (порт
+ * не доехал, скрипт страницы умер). Без него комната ждала бы вечно
+ * (ревью 09.11.2026) — через DIRECT_SILENCE_MS считаем путь неподтверждённым
+ * и передаём штатному восстановлению. У самой страницы ACK ждёт 8 с.
+ */
+const DIRECT_SILENCE_MS = 10_000;
+let directStartedAt = 0;
 let directResuming = false, directResumeRequested = false, directResumeAt = 0;
 let directResumeQueued = false;
 const DIRECT_HANDOFF_KEY = "pn_direct_requeue_handoff";
@@ -348,6 +356,9 @@ function prerenderSupported(): boolean {
  * §4 п.1): узел вставляется один раз, повтор — один querySelector.
  */
 function ensurePrerender(): void {
+  // Транспорт прямого поиска ставится всегда (content/index.ts), поэтому
+  // speculation rules ниже — только запасной путь на случай, если его нет
+  // (тесты, будущий откат); в обычной работе готовится соединение поиска.
   if(directPort){directPort.prepare();return;}
   if (document.querySelector(`script[${PRERENDER_ATTR}]`)) return;
   if (!prerenderSupported()) return;
@@ -370,6 +381,14 @@ function cancelPrerender(): void {
   for (const el of Array.from(document.querySelectorAll(`script[${PRERENDER_ATTR}]`))) el.remove();
 }
 
+/**
+ * Видели ли МЫ САМИ отсчёт роспуска, дошедший почти до нуля. Клиентский
+ * отсчёт отстаёт от серверного на задержку сети — отсюда допуск.
+ */
+function disbandmentNearZero(): boolean {
+  return disbandmentSeen && disbandmentLastSeconds >= 0 && disbandmentLastSeconds <= DISBAND_ZERO_TOLERANCE_S;
+}
+
 /** Сказать зонду комнаты, нужны ли нам сигналы (зонда может и не быть). */
 function commandRoomEvents(on: boolean): void {
   try {
@@ -380,9 +399,12 @@ function commandRoomEvents(on: boolean): void {
 }
 
 /**
- * Сигнал зонда комнаты. Экспорт — тестовый шов. Подделать его может и сама
- * страница — но всё, что он запускает (уход на /game-search и клик
- * «Играть»), страница умеет сделать и без нас: привилегий это не даёт.
+ * Сигнал зонда комнаты. Экспорт — тестовый шов. Подделать его может любой
+ * скрипт страницы (сигнал идёт через window), а запускает он уход из комнаты
+ * и прямой запрос поиска. Поэтому сигнал только УСКОРЯЕТ решение, которое
+ * доказывает DOM: on_stop_game принимаем лишь после того, как сами видели
+ * отсчёт роспуска и он дошёл почти до нуля (ревью 09.11.2026) — подделка
+ * посреди отсчёта или без него ничего не запускает.
  */
 export function onRoomEvent(e: MessageEvent): void {
   if (e.source !== window) return;
@@ -406,7 +428,7 @@ export function onRoomEvent(e: MessageEvent): void {
   // Прямой on_stop_game без отсчёта — не «лобби не собралось» (исключение,
   // ошибка сервера): им занимается DOM-путь с узкой классификацией экрана
   // (RQ-5/RQ-7). Ускоряем только доказанный роспуск.
-  if (!disbandmentSeen && !disbandmentSignaled) return;
+  if (!disbandmentNearZero()) return;
   stopGameSignalAt = Date.now();
   log.info(SCOPE, "сервер распустил комнату (on_stop_game) — решаем сразу, не дожидаясь экрана сайта");
   tick();
@@ -648,6 +670,10 @@ function readyConfirmed(): boolean {
 function roomTick(): void {
   if(directPending){
     if(matchIsRunning()){noteMatchStarted("матч начался — прямой поиск отменён");directPending=false;return;}
+    if(!directQueued&&Date.now()-directStartedAt>=DIRECT_SILENCE_MS){
+      log.warn(SCOPE,"страница не ответила на прямой запрос поиска — переходим к штатному восстановлению");
+      noteDirectRequeueResult("unavailable",stopGameSignalAt,0,Date.now());return;
+    }
     finishDirectRequeue();return;
   }
   if (!settings || settings.requeue_after_lobby_fail_enabled === false) return;
@@ -688,7 +714,7 @@ function roomTick(): void {
   // роспуска сильнее любого экрана: ни ждать экран (2 с), ни грейс-паузу
   // (12 с) незачем. Отсчёт при этом может ещё секунду показывать «00:01» —
   // клиентский таймер отстаёт от серверного на задержку сети.
-  const serverStopped = stopGameSignalAt > 0 && (disbandmentSeen || disbandmentSignaled);
+  const serverStopped = stopGameSignalAt > 0 && disbandmentNearZero();
 
   // Трекинг отсчёта идёт и БЕЗ готовности (RQ-7): терминальный роспуск надо
   // уметь доказать для любого игрока — неготовому мы обязаны честно сказать,
@@ -881,7 +907,8 @@ function roomTick(): void {
     );
   }
   if(roomReady&&stopGameSignalAt&&directPort?.start(stopGameSignalAt)){
-    directPending=true;directQueued=false;directGameFound=false;directHandoffAt=0;return;
+    directPending=true;directQueued=false;directGameFound=false;directHandoffAt=0;
+    directStartedAt=Date.now();scheduleDecision(DIRECT_SILENCE_MS+50);return;
   }
   if (roomReady && directPort?.resume) {
     // Even a cold fallback uses the site's startSearch method, never a DOM click.

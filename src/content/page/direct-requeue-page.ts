@@ -1,3 +1,4 @@
+import { SITE } from "@core/selectors";
 import { connectSearchSocket } from "./search-socket";
 import { DirectSearch, type FoundGame, type SearchOutcome } from "./direct-search";
 import { parseSearchBootstrap, applySearchAvailability, type SearchBootstrap } from "./search-bootstrap";
@@ -5,7 +6,7 @@ import { ResumeSearch, type ResumeClient, type ResumeResult } from "./resume-sea
 
 interface Proxy extends ResumeClient { $children?: Proxy[]; returnToGame?: () => void }
 function client(doc: Document): Proxy | null {
-  const root = doc.querySelector("#app") as (Element & { __vue__?: Proxy }) | null;
+  const root = doc.querySelector(SITE.vueRoot) as (Element & { __vue__?: Proxy }) | null;
   const queue = root?.__vue__ ? [root.__vue__] : [];
   const seen = new Set<Proxy>();
   for (let i = 0; i < queue.length && i < 3000; i++) {
@@ -33,8 +34,6 @@ interface Run {
   authorizations: Set<() => void>;
 }
 const RESULT = "pn-direct-requeue";
-/** Разброс входа в найденную игру — константа сайта (Math.round(1e4*Math.random())). */
-export const ENTER_SPREAD_MS = 10_000;
 let run: Run | null = null;
 let lastEpoch = 0;
 const current = (value: Run) => run === value;
@@ -43,9 +42,10 @@ function later(value: Run, callback: () => void, delay: number): void {
   value.timers.add(timer);
 }
 /**
- * Приватный порт к контент-скрипту (см. direct-requeue-transport): только
- * через него приходят команды и ответы о разрешении. window для них больше
- * не слушаем — там их мог подделать любой скрипт сайта.
+ * Порт к контент-скрипту (см. direct-requeue-transport, там же честная
+ * граница защиты): только через него приходят команды и ответы о
+ * разрешении. window для них больше не слушаем — там их подделал бы любой
+ * скрипт сайта.
  */
 interface PortLike { postMessage(data: unknown): void; onmessage: ((event: MessageEvent) => void) | null }
 let port: PortLike | null = null;
@@ -59,11 +59,14 @@ function report(value: Run, state: string, extra: Record<string, unknown> = {}):
     signalAt: value.signalAt, quitSentAt: value.quitSentAt, quitConfirmedAt: value.quitConfirmedAt,
     ...value.search?.requestTiming(), at: Date.now(), ...extra });
 }
-function cancel(): void {
+/** stopSearch — отмена решением контент-скрипта (см. DirectSearch.stop); уход со страницы — без. */
+function cancel(stopSearch = false): void {
   const old = run;
   run = null;
   if (!old) return;
-  old.fetch?.abort(); old.search?.dispose(); old.resume?.cancel();
+  old.fetch?.abort();
+  if (stopSearch) old.search?.stop(); else old.search?.dispose();
+  old.resume?.cancel();
   for (const timer of old.timers) clearTimeout(timer);
   for (const abort of [...old.authorizations]) abort();
   old.timers.clear(); old.authorizations.clear();
@@ -105,6 +108,13 @@ async function prepare(value: Run): Promise<void> {
     if (!status.ok || !current(value)) throw new Error("unavailable");
     const state: unknown = await status.json();
     if (!current(value)) return;
+    // Как страница поиска сайта (checkIfUserInSearch): сокет поиска уже
+    // подключён — значит, ищет другая вкладка; второе соединение на тот же
+    // аккаунт не открываем (поведение сервера на нём не доказано).
+    if (state && typeof state === "object" && (state as { connected?: unknown }).connected === true) {
+      report(value, "existing-search");
+      return;
+    }
     const config = applySearchAvailability(bootstrap, state);
     if (!config) { report(value, "unavailable"); return; }
     value.config = config;
@@ -191,7 +201,7 @@ function resume(value: Run, queued: boolean): void {
 }
 function handleCommand(command: Command): void {
   if (!command || !Number.isSafeInteger(command.epoch) || command.epoch < lastEpoch) return;
-  if (command.op === "cancel") { lastEpoch = command.epoch; cancel(); return; }
+  if (command.op === "cancel") { lastEpoch = command.epoch; cancel(true); return; }
   if (command.op === "prepare" || command.op === "resume") {
     if (run?.epoch === command.epoch) return;
     cancel(); lastEpoch = command.epoch;
@@ -214,38 +224,50 @@ function handleCommand(command: Command): void {
     const found = value.search?.foundGame();
     if (!found || !value.config || value.entered) return;
     value.entered = true;
-    // Как у сайта (on_game_found): вход в найденную игру — через случайные
-    // 0–10 с, чтобы весь стол не ломился на сервер в один миг. Отменяется
-    // вместе с попыткой (later → таймеры run).
-    const config = value.config;
-    later(value, () => { const form = gameForm(found, config); document.body.appendChild(form); form.submit(); },
-      Math.round(ENTER_SPREAD_MS * Math.random()));
+    // Сразу, БЕЗ случайной паузы сайта (on_game_found ждёт 0–10 с): здесь
+    // вход соревнуется с собственной навигацией комнаты (уход через 2 с по
+    // gameOver) и с отменой попытки по фону/вводу — пауза теряла бы найденную
+    // игру молча, а стол ждал бы игрока (ревью 09.11.2026). Разнос входов
+    // нужен сайту на его странице поиска; один ранний вход ему не мешает.
+    const form = gameForm(found, value.config); document.body.appendChild(form); form.submit();
   }
 }
 /** Привязать приватный порт: команды и ответы о разрешении. Экспорт — тестовый шов. */
 export function bindPort(next: PortLike): void {
   port = next;
   next.onmessage = (event: MessageEvent) => {
+    // port.dispatchEvent(new MessageEvent(…)) со страницы — не наш отправитель.
+    if (event.isTrusted === false) return;
     const data = event.data;
     if (data?.authority === true) { pendingAuthority.get(data.id)?.(data); return; }
     try { handleCommand(data); } catch { /* unsupported command */ }
   };
 }
-const marker = "data-pn-direct-requeue-installed";
-// Одноразовый nonce из СВОЕГО тега: init с портом принимаем только с ним —
-// иначе скрипт сайта мог бы первым подсунуть свой порт.
-const nonce = (document.currentScript as HTMLScriptElement | null)?.dataset.pnNonce ?? "";
-// Каждый экземпляр (после перезагрузки расширения скрипт ставится заново)
-// гасит СВОЮ попытку на уходе со страницы; метка — для smoke-проверки бандла.
-document.documentElement.setAttribute(marker, "1");
-window.addEventListener("pagehide", cancel);
-if (nonce) {
+/**
+ * Ждать init с портом от контент-скрипта: только с nonce своего тега и
+ * только один раз. Экспорт — тестовый шов (в тестах нет currentScript).
+ */
+export function listenForInit(expected: string): () => void {
   const onInit = (event: MessageEvent) => {
-    if (event.source !== window || event.data?.source !== "pn-direct-requeue-init" || event.data.nonce !== nonce) return;
+    if (event.source !== window || event.data?.source !== "pn-direct-requeue-init" || event.data.nonce !== expected) return;
     const received = event.ports?.[0];
     if (!received) return;
+    event.stopImmediatePropagation();
     window.removeEventListener("message", onInit);
     bindPort(received);
   };
   window.addEventListener("message", onInit);
+  return () => window.removeEventListener("message", onInit);
 }
+const marker = "data-pn-direct-requeue-installed";
+// Одноразовый nonce из СВОЕГО тега: init с портом принимаем только с ним —
+// иначе скрипт сайта мог бы первым подсунуть свой порт. Атрибут снимаем
+// сразу: дольше в DOM ему лежать незачем.
+const ownScript = document.currentScript as HTMLScriptElement | null;
+const nonce = ownScript?.dataset.pnNonce ?? "";
+if (ownScript) delete ownScript.dataset.pnNonce;
+// Каждый экземпляр (после перезагрузки расширения скрипт ставится заново)
+// гасит СВОЮ попытку на уходе со страницы; метка — для smoke-проверки бандла.
+document.documentElement.setAttribute(marker, "1");
+window.addEventListener("pagehide", () => cancel());
+if (nonce) listenForInit(nonce);

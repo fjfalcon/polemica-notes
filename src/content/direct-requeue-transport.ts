@@ -8,12 +8,18 @@ type Owner = "queue" | "postgame";
 /** One PAGE connection and monotonically increasing epoch for both features.
  * A feature may cancel only its own work; queue cleanup must not kill postgame.
  *
- * Канал с миром страницы — ПРИВАТНЫЙ MessageChannel (ревью 09.11.2026): через
- * window любой скрипт сайта, включая сторонние SDK, мог прислать команду
- * «выйти и встать в поиск» и сам ответить «разрешено» вместо этого
- * контент-скрипта. Порт уходит странице один раз при установке скрипта с
- * одноразовым nonce из его тега; дальше команды и ответы о разрешении идут
- * только через порт, подделать их со страницы нельзя.
+ * Канал с миром страницы — MessageChannel (ревью 09.11.2026): через window
+ * любой скрипт сайта, включая сторонние SDK, мог прислать команду «выйти и
+ * встать в поиск» и сам ответить «разрешено» вместо этого контент-скрипта.
+ * Порт уходит странице один раз при установке скрипта с одноразовым nonce
+ * из его тега; дальше команды и ответы о разрешении идут только через порт,
+ * синтетические события порта (dispatchEvent, isTrusted=false) отбрасываются.
+ *
+ * ЧЕСТНАЯ ГРАНИЦА: это защита от подделок через window и от случайных
+ * совпадений, а не от скрипта страницы, который целенаправленно атакует
+ * расширение (он видит рукопожатие и может патчить API мира страницы). Такой
+ * скрипт и без нас имеет ключ сессии в DOM — новых возможностей канал ему не
+ * даёт.
  */
 export function setupDirectRequeue(): void {
   let owner: Owner | null = null;
@@ -41,7 +47,10 @@ export function setupDirectRequeue(): void {
       script.onload = () => {
         pagePort?.close();
         pagePort = channel.port1;
-        pagePort.onmessage = (event: MessageEvent) => onReport(event.data);
+        pagePort.onmessage = (event: MessageEvent) => {
+          if (event.isTrusted === false) return;
+          onReport(event.data);
+        };
         window.postMessage({ source: "pn-direct-requeue-init", nonce }, location.origin, [channel.port2]);
         finish(true);
       };

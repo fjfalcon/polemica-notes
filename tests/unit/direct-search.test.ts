@@ -236,3 +236,20 @@ describe("application membership poll", () => {
     expect(socket.disconnect).toHaveBeenCalledTimes(1); expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+test("готовое соединение без запуска живёт не дольше READY_TTL_MS", async () => {
+  const { DirectSearch, READY_TTL_MS } = await import("@content/page/direct-search");
+  vi.useFakeTimers();
+  try {
+    const handlers = new Map<string, (v: unknown) => void>();
+    const sock = { connected: true, emit: vi.fn(), on: (n: string, h: (v: unknown) => void) => handlers.set(n, h), removeListener: vi.fn(), disconnect: vi.fn() };
+    const states: string[] = [];
+    const search = new DirectSearch({ endpoint: "https://x.polemicagame.com/search", request: { gameMode: "league", role: "player", userId: 1, authKey: "k", censorship: ["standard"] } }, () => sock, s => states.push(s));
+    search.prepare();
+    handlers.get("session_initialized")!(null);
+    expect(search.ready()).toBe(true);
+    vi.advanceTimersByTime(READY_TTL_MS);
+    expect(states).toEqual(["ready", "unavailable"]);
+    expect(sock.disconnect).toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});

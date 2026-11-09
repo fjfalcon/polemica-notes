@@ -1273,9 +1273,14 @@ describe("postgame: prepared search after a finished match", () => {
     expect(port.start).toHaveBeenCalledTimes(1);
   });
 
-  test.each(["viewer", "eliminated", "manual confirmation", "unknown identity"])(
+  test.each(["viewer", "viewer on the finished screen", "eliminated", "manual confirmation", "unknown identity"])(
     "%s keeps the existing handoff and never warms or starts fast search", scenario => {
       if (scenario === "viewer") history.replaceState(null, "", `/game?role=viewer&game_id=${++nextGame}`);
+      else if (scenario === "viewer on the finished screen") {
+        // Зритель досмотрел чужой матч: свой поиск может идти в другой вкладке.
+        history.replaceState(null, "", `/game?role=viewer&game_id=${++nextGame}`);
+        endedScreen();
+      }
       else if (scenario === "eliminated") { playerTile(true, "state-killed"); runningStage(); }
       else endedScreen();
       const settings = { ...ctx.settings, postgame_skip_confirm_enabled: scenario !== "manual confirmation" } as Settings;

@@ -415,10 +415,16 @@ export function setDirectPostgamePort(port: DirectPostgamePort | null): void {
   if (settings) tick();
 }
 
-/** Require an actual game id, and reject disagreement during a room change. */
+/**
+ * Require an actual game id, and reject disagreement during a room change.
+ * Зритель — не игрок этого матча: выходить ему не из чего, и готовить ему
+ * поисковое соединение на чужом экране итога незачем (ревью 09.11.2026,
+ * docs/postgame-direct: «Viewer… retain the existing page flow»).
+ */
 function finishedGameIdentity(): string | null {
   if (!settings || settings.postgame_requeue_enabled === false ||
-      settings.postgame_skip_confirm_enabled === false || !canLeaveRoom() || !matchFinishedVisible()) return null;
+      settings.postgame_skip_confirm_enabled === false || !canLeaveRoom() || !matchFinishedVisible() ||
+      isViewerMode()) return null;
   const ids = [
     new URLSearchParams(location.search).get("game_id"),
     location.pathname.match(/^\/game\/(\d+)(?:\/|$)/)?.[1],

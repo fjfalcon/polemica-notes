@@ -115,7 +115,7 @@ afterEach(() => {
 
 describe("сигнал сервера on_stop_game", () => {
   test("сигнал роспуска сохраняется в мосте до навигации", () => {
-    pregameWithCountdown(true, "00:05");
+    pregameWithCountdown(true, "00:02");
     queueRequeueFeature.enable(ctx);
     const stoppedAt = Date.now();
     roomEvent("on_stop_game");
@@ -209,13 +209,24 @@ describe("сигнал сервера on_stop_game", () => {
     expect(assignSpy).toHaveBeenCalledWith("/game-search");
   });
 
-  test("сигнал начала отсчёта разрешает on_stop_game, даже если DOM-тик не успел увидеть таймер", () => {
+  test("одни сигналы зонда без отсчёта в DOM никого не уводят (их подделает любой скрипт страницы)", () => {
     queueRequeueFeature.enable(ctx);
     pregameNoCountdown();
     domSubscriber?.();
     roomEvent("on_game_disbandment");
     roomEvent("on_stop_game");
-    expect(assignSpy).toHaveBeenCalledWith("/game-search");
+    expect(assignSpy).not.toHaveBeenCalled();
+  });
+
+  test("подделанный on_stop_game посреди отсчёта не уводит и не шлёт поиск", () => {
+    const start = vi.fn(() => true);
+    setDirectRequeuePort({ prepare: vi.fn(), cancel: vi.fn(), start });
+    pregameWithCountdown(true, "00:20");
+    queueRequeueFeature.enable(ctx);
+    roomEvent("on_game_disbandment");
+    roomEvent("on_stop_game");
+    expect(start).not.toHaveBeenCalled();
+    expect(assignSpy).not.toHaveBeenCalled();
   });
 
   test("один сигнал начала отсчёта без таймера НЕ запускает грейс-уход", () => {
@@ -354,57 +365,67 @@ describe("предзагрузка страницы поиска (speculation ru
   });
 });
 
-test("первый мост после отсрочки всё равно помнит более ранний сигнал", () => {
-  pregameNoCountdown();
+test("мост после отсрочки ввода помнит время сигнала сервера", () => {
+  pregameWithCountdown(true, "00:01");
   queueRequeueFeature.enable(ctx);
-  expect(sessionStorage.getItem(PENDING_KEY)).toBeNull();
-  roomEvent("on_game_disbandment");
   noteTrustedInput();
   const stoppedAt = Date.now();
   roomEvent("on_stop_game");
   vi.advanceTimersByTime(2100);
   const mark = JSON.parse(sessionStorage.getItem(PENDING_KEY)!);
   expect(mark.roomStoppedAt).toBe(stoppedAt);
-  expect(mark.issuedAt).toBeGreaterThan(stoppedAt);
 });
 
 describe("прямой запрос из комнаты",()=>{
   test("подготовленный сокет запускается по роспуску, переход только после ACK",()=>{
     const start=vi.fn(()=>true);setDirectRequeuePort({prepare:vi.fn(),cancel:vi.fn(),start});
-    pregameWithCountdown(true,"00:05");queueRequeueFeature.enable(ctx);
+    pregameWithCountdown(true,"00:02");queueRequeueFeature.enable(ctx);
     const at=Date.now();roomEvent("on_stop_game");expect(start).toHaveBeenCalledExactlyOnceWith(at);expect(assignSpy).not.toHaveBeenCalled();
     vi.advanceTimersByTime(40);noteDirectRequeueResult("queued",at,at,Date.now());vi.advanceTimersByTime(50);expect(assignSpy).toHaveBeenCalledExactlyOnceWith("/game-search");
     expect(JSON.parse(sessionStorage.getItem("pn_direct_requeue_handoff")!)).toEqual({ signalAt: at, queued: true });
   });
   test("DOM-стадия после запроса отменяет прямой путь до позднего ACK",()=>{
     const cancel=vi.fn();setDirectRequeuePort({prepare:vi.fn(),cancel,start:()=>true});
-    pregameWithCountdown(true,"00:05");queueRequeueFeature.enable(ctx);const at=Date.now();roomEvent("on_stop_game");
+    pregameWithCountdown(true,"00:02");queueRequeueFeature.enable(ctx);const at=Date.now();roomEvent("on_stop_game");
     matchRunning();domSubscriber?.();noteDirectRequeueResult("queued",at,at,Date.now());expect(cancel).toHaveBeenCalled();expect(assignSpy).not.toHaveBeenCalled();
   });
   test("живой ввод отменяет retries и уступает игроку",()=>{
     const cancel=vi.fn();setDirectRequeuePort({prepare:vi.fn(),cancel,start:()=>true});
-    pregameWithCountdown(true,"00:05");queueRequeueFeature.enable(ctx);const at=Date.now();roomEvent("on_stop_game");
+    pregameWithCountdown(true,"00:02");queueRequeueFeature.enable(ctx);const at=Date.now();roomEvent("on_stop_game");
     noteTrustedInput();noteDirectRequeueResult("queued",at,at,Date.now());expect(cancel).toHaveBeenCalled();expect(assignSpy).not.toHaveBeenCalled();
   });
 });
 
 test("скрытие после прямого запроса отменяет retries и позднюю навигацию",()=>{
   const cancel=vi.fn();setDirectRequeuePort({prepare:vi.fn(),cancel,start:()=>true});
-  pregameWithCountdown(true,"00:05");queueRequeueFeature.enable(ctx);const at=Date.now();roomEvent("on_stop_game");
+  pregameWithCountdown(true,"00:02");queueRequeueFeature.enable(ctx);const at=Date.now();roomEvent("on_stop_game");
   setHidden(true);document.dispatchEvent(new Event("visibilitychange"));noteDirectRequeueResult("queued",at,at,Date.now());
   expect(cancel).toHaveBeenCalled();expect(assignSpy).not.toHaveBeenCalled();
 });
 
 test("ACK до DOM-тика новой стадии не оставляет handoff-маркер",()=>{
-  setDirectRequeuePort({prepare:vi.fn(),cancel:vi.fn(),start:()=>true});pregameWithCountdown(true,"00:05");queueRequeueFeature.enable(ctx);
+  setDirectRequeuePort({prepare:vi.fn(),cancel:vi.fn(),start:()=>true});pregameWithCountdown(true,"00:02");queueRequeueFeature.enable(ctx);
   const at=Date.now();roomEvent("on_stop_game");matchRunning();noteDirectRequeueResult("queued",at,at,Date.now());
   expect(sessionStorage.getItem("pn_direct_requeue_handoff")).toBeNull();expect(assignSpy).not.toHaveBeenCalled();
 });
 
 test("ACK и немедленное game-found передают управление назначенной игре",()=>{
   const enterGame=vi.fn(()=>true);setDirectRequeuePort({prepare:vi.fn(),cancel:vi.fn(),start:()=>true,enterGame});
-  pregameWithCountdown(true,"00:05");queueRequeueFeature.enable(ctx);const at=Date.now();roomEvent("on_stop_game");
+  pregameWithCountdown(true,"00:02");queueRequeueFeature.enable(ctx);const at=Date.now();roomEvent("on_stop_game");
   noteDirectRequeueResult("queued",at,at,at+40);expect(assignSpy).not.toHaveBeenCalled();
   noteDirectRequeueResult("found",at,at,at+41);expect(enterGame).toHaveBeenCalledTimes(1);vi.advanceTimersByTime(100);
   expect(assignSpy).not.toHaveBeenCalled();
+});
+
+test("страница молчит после прямого запроса — через 10 с штатное восстановление, а не вечное ожидание", () => {
+  setDirectRequeuePort({ prepare: vi.fn(), cancel: vi.fn(), start: () => true, resume: vi.fn() });
+  pregameWithCountdown(true, "00:02");
+  queueRequeueFeature.enable(ctx);
+  roomEvent("on_stop_game");
+  expect(assignSpy).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(9_000);
+  expect(assignSpy).not.toHaveBeenCalled();
+  vi.advanceTimersByTime(2_000);
+  expect(assignSpy).toHaveBeenCalledWith("/game-search");
+  expect(JSON.parse(sessionStorage.getItem("pn_direct_requeue_handoff")!)).toMatchObject({ queued: false });
 });

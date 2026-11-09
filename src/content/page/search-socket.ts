@@ -30,10 +30,14 @@ export interface SearchSocketOptions {
   WebSocketImpl?: { new (url: string): WebSocket };
 }
 
-/** Адрес WebSocket и пространство имён — как их получает socket.io-client 2.x из endpoint. */
+/**
+ * Адрес WebSocket и пространство имён — как их получает socket.io-client 2.x
+ * из endpoint. Query — только из параметров (у 2.x opts.query вытесняет
+ * query адреса, не сливается с ним).
+ */
 export function socketTarget(endpoint: string, query: Record<string, string | number>): { url: string; nsp: string; nspQuery: string } {
   const source = new URL(endpoint);
-  const params = new URLSearchParams(source.search);
+  const params = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) params.set(k, String(v));
   const nspQuery = params.toString();
   params.set("EIO", "3");
@@ -103,6 +107,7 @@ export function connectSearchSocket(endpoint: string, options: SearchSocketOptio
     closed = true;
     socket.connected = false;
     clearTimers();
+    if (ws) ws.onmessage = ws.onerror = ws.onclose = null;
     try {
       ws?.close();
     } catch {
@@ -138,7 +143,20 @@ export function connectSearchSocket(endpoint: string, options: SearchSocketOptio
     },
     disconnect() {
       if (closed) return socket;
-      if (socket.connected) send(`41${prefix}${prefix ? "," : ""}`);
+      if (!socket.connected) {
+        // Как 2.x: до подключения отключение молчит — событий нет.
+        closed = true;
+        clearTimers();
+        if (ws) ws.onmessage = ws.onerror = ws.onclose = null;
+        try {
+          ws?.close();
+        } catch {
+          /* уже закрыт */
+        }
+        ws = null;
+        return socket;
+      }
+      send(`41${prefix}${prefix ? "," : ""}`);
       shutdown("disconnect", "io client disconnect");
       return socket;
     },

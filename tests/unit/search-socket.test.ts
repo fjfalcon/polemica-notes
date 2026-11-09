@@ -163,4 +163,66 @@ describe("жизнь соединения", () => {
     ws.recv('42/search,["ev",2]');
     expect(got).toEqual([1]);
   });
+
+  test("обрыв транспорта: error/close/пакет 1 после подключения — один disconnect", () => {
+    for (const cut of ["error", "close", "packet"] as const) {
+      const { socket, ws } = connected();
+      const ends: string[] = [];
+      socket.on("disconnect", (r) => ends.push(r));
+      if (cut === "error") ws.onerror?.();
+      else if (cut === "close") ws.onclose?.();
+      else ws.recv("1");
+      expect(ends, cut).toHaveLength(1);
+      expect(socket.connected).toBe(false);
+    }
+  });
+
+  test("обрыв до подключения — connect_error, а не disconnect", () => {
+    const socket = connectSearchSocket(ENDPOINT, { query: QUERY, WebSocketImpl: Impl });
+    const seen: string[] = [];
+    for (const ev of ["connect_error", "disconnect"]) socket.on(ev, () => seen.push(ev));
+    FakeWs.last!.onclose?.();
+    expect(seen).toEqual(["connect_error"]);
+  });
+
+  test("конструктор WebSocket бросил — connect_error асинхронно", () => {
+    const Broken = class { constructor() { throw new Error("blocked"); } } as unknown as { new (url: string): WebSocket };
+    const socket = connectSearchSocket(ENDPOINT, { query: QUERY, WebSocketImpl: Broken });
+    const seen: string[] = [];
+    socket.on("connect_error", () => seen.push("err"));
+    expect(seen).toEqual([]);
+    vi.advanceTimersByTime(0);
+    expect(seen).toEqual(["err"]);
+  });
+
+  test("события пространства имён до его подключения не доставляются", () => {
+    const socket = connectSearchSocket(ENDPOINT, { query: QUERY, WebSocketImpl: Impl });
+    const ws = FakeWs.last!;
+    const got: unknown[] = [];
+    socket.on("session_initialized", (v) => got.push(v));
+    ws.open();
+    ws.recv(`0${JSON.stringify({ sid: "s", pingInterval: 1000, pingTimeout: 500 })}`);
+    ws.recv('42/search,["session_initialized",1]');
+    expect(got).toEqual([]);
+  });
+
+  test("ошибка пространства имён после подключения — событие error, соединение живо", () => {
+    const { socket, ws } = connected();
+    const errors: unknown[] = [];
+    socket.on("error", (e) => errors.push(e));
+    ws.recv('44/search,"boom"');
+    expect(errors).toEqual(["boom"]);
+    expect(socket.connected).toBe(true);
+  });
+
+  test("disconnect() до подключения молчит, как 2.x", () => {
+    const socket = connectSearchSocket(ENDPOINT, { query: QUERY, WebSocketImpl: Impl });
+    const seen: string[] = [];
+    for (const ev of ["disconnect", "connect_error", "connect_timeout"]) socket.on(ev, () => seen.push(ev));
+    FakeWs.last!.open();
+    socket.disconnect();
+    vi.advanceTimersByTime(30_000);
+    expect(seen).toEqual([]);
+    expect(FakeWs.last!.closed).toBe(true);
+  });
 });
