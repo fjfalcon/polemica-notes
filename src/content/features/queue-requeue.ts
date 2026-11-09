@@ -144,6 +144,7 @@ export interface DirectRequeuePort {
   start(signalAt: number): boolean;
   resume?(signalAt: number, queued: boolean): void;
   enterGame?(): boolean;
+  handoff?(): void;
 }
 let directPort: DirectRequeuePort | null = null;
 export function setDirectRequeuePort(port: DirectRequeuePort | null): void { directPort = port; }
@@ -213,9 +214,12 @@ function finishDirectRequeue(): void {
   if (!directPending || !directQueued || !isGameRoomPage() || gameStarted || matchIsRunning() || !mayActNow(Date.now())) return;
   if (Date.now() < directHandoffAt) { scheduleDecision(directHandoffAt - Date.now()); return; }
   if (directGameFound && directPort?.enterGame?.()) {
+    directPort.handoff?.();
     try { sessionStorage.removeItem(DIRECT_HANDOFF_KEY); } catch { /* navigation still succeeds */ }
     directPending = false; return;
   }
+  // Передача ДО навигации: отмена в её окне не снимет подтверждённую очередь.
+  directPort?.handoff?.();
   directPending = false;
   location.assign("/game-search");
 }

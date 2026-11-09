@@ -16,13 +16,13 @@ export interface SearchRequest {
   censorship: string[];
 }
 export interface PreparedConfig { endpoint: string; request: SearchRequest }
-export type SearchOutcome = "ready" | "sent" | "queued" | "refused" | "unavailable" | "existing-search" | "found";
+export type SearchOutcome = "ready" | "sent" | "queued" | "refused" | "unavailable" | "existing-search" | "found" | "expired";
 export interface FoundGame { gameId: number; dynamicFilling: boolean | string | number }
 /** Сколько живёт подготовленное, но не запущенное соединение. */
 export const READY_TTL_MS = 120_000;
 export class DirectSearch {
   private socket: SearchSocket | null = null;
-  private phase: "idle" | "preparing" | "ready" | "sent" | "queued" | "found" | "closed" = "idle";
+  private phase: "idle" | "preparing" | "ready" | "sent" | "queued" | "found" | "stopping" | "closed" = "idle";
   private attempts = 0;
   private firstSentAt = 0;
   private lastSentAt = 0;
@@ -51,16 +51,19 @@ export class DirectSearch {
         this.phase = "ready";
         // Потолок жизни готового соединения: осиротевший или забытый
         // экземпляр не держит лишнее соединение аккаунта (ревью 09.11.2026).
-        this.deadline = setTimeout(() => this.abort("unavailable"), READY_TTL_MS);
+        this.deadline = setTimeout(() => this.abort("expired"), READY_TTL_MS);
         this.result("ready");
       });
       for (const name of ["disconnect", "connect_error", "connect_timeout", "connection_refused"])
         this.listen(name, () => {
-          if (this.phase === "preparing" || this.phase === "ready") this.abort("unavailable");
+          if (this.phase === "stopping") this.dispose();
+          else if (this.phase === "preparing" || this.phase === "ready") this.abort("unavailable");
           else if (this.phase === "sent") this.abort("refused");
         });
       this.listen("on_start_game_search", value => this.onStart(value));
       this.listen("on_game_found", value => {
+        // Отменённый нами поиск нашёл группу: игрок ушёл — снимаем, не входим.
+        if (this.phase === "stopping") { this.emitStop(); this.dispose(); return; }
         if (this.phase !== "sent" && this.phase !== "queued") return;
         const id = typeof value?.gameId === "string" ? Number(value.gameId) : value?.gameId;
         if (!Number.isSafeInteger(id) || id <= 0) { this.abort("refused"); return; }
@@ -89,6 +92,14 @@ export class DirectSearch {
   }
   foundGame(): FoundGame | null { return this.phase === "found" ? this.game : null; }
   private onStart(value: { success?: boolean; illegalState?: string } | null): void {
+    if (this.phase === "stopping") {
+      // Снимаем ТОЛЬКО свой поиск: отказ (in_game, game_search…) значит, что
+      // нашего поиска нет, а stop уровня аккаунта погасил бы чужой — из
+      // другой вкладки (контрольный раунд ревью 09.11.2026).
+      if (value?.success === true) this.emitStop();
+      this.dispose();
+      return;
+    }
     if (this.phase !== "sent") return;
     if (value?.success === true) {
       this.clearTimers(); this.phase = "queued"; this.result("queued"); return;
@@ -143,7 +154,7 @@ export class DirectSearch {
     if (this.retry) clearTimeout(this.retry);
     this.deadline = this.retry = null;
   }
-  private abort(state: "refused" | "unavailable" | "existing-search"): void {
+  private abort(state: "refused" | "unavailable" | "existing-search" | "expired"): void {
     if (this.phase === "closed") return;
     this.dispose(); this.result(state);
   }
@@ -157,10 +168,23 @@ export class DirectSearch {
    * (pagehide) зовётся dispose, а не stop: там поиск должен выжить.
    */
   stop(): void {
-    if ((this.phase === "sent" || this.phase === "queued") && this.socket?.connected) {
-      try { this.socket.emit("stop_game_search"); } catch { /* закрывается всё равно */ }
+    if (this.phase === "queued" && this.socket?.connected) {
+      this.emitStop();
+      this.dispose();
+      return;
+    }
+    if (this.phase === "sent" && this.socket?.connected) {
+      // Ответ на запрос ещё не пришёл: ждём его (не дольше 8 с) и снимаем
+      // поиск, только если он наш (см. onStart).
+      this.clearTimers(); this.clearStatePoll();
+      this.phase = "stopping";
+      this.deadline = setTimeout(() => this.dispose(), 8000);
+      return;
     }
     this.dispose();
+  }
+  private emitStop(): void {
+    try { this.socket?.emit("stop_game_search"); } catch { /* закрывается всё равно */ }
   }
   dispose(): void {
     this.phase = "closed"; this.clearTimers(); this.clearStatePoll();

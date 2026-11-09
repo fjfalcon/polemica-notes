@@ -30,6 +30,8 @@ interface Run {
   config?: SearchBootstrap;
   fetch?: AbortController;
   resume?: ResumeSearch;
+  /** Передано странице поиска/игре: дальше отмена только закрывает, поиск не снимает. */
+  handedOff?: boolean;
   timers: Set<ReturnType<typeof setTimeout>>;
   authorizations: Set<() => void>;
 }
@@ -65,7 +67,7 @@ function cancel(stopSearch = false): void {
   run = null;
   if (!old) return;
   old.fetch?.abort();
-  if (stopSearch) old.search?.stop(); else old.search?.dispose();
+  if (stopSearch && !old.handedOff) old.search?.stop(); else old.search?.dispose();
   old.resume?.cancel();
   for (const timer of old.timers) clearTimeout(timer);
   for (const abort of [...old.authorizations]) abort();
@@ -220,10 +222,13 @@ function handleCommand(command: Command): void {
     if (value.exitStarted) return;
     value.signalAt = command.signalAt;
     if (!Number.isFinite(command.signalAt) || command.signalAt <= 0 || command.signalAt > Date.now() || !value.search?.start()) report(value, "unavailable");
+  } else if (command.op === "handoff") {
+    value.handedOff = true;
   } else if (command.op === "enter") {
     const found = value.search?.foundGame();
     if (!found || !value.config || value.entered) return;
     value.entered = true;
+    value.handedOff = true;
     // Сразу, БЕЗ случайной паузы сайта (on_game_found ждёт 0–10 с): здесь
     // вход соревнуется с собственной навигацией комнаты (уход через 2 с по
     // gameOver) и с отменой попытки по фону/вводу — пауза теряла бы найденную

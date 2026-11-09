@@ -3,16 +3,17 @@
 import { afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   queuePort: vi.fn(), postgamePort: vi.fn(), queueResult: vi.fn(), postgameResult: vi.fn(),
-  queueAuth: vi.fn(), postgameAuth: vi.fn(), queueResume: vi.fn(), postgameResume: vi.fn(),
+  queueAuth: vi.fn(), postgameAuth: vi.fn(), queueResume: vi.fn(), postgameResume: vi.fn(), postgameExpired: vi.fn(),
 }));
 vi.mock("@core/env", () => ({ browser: { runtime: { getURL: (path: string) => `chrome-extension://test/${path}` } } }));
 vi.mock("@core/log", () => ({ log: { info: vi.fn(), warn: vi.fn() } }));
 vi.mock("@content/features/queue-requeue", () => ({ setDirectRequeuePort: mocks.queuePort,
   noteDirectRequeueResult: mocks.queueResult, canResumeDirectSearch: mocks.queueAuth, directResumeFinished: mocks.queueResume }));
 vi.mock("@content/features/postgame-search", () => ({ setDirectPostgamePort: mocks.postgamePort,
-  notePostgameDirectResult: mocks.postgameResult, canPostgameDirectAct: mocks.postgameAuth, postgameDirectResumeFinished: mocks.postgameResume }));
+  notePostgameDirectResult: mocks.postgameResult, canPostgameDirectAct: mocks.postgameAuth, postgameDirectResumeFinished: mocks.postgameResume,
+  notePostgameWarmExpired: mocks.postgameExpired }));
 import { setupDirectRequeue } from "@content/direct-requeue-transport";
-interface Port { prepare(): void; cancel(): void; start(at: number): boolean; resume(at: number, queued: boolean): void; enterGame(): boolean }
+interface Port { prepare(): void; cancel(): void; start(at: number): boolean; resume(at: number, queued: boolean): void; enterGame(): boolean; handoff(): void }
 let queue: Port, postgame: Port;
 let commands: { op: string; epoch: number; signalAt: number }[] = [];
 /** Ответы о разрешении, ушедшие странице через приватный порт. */
@@ -109,4 +110,16 @@ test("канал приватный: порт уходит странице од
     data: { source: "pn-direct-requeue", epoch: commands.at(-1)!.epoch, state: "found", signalAt: 1, at: 1 } }));
   expect(postgame.enterGame(), "found пришёл не через порт").toBe(false);
   report("found"); expect(postgame.enterGame()).toBe(true);
+});
+
+test("handoff освобождает владельца: последующая отмена команду не шлёт", async () => {
+  await prepare(postgame); expect(postgame.start(123)).toBe(true); report("queued");
+  postgame.handoff(); expect(commands.at(-1)?.op).toBe("handoff");
+  const count = commands.length; postgame.cancel(); expect(commands).toHaveLength(count);
+});
+test("истёкшее до клика соединение освобождает владельца и зовёт переподготовку postgame", async () => {
+  await prepare(postgame); report("expired");
+  expect(mocks.postgameExpired).toHaveBeenCalledOnce();
+  expect(postgame.start(123), "готовности больше нет").toBe(false);
+  await prepare(postgame); expect(postgame.start(123)).toBe(true);
 });

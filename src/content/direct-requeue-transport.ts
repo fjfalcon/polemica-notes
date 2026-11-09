@@ -1,6 +1,6 @@
 import { browser } from "@core/env";
 import { setDirectRequeuePort, noteDirectRequeueResult, canResumeDirectSearch, directResumeFinished } from "./features/queue-requeue";
-import { setDirectPostgamePort, notePostgameDirectResult, canPostgameDirectAct, postgameDirectResumeFinished } from "./features/postgame-search";
+import { setDirectPostgamePort, notePostgameDirectResult, canPostgameDirectAct, postgameDirectResumeFinished, notePostgameWarmExpired } from "./features/postgame-search";
 import { log } from "@core/log";
 
 type Owner = "queue" | "postgame";
@@ -23,7 +23,7 @@ type Owner = "queue" | "postgame";
  */
 export function setupDirectRequeue(): void {
   let owner: Owner | null = null;
-  let ready = false, requested = false, found = false, epoch = 0;
+  let ready = false, requested = false, found = false, started = false, epoch = 0;
   let installed: Promise<boolean> | null = null;
   let loadFailures = 0, lastLoadFailureAt = 0;
   let pagePort: MessagePort | null = null;
@@ -66,7 +66,7 @@ export function setupDirectRequeue(): void {
   const port = (scope: Owner) => ({
     prepare() {
       if (requested || loadFailures >= 3 || (loadFailures > 0 && Date.now() - lastLoadFailureAt < 1000)) return;
-      owner = scope; requested = true; ready = found = false;
+      owner = scope; requested = true; ready = found = started = false;
       const token = ++epoch;
       void ensure().then(ok => {
         if (token !== epoch || owner !== scope || !requested) return;
@@ -76,11 +76,21 @@ export function setupDirectRequeue(): void {
     },
     cancel() {
       if (owner !== scope) return;
-      requested = ready = found = false; owner = null; ++epoch; command("cancel");
+      requested = ready = found = started = false; owner = null; ++epoch; command("cancel");
     },
     start(signalAt: number) {
       if (owner !== scope || !ready || !requested) return false;
-      ready = false; command(scope === "postgame" ? "quit-start" : "start", signalAt); return true;
+      ready = false; started = true; command(scope === "postgame" ? "quit-start" : "start", signalAt); return true;
+    },
+    /**
+     * Передача на страницу поиска или в игру: страница помечает попытку, и
+     * последующая отмена (уход вкладки в фон в окне навигации) лишь закрывает
+     * соединение — подтверждённую очередь не снимает. Владелец освобождён.
+     */
+    handoff() {
+      if (owner !== scope) return;
+      command("handoff");
+      requested = ready = found = started = false; owner = null;
     },
     enterGame() {
       if (owner !== scope || !found || !requested) return false;
@@ -135,6 +145,14 @@ export function setupDirectRequeue(): void {
     if (data.state === "game") { finishResume(scope, "game", data.signalAt); return; }
     if (data.state === "ready") {
       if (requested) { ready = true; log.info(logger, "соединение поиска подготовлено; запрос ещё не отправлен"); }
+      return;
+    }
+    if (data.state === "expired" && !started) {
+      // Подготовленное соединение истекло по сроку жизни: освобождаем
+      // владельца, чтобы фича могла подготовить его заново.
+      requested = ready = found = false; owner = null;
+      log.info(logger, "подготовленное соединение поиска истекло — подготовим заново при необходимости");
+      if (scope === "postgame") notePostgameWarmExpired();
       return;
     }
     if (["unavailable", "existing-search", "refused", "quit-unknown", "deferred"].includes(data.state)) ready = false;

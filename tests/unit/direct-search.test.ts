@@ -249,7 +249,55 @@ test("готовое соединение без запуска живёт не 
     handlers.get("session_initialized")!(null);
     expect(search.ready()).toBe(true);
     vi.advanceTimersByTime(READY_TTL_MS);
-    expect(states).toEqual(["ready", "unavailable"]);
+    expect(states).toEqual(["ready", "expired"]);
     expect(sock.disconnect).toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
+});
+
+describe("stop(): снимаем только свой поиск", () => {
+  async function sentSearch() {
+    const { DirectSearch } = await import("@content/page/direct-search");
+    const handlers = new Map<string, (v: unknown) => void>();
+    const sock = { connected: true, emit: vi.fn(), on: (n: string, h: (v: unknown) => void) => handlers.set(n, h), removeListener: vi.fn(), disconnect: vi.fn() };
+    const search = new DirectSearch({ endpoint: "https://x.polemicagame.com/search", request: { gameMode: "league", role: "player", userId: 1, authKey: "k", censorship: ["standard"] } }, () => sock, () => {});
+    search.prepare(); handlers.get("session_initialized")!(null); search.start();
+    sock.emit.mockClear();
+    return { search, sock, handlers };
+  }
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test("запрос ушёл, ответа нет: ждём; success — stop и закрытие", async () => {
+    const { search, sock, handlers } = await sentSearch();
+    search.stop();
+    expect(sock.emit).not.toHaveBeenCalled();
+    expect(sock.disconnect).not.toHaveBeenCalled();
+    handlers.get("on_start_game_search")!({ success: true });
+    expect(sock.emit).toHaveBeenCalledExactlyOnceWith("stop_game_search");
+    expect(sock.disconnect).toHaveBeenCalled();
+  });
+
+  test("отказ сервера (поиск не наш) — stop НЕ шлём", async () => {
+    const { search, sock, handlers } = await sentSearch();
+    search.stop();
+    handlers.get("on_start_game_search")!({ success: false, illegalState: "game_search" });
+    expect(sock.emit).not.toHaveBeenCalled();
+    expect(sock.disconnect).toHaveBeenCalled();
+  });
+
+  test("ответа нет 8 с — просто закрываем", async () => {
+    const { search, sock } = await sentSearch();
+    search.stop();
+    vi.advanceTimersByTime(8000);
+    expect(sock.emit).not.toHaveBeenCalled();
+    expect(sock.disconnect).toHaveBeenCalled();
+  });
+
+  test("в очереди — stop сразу", async () => {
+    const { search, sock, handlers } = await sentSearch();
+    handlers.get("on_start_game_search")!({ success: true });
+    sock.emit.mockClear();
+    search.stop();
+    expect(sock.emit).toHaveBeenCalledExactlyOnceWith("stop_game_search");
+  });
 });

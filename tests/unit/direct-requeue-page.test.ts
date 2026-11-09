@@ -314,3 +314,11 @@ describe("отмена после отправленного запроса", ()
     expect(created.emit).not.toHaveBeenCalled();
   });
 });
+
+test("после передачи (handoff) отмена только закрывает — подтверждённую очередь не снимает", async () => {
+  command("prepare"); await vi.advanceTimersByTimeAsync(1); fire("session_initialized", null);
+  command("start"); fire("on_start_game_search", { success: true });
+  command("handoff"); epoch++; command("cancel");
+  expect(created.emit).not.toHaveBeenCalledWith("stop_game_search");
+  expect(created.disconnect).toHaveBeenCalled();
+});

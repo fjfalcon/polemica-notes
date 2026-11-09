@@ -379,6 +379,7 @@ export interface DirectPostgamePort {
   start(signalAt: number): boolean;
   resume(signalAt: number, queued: boolean): void;
   enterGame(): boolean;
+  handoff?(): void;
 }
 
 type PostgameDirectStage = "pending" | "quitting" | "search" | "queued";
@@ -532,10 +533,15 @@ function finishPostgameDirect(value: PostgameDirectRun): void {
     return;
   }
   if (value.found && postgameDirectPort?.enterGame()) {
+    postgameDirectPort.handoff?.();
+    directWarmIdentity = null;
     removeDirectMark(value.signalAt);
     postgameDirectRun = null;
     return;
   }
+  // Передача ДО навигации: отмена в её окне не снимет подтверждённую очередь.
+  postgameDirectPort?.handoff?.();
+  directWarmIdentity = null;
   postgameDirectRun = null;
   location.assign("/game-search");
 }
@@ -613,6 +619,20 @@ function tryPostgameDirectResume(): void {
     postgameDirectPort.resume(value.signalAt, value.queued);
   }
   scheduleDecision(value.signalAt + DIRECT_RESUME_TTL_MS - Date.now() + 50);
+}
+
+/** Переподготовок после истечения — одна на матч: молчаливой потере ускорения — нет, бесконечным — тоже нет. */
+let rewarmedIdentity: string | null = null;
+/** Транспорт: подготовленное соединение истекло, клика не было. */
+export function notePostgameWarmExpired(): void {
+  if (!directWarmIdentity || directWarmIdentity === rewarmedIdentity) {
+    log.info(SCOPE, "подготовленное соединение истекло; клик пойдёт обычным путём");
+    return;
+  }
+  rewarmedIdentity = directWarmIdentity;
+  directWarmIdentity = null;
+  log.info(SCOPE, "подготовленное соединение истекло — готовим заново");
+  scheduleDecision(0);
 }
 
 function syncPostgameDirectRoom(): void {

@@ -47,6 +47,7 @@ import {
   QUEUES_ID,
   postgameSearchFeature,
   setDirectPostgamePort,
+  notePostgameWarmExpired,
   canPostgameDirectAct,
   notePostgameDirectResult,
   postgameDirectResumeFinished,
@@ -1245,7 +1246,7 @@ describe("postgame: prepared search after a finished match", () => {
     })));
     port = {
       prepare: vi.fn(), cancel: vi.fn(), start: vi.fn(() => true),
-      resume: vi.fn(), enterGame: vi.fn(() => true),
+      resume: vi.fn(), enterGame: vi.fn(() => true), handoff: vi.fn(),
     };
     setDirectPostgamePort(port);
   });
@@ -1469,12 +1470,43 @@ describe("postgame: prepared search after a finished match", () => {
     result("found", signalAt);
     await vi.advanceTimersByTimeAsync(50);
     expect(port.enterGame).toHaveBeenCalledTimes(1);
+    expect(port.handoff).toHaveBeenCalledTimes(1);
     expect(mark()).toBeNull();
     result("queued", signalAt);
     domSubscriber?.();
     await vi.advanceTimersByTimeAsync(100);
     expect(port.enterGame).toHaveBeenCalledTimes(1);
     expect(port.resume).not.toHaveBeenCalled();
+  });
+
+  test("подтверждённая очередь: передача ДО навигации, уход в фон её не снимает", async () => {
+    const signalAt = prepareFinished();
+    button().click();
+    expect(await canPostgameDirectAct(signalAt, "quit")).toBe(true);
+    result("quit-confirmed", signalAt);
+    result("queued", signalAt);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(port.handoff).toHaveBeenCalledTimes(1);
+    vi.mocked(port.cancel).mockClear();
+    Object.defineProperty(document, "hidden", { configurable: true, value: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Object.defineProperty(document, "hidden", { configurable: true, value: false });
+    expect(port.cancel).not.toHaveBeenCalled();
+  });
+
+  test("истёкшее соединение на экране итога готовится заново — один раз за матч", async () => {
+    prepareFinished();
+    domSubscriber?.();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(port.prepare).toHaveBeenCalledTimes(1);
+    notePostgameWarmExpired();
+    await vi.advanceTimersByTimeAsync(10);
+    domSubscriber?.();
+    expect(port.prepare).toHaveBeenCalledTimes(2);
+    notePostgameWarmExpired();
+    await vi.advanceTimersByTimeAsync(10);
+    domSubscriber?.();
+    expect(port.prepare).toHaveBeenCalledTimes(2);
   });
 
   test("an unrelated result cannot advance or navigate the current finished game", async () => {
