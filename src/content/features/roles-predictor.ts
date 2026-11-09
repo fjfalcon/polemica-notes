@@ -8,14 +8,14 @@
  * чёрных на столе ровно три: если один чёрный уже открыт, у остальных
  * вероятность падает, и панель это пересчитывает.
  *
- * Что она делает осторожно: добавляет позиционные и персональные поправки из
- * встроенного артефакта src/shared/roles-model.json — но ТОЛЬКО если проверка
- * на отложенных данных показала, что они реально улучшают предсказание.
- * Иначе веса нулевые, и панель показывает чистые базовые доли, прямо об этом
- * сообщая. Придумывать преимущество, которого нет в данных, она не умеет.
+ * Что она делает осторожно: добавляет позиционные поправки (веса мест, равные
+ * для всех игроков) из встроенного артефакта src/shared/roles-model.json — но
+ * ТОЛЬКО если проверка на отложенных данных показала, что они реально
+ * улучшают предсказание. Иначе веса нулевые, и панель показывает чистые
+ * базовые доли, прямо об этом сообщая.
  *
- * Сеть: пока модель не использует личную историю (validation.go = false),
- * фича не делает НИ ОДНОГО запроса — работает только по DOM.
+ * Личной истории игроков панель НЕ использует и сеть не трогает вовсе —
+ * работает только по DOM (решение мейнтейнера 09.11.2026, см. roles-model).
  */
 import { onDomChange, onDomChangeImmediate } from "@core/dom";
 import { escapeHtml } from "@core/escape";
@@ -28,7 +28,6 @@ import { isPeeking } from "./auto-start";
 import {
   NEUTRAL_MODEL,
   predictBlack,
-  usesPersonalPrior,
   type RolesModel,
 } from "@core/roles-model";
 import type { Feature, FeatureContext } from "@core/feature";
@@ -188,7 +187,7 @@ function spread(
     for (const s of unknown) into.set(s.seat, 1);
     return;
   }
-  const inputs = unknown.map((s) => ({ seat: s.seat, personal: 0 }));
+  const inputs = unknown.map((s) => ({ seat: s.seat }));
   const p = useModel
     ? predictBlack(model, inputs, k)
     : predictBlack(NEUTRAL_MODEL, inputs, k);
@@ -451,14 +450,12 @@ function loadModel(): void {
     model = NEUTRAL_MODEL;
     return;
   }
-  const strength = raw.personal_prior_strength;
   model = {
     generated_at: String(raw.generated_at ?? ""),
     n_matches: Number(raw.n_matches ?? 0),
     period: pair(raw.period),
     seat_log_w: w.map((x: unknown) => Number(x) || 0),
     global_p: Number(raw.global_p ?? 0.3),
-    personal_prior_strength: typeof strength === "number" ? strength : null,
     validation: {
       go: v.go === true,
       auc_model: Number(v.auc_model ?? 0.5),
@@ -481,7 +478,7 @@ function loadModel(): void {
     model.n_matches,
     "matches, go =",
     model.validation.go,
-    usesPersonalPrior(model) ? "(personal prior active)" : "(base rates only)",
+    model.validation.go ? "(seat weights)" : "(base rates only)",
   );
 }
 
@@ -502,7 +499,6 @@ export function predictorDiag(): unknown {
     model: {
       matches: model.n_matches,
       go: model.validation.go,
-      personalPrior: usesPersonalPrior(model),
     },
     seatsFound: seats.length,
     myRole: a?.myRole ?? null,

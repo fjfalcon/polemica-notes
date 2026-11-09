@@ -18,7 +18,6 @@
     0.0
   ],
   "global_p": 0.3,
-  "personal_prior_strength": null,
   "validation": {
     "go": false,
     "auc_model": 0.505315192771607,

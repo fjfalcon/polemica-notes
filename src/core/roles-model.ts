@@ -77,12 +77,6 @@ export interface RolesModel {
   /** Лог-вес каждого из 10 мест (0 = места равноправны). */
   seat_log_w: number[];
   global_p: number;
-  /**
-   * Сила бета-приора для персонального сжатия (α+β). Infinity/null означает,
-   * что персонального сигнала в данных нет и личная история не используется —
-   * тогда расширение вообще не ходит за статистикой игроков.
-   */
-  personal_prior_strength: number | null;
   validation: ModelValidation;
   /** Краткие итоги проверок легенд — для честной шапки панели. */
   findings: { title: string; verdict: string }[];
@@ -95,7 +89,6 @@ export const NEUTRAL_MODEL: RolesModel = {
   period: ["", ""],
   seat_log_w: new Array(10).fill(0),
   global_p: 0.3,
-  personal_prior_strength: null,
   validation: {
     go: false,
     auc_model: 0.5,
@@ -108,36 +101,15 @@ export const NEUTRAL_MODEL: RolesModel = {
   findings: [],
 };
 
-/** Использует ли модель личную историю игрока (иначе запросы не нужны). */
-export function usesPersonalPrior(model: RolesModel): boolean {
-  const s = model.personal_prior_strength;
-  return model.validation.go && s !== null && Number.isFinite(s) && s > 0;
-}
-
-/**
- * Персональная поправка к лог-шансам по пожизненной статистике игрока,
- * сжатая эмпирико-байесовским приором. При слабой истории поправка → 0.
+/*
+ * Персональных поправок (по личной истории игроков) нет и не будет — решение
+ * мейнтейнера 09.11.2026: подсказывать роли КОНКРЕТНЫХ игроков в живой игре
+ * по их истории — вопрос честной игры. Панель считает только состав стола,
+ * раскрытые роли и (при подтверждённом сигнале) равные для всех веса мест.
  */
-export function personalLogOdds(
-  model: RolesModel,
-  blackGames: number,
-  totalGames: number,
-): number {
-  const strength = model.personal_prior_strength;
-  if (!usesPersonalPrior(model) || strength === null || totalGames <= 0) return 0;
-  const p = model.global_p;
-  const alpha = p * strength;
-  const beta = (1 - p) * strength;
-  const post = (blackGames + alpha) / (totalGames + alpha + beta);
-  const clamped = Math.min(Math.max(post, 1e-6), 1 - 1e-6);
-  return Math.log(clamped / (1 - clamped)) - Math.log(p / (1 - p));
-}
-
 export interface SeatInput {
   /** Номер места на столе, 1-based. */
   seat: number;
-  /** Персональная поправка к лог-шансам (0, если истории нет/не используется). */
-  personal?: number;
 }
 
 /**
@@ -149,8 +121,6 @@ export function predictBlack(
   seats: SeatInput[],
   kBlack: number,
 ): number[] {
-  const logW = seats.map(
-    (s) => (model.seat_log_w[s.seat - 1] ?? 0) + (s.personal ?? 0),
-  );
+  const logW = seats.map((s) => model.seat_log_w[s.seat - 1] ?? 0);
   return seatMarginals(logW, kBlack);
 }
