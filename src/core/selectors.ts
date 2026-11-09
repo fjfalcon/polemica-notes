@@ -23,6 +23,9 @@
 
 /** CSS-селекторы элементов сайта. */
 export const SITE = {
+  searchBootstrap: "game-search",
+  csrfParam: 'meta[name="csrf-param"]',
+  csrfToken: 'meta[name="csrf-token"]',
   // Игроки и их панели
   player: ".player",
   playerDesktop:
@@ -196,6 +199,8 @@ export const SITE = {
   playerActionLabel: ".player-action__content > span",
   // Роли (SVG-спрайты)
   roleUse: "use[href], use[xlink\\:href]",
+  /** Корень Vue-приложения страницы поиска (у него __vue__ — клиент поиска сайта). */
+  vueRoot: "#app",
   /** МЁРТВЫЙ по текущей разметке: роли берутся из внешнего SVG-спрайта,
    *  инлайновых <symbol> на странице нет. Потребители деградируют молча. */
   roleSymbols: "symbol#civilian, symbol#sheriff, symbol#mafia, symbol#godfather",

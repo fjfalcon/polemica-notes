@@ -618,7 +618,14 @@ describe("settings, release and manifest consistency", () => {
           }
         }
         if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-          check(node, node.text);
+          // Module specifiers are syntax, not CSS. Keep checking every other
+          // literal (including selector arguments containing the same text).
+          const parent = node.parent;
+          const moduleName = parent && (
+            ((ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) && parent.moduleSpecifier === node) ||
+            (ts.isModuleDeclaration(parent) && parent.name === node)
+          );
+          if (!moduleName) check(node, node.text);
         } else if (ts.isTemplateExpression(node)) {
           // Шаблон с подстановками: проверяем статические куски — именно в
           // них живут классы (`.player__role[data-x="${id}"]`).

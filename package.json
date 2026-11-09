@@ -1,6 +1,6 @@
 {
   "name": "polemica-notes",
-  "version": "9.77.1",
+  "version": "9.78.0",
   "private": true,
   "license": "MPL-2.0",
   "description": "Расширение для Polemica Game: статистика, заметки, OBS, Twitch",
@@ -10,11 +10,12 @@
     "build:js": "tsup",
     "assemble:chrome": "node scripts/assemble.mjs chrome",
     "assemble:firefox": "node scripts/assemble.mjs firefox",
-    "build:chrome": "npm run build:js && npm run assemble:chrome",
-    "build:firefox": "npm run build:js && npm run assemble:firefox",
-    "build": "npm run clean && npm run build:js && npm run assemble:chrome && npm run assemble:firefox",
+    "build:chrome": "npm run build:js && npm run assemble:chrome && npm run smoke:direct",
+    "build:firefox": "npm run build:js && npm run assemble:firefox && npm run smoke:direct",
+    "build": "npm run clean && npm run build:js && npm run assemble:chrome && npm run assemble:firefox && npm run smoke:direct",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --config vitest.config.ts",
+    "test": "vitest run --config vitest.config.ts && npm run test:roles",
+    "test:roles": "node --experimental-strip-types tests/roles-model.test.ts",
     "test:contract": "vitest run --config vitest.contract.config.ts",
     "test:watch": "vitest --config vitest.config.ts",
     "lint:ext:chrome": "web-ext lint -s dist/chrome",
@@ -24,12 +25,14 @@
     "release:assets": "node scripts/release-assets.mjs",
     "chrome:auth": "node scripts/chrome-auth.mjs",
     "publish:chrome": "node scripts/verify-dist.mjs chrome-zip && node scripts/publish-chrome.mjs",
-    "release:check": "node scripts/verify-dist.mjs release"
+    "release:check": "node scripts/verify-dist.mjs release",
+    "smoke:direct": "node scripts/smoke-direct-bundle.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.270",
     "@types/node": "^26.1.2",
     "@types/webextension-polyfill": "^0.12.5",
+    "@types/ws": "^8.18.1",
     "fast-check": "^4.9.0",
     "fast-glob": "^3.3.3",
     "jsdom": "^30.0.1",
@@ -37,7 +40,8 @@
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
     "vitest": "^5.0.3",
-    "web-ext": "^10.7.0"
+    "web-ext": "^10.7.0",
+    "ws": "^8.18.3"
   },
   "dependencies": {
     "webextension-polyfill": "^0.12.0"

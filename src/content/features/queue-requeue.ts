@@ -49,6 +49,25 @@
  * собственной точкой пробуждения — общим decision-таймером ниже. Ветка,
  * которая возвращает управление без таймера и без внешнего события
  * (visibilitychange, навигация), — это молчаливая смерть машины.
+ *
+ * СКОРОСТЬ (9.78.0, жалоба владельца 29.10.2026). Часть игроков ищет лобби
+ * компанией: не видят своих — не жмут «Готов», лобби распускается, а они
+ * из ЗАРАНЕЕ открытой второй вкладки поиска встают в очередь руками в
+ * момент роспуска и попадают в следующее лобби вместе. Честный игрок с
+ * автовозвратом проигрывал им секунды: ждали экран сайта (через 2 с после
+ * `on_stop_game`) или 12-секундную грейс-паузу, потом грузили страницу
+ * поиска с нуля и только тогда жали «Играть». Теперь:
+ *  1. смерть комнаты узнаём по сигналу сервера `on_stop_game` от зонда
+ *     комнаты (только имя события, room-probe-page) — без экрана и паузы;
+ *  2. пока идёт отсчёт роспуска, Chrome ПРЕДЗАГРУЖАЕТ страницу поиска
+ *     (speculation rules) — переход после роспуска мгновенный, как у той
+ *     самой второй вкладки; Firefox этого не умеет и просто грузит страницу;
+ *  3. на странице поиска кнопку «Играть» ждём частым опросом, а не 250-мс
+ *     дросселем наблюдателя; «застрявшее» состояние сайта (решающий блок
+ *     «Продолжить/Покинуть игру», вечная крутилка после клика) лечим одной
+ *     перезагрузкой на эпизод вместо 8-секундного ожидания и отказа.
+ * Предохранители не тронуты: автоклик — только подтвердившему готовность,
+ * не в фоне, не поперёк живого ввода, бюджеты и окна прежние.
  */
 import { onDomChange, safeClick, isVisible } from "@core/dom";
 import { SITE, TEXT, SITE_CLASS } from "@core/selectors";
@@ -56,7 +75,7 @@ import { isGameRoomPath, isSearchPath } from "@shared/routes";
 import { log } from "@core/log";
 import { showToast } from "@core/toast";
 import { parseMark, refreshMark, validateMark, serializeMark } from "./requeue-pending";
-import type { MarkFailure } from "./requeue-pending";
+import type { MarkFailure, PendingMark } from "./requeue-pending";
 import type { Feature, FeatureContext } from "@core/feature";
 import type { Settings } from "@shared/types";
 
@@ -119,6 +138,92 @@ const MARK_FAILURE_TEXT: Record<MarkFailure, string> = {
   capped: "эпизод старше потолка",
 };
 
+export interface DirectRequeuePort {
+  prepare(): void;
+  cancel(): void;
+  start(signalAt: number): boolean;
+  resume?(signalAt: number, queued: boolean): void;
+  enterGame?(): boolean;
+  handoff?(): void;
+}
+let directPort: DirectRequeuePort | null = null;
+export function setDirectRequeuePort(port: DirectRequeuePort | null): void { directPort = port; }
+let directPending = false, directQueued = false, directGameFound = false, directHandoffAt = 0;
+/**
+ * Сторож молчания страницы: запрос ушёл в мир страницы, а ответа нет (порт
+ * не доехал, скрипт страницы умер). Без него комната ждала бы вечно
+ * (ревью 09.11.2026) — через DIRECT_SILENCE_MS считаем путь неподтверждённым
+ * и передаём штатному восстановлению. У самой страницы ACK ждёт 8 с.
+ */
+const DIRECT_SILENCE_MS = 10_000;
+let directStartedAt = 0;
+let directResuming = false, directResumeRequested = false, directResumeAt = 0;
+let directResumeQueued = false;
+const DIRECT_HANDOFF_KEY = "pn_direct_requeue_handoff";
+const DIRECT_HANDOFF_TTL = 45_000;
+function writeDirectHandoff(signalAt: number, queued: boolean): void {
+  try { sessionStorage.setItem(DIRECT_HANDOFF_KEY, JSON.stringify({ signalAt, queued })); }
+  catch { /* ordinary site recovery remains available */ }
+}
+
+export function canResumeDirectSearch(signalAt = directResumeAt): boolean {
+  return directResuming && signalAt === directResumeAt && !!settings &&
+    settings.requeue_after_lobby_fail_enabled !== false && isSearchPage() && !document.hidden &&
+    Date.now() - lastTrustedInputAt >= USER_BACKOFF_MS;
+}
+export function directResumeFinished(state: string, signalAt = directResumeAt): void {
+  if (!directResuming || signalAt !== directResumeAt) return;
+  directResumeRequested = false;
+  if (state === "deferred") { scheduleDecision(FOREGROUND_GRACE_MS); return; }
+  directResuming = false;
+  try { sessionStorage.removeItem(DIRECT_HANDOFF_KEY); } catch { /* unavailable storage */ }
+  if (state === "refused" || state === "timeout") showToast("Поиск не восстановился. Нажмите «Играть», чтобы попробовать снова", { key: "direct-requeue-failed" });
+}
+function tryDirectResume(): void {
+  if (!directResuming) return;
+  const now = Date.now();
+  if (now - directResumeAt >= DIRECT_HANDOFF_TTL || now < directResumeAt) {
+    directPort?.cancel(); directResumeFinished("timeout"); return;
+  }
+  if (!canResumeDirectSearch()) {
+    if (!document.hidden) scheduleDecision(Math.max(FOREGROUND_GRACE_MS, lastTrustedInputAt + USER_BACKOFF_MS - now + 100));
+    return;
+  }
+  if (!directResumeRequested && directPort?.resume) {
+    directResumeRequested = true; directPort.resume(directResumeAt, directResumeQueued);
+  }
+}
+export function noteDirectRequeueResult(state: string, signalAt: number, sentAt: number, at: number, firstSentAt = sentAt, attempt = 1): void {
+  if (!directPending || signalAt !== stopGameSignalAt || !settings || settings.requeue_after_lobby_fail_enabled === false || gameStarted) return;
+  if (matchIsRunning()) { directPending = false; noteMatchStarted("новая стадия видна — поздний результат прямого поиска игнорируется"); return; }
+  if (state === "sent") log.info(SCOPE, "прямой запрос поиска отправлен через", sentAt - signalAt, "мс после роспуска, попытка", attempt);
+  if (state === "queued") {
+    writeDirectHandoff(signalAt, true);
+    directQueued = true; directHandoffAt = Date.now() + MIN_DECISION_DELAY_MS;
+    log.info(SCOPE, "сервер подтвердил прямой поиск, мс:", { attempt, stopToFirstRequest: firstSentAt - signalAt, stopToRequest: sentAt - signalAt, stopToAck: at - signalAt, firstRequestToAck: at - firstSentAt, requestToAck: at - sentAt });
+  }
+  if (state === "found") { directGameFound = directQueued = true; directHandoffAt = 0; }
+  if (state === "unavailable" || state === "refused") {
+    writeDirectHandoff(signalAt, false);
+    directQueued = true; directHandoffAt = Date.now() + MIN_DECISION_DELAY_MS;
+    log.warn(SCOPE, "прямой поиск не подтверждён — переходим к штатному восстановлению");
+  }
+  if (directQueued) finishDirectRequeue();
+}
+function finishDirectRequeue(): void {
+  if (!directPending || !directQueued || !isGameRoomPage() || gameStarted || matchIsRunning() || !mayActNow(Date.now())) return;
+  if (Date.now() < directHandoffAt) { scheduleDecision(directHandoffAt - Date.now()); return; }
+  if (directGameFound && directPort?.enterGame?.()) {
+    directPort.handoff?.();
+    try { sessionStorage.removeItem(DIRECT_HANDOFF_KEY); } catch { /* navigation still succeeds */ }
+    directPending = false; return;
+  }
+  // Передача ДО навигации: отмена в её окне не снимет подтверждённую очередь.
+  directPort?.handoff?.();
+  directPending = false;
+  location.assign("/game-search");
+}
+
 let settings: Settings | null = null;
 let unsubscribe: (() => void) | null = null;
 
@@ -167,6 +272,238 @@ function cancelDecision(): void {
   decisionAt = 0;
 }
 
+// ── ускорение возврата (9.78.0, см. «СКОРОСТЬ» в шапке) ──
+
+/** Источник сигналов зонда комнаты: в сообщении только ИМЯ события. */
+export const ROOM_EVENT_SOURCE = "pn-room-event";
+/** Команда зонду: присылать (или нет) сигналы жизненного цикла комнаты. */
+export const ROOM_EVENTS_CMD = "pn-room-events-cmd";
+/** Маркер нашего `<script type="speculationrules">` в комнате. */
+export const PRERENDER_ATTR = "data-pn-requeue-prerender";
+/**
+ * За сколько секунд до конца отсчёта начинать предзагрузку поиска. Не
+ * раньше: предзагруженная страница может получить КОПИЮ sessionStorage на
+ * момент старта предзагрузки, и метка моста (TTL 45 с) обязана дожить в ней
+ * до активации при любом поведении браузера.
+ */
+const PRERENDER_LEAD_S = 25;
+const SEARCH_PATH = "/game-search";
+/**
+ * Шаг ожидания «Играть» на пути из комнаты: без 250-мс дросселя наблюдателя.
+ * Не чаще: каждая проверка видимости форсирует стиль/раскладку, а страница
+ * в это время сама грузится (ревью 29.10.2026).
+ */
+const FAST_POLL_MS = 100;
+// Готовая кнопка нажимается сразу. Пауза нужна ТОЛЬКО после доказанного
+// in_game: ранний reload тоже мог бы загрузить устаревшее состояние и
+// потратить единственный бюджет до синхронизации сервиса поиска.
+const IN_GAME_RETRY_SETTLE_MS = 300;
+/**
+ * Частый опрос может застать «Играть» в момент загрузки, когда сайт ещё не
+ * восстановил выбранные очереди (disabled). Сдаёмся по «не выбраны очереди»
+ * только если кнопка недоступна дольше этого (ревью 29.10.2026).
+ */
+const DISABLED_GRACE_MS = 1500;
+/** Сколько после активации предзагрузки возврат фокуса не ждёт паузу RQ-6. */
+const ACTIVATION_FAST_MS = 2000;
+/**
+ * Метка «зонд комнаты встал» (= PROBE_MARK_ATTR в room-probe-page). Модуль
+ * зонда импортировать нельзя: его IIFE при импорте патчит WebSocket.
+ */
+const PROBE_READY_ATTR = "data-pn-room-probe-ready";
+/** Время последней нашей перезагрузки поиска: одна на эпизод, не цикл. */
+const RELOAD_KEY = "pn_requeue_reload";
+const RELOAD_GUARD_MS = 60_000;
+
+/** Сервер прислал on_stop_game после отсчёта роспуска (0 — не было). */
+let stopGameSignalAt = 0;
+/**
+ * Сервер объявил отсчёт роспуска (on_game_disbandment). ОТДЕЛЬНО от
+ * disbandmentSeen: тот запускает DOM-грейс, а грейс короче серверного
+ * отсчёта — по одному сигналу без видимого таймера он увёл бы игрока
+ * посреди ещё идущего голосования. Флаг лишь разрешает доверять on_stop_game.
+ */
+let disbandmentSignaled = false;
+let roomEventListener: ((e: MessageEvent) => void) | null = null;
+let prerenderListener: (() => void) | null = null;
+/** Когда страница поиска показана активацией нашей предзагрузки (0 — нет). */
+let prerenderActivatedAt = 0;
+/** Когда пришли из распущенной комнаты (для строки задержки в логе). */
+let fromRoomAt = 0;
+/** Принятая метка моста: перезагрузка обязана продолжить ЭТОТ эпизод. */
+let consumedMark: PendingMark | null = null;
+/** Первый клик в текущем документе; успехом считается только очередь. */
+let firstPlayClickAt = 0;
+
+function isPrerendering(): boolean {
+  return (document as Document & { prerendering?: boolean }).prerendering === true;
+}
+
+function siteElementVisible(selector: string): boolean {
+  const el = document.querySelector<HTMLElement>(selector);
+  return !!el && isVisible(el);
+}
+
+function prerenderSupported(): boolean {
+  const ctor = HTMLScriptElement as unknown as { supports?: (type: string) => boolean };
+  try {
+    return typeof ctor.supports === "function" && ctor.supports("speculationrules");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Предзагрузить страницу поиска (Chrome, speculation rules). Наш переход
+ * на тот же адрес активирует готовую страницу мгновенно; не перешли —
+ * браузер её просто выбросит. Идемпотентно (вызывается из DOM-подписчика,
+ * §4 п.1): узел вставляется один раз, повтор — один querySelector.
+ */
+function ensurePrerender(): void {
+  // Транспорт прямого поиска ставится всегда (content/index.ts), поэтому
+  // speculation rules ниже — только запасной путь на случай, если его нет
+  // (тесты, будущий откат); в обычной работе готовится соединение поиска.
+  if(directPort){directPort.prepare();return;}
+  if (document.querySelector(`script[${PRERENDER_ATTR}]`)) return;
+  if (!prerenderSupported()) return;
+  // Метка ДО старта предзагрузки: её копию и увидит предзагруженная страница.
+  armPending(true);
+  const rules = document.createElement("script");
+  rules.type = "speculationrules";
+  rules.setAttribute(PRERENDER_ATTR, "");
+  rules.textContent = JSON.stringify({ prerender: [{ source: "list", urls: [SEARCH_PATH] }] });
+  (document.head || document.documentElement).appendChild(rules);
+  // «Запрошена», а не «идёт»: браузер может молча отказать (CSP страницы,
+  // экономия энергии, настройка предзагрузки) — правда будет в строке
+  // «клик «Играть» через N мс … (страница была предзагружена)».
+  log.info(SCOPE, "запрошена предзагрузка страницы поиска — переход после роспуска будет мгновенным");
+}
+
+/** Убрать правила: браузер отменит предзагрузку (матч пошёл, уход, выключение). */
+function cancelPrerender(): void {
+  directPort?.cancel();
+  for (const el of Array.from(document.querySelectorAll(`script[${PRERENDER_ATTR}]`))) el.remove();
+}
+
+/**
+ * Видели ли МЫ САМИ отсчёт роспуска, дошедший почти до нуля. Клиентский
+ * отсчёт отстаёт от серверного на задержку сети — отсюда допуск.
+ */
+function disbandmentNearZero(): boolean {
+  return disbandmentSeen && disbandmentLastSeconds >= 0 && disbandmentLastSeconds <= DISBAND_ZERO_TOLERANCE_S;
+}
+
+/** Сказать зонду комнаты, нужны ли нам сигналы (зонда может и не быть). */
+function commandRoomEvents(on: boolean): void {
+  try {
+    window.postMessage({ source: ROOM_EVENTS_CMD, on }, location.origin);
+  } catch {
+    /* страница уходит */
+  }
+}
+
+/**
+ * Сигнал зонда комнаты. Экспорт — тестовый шов. Подделать его может любой
+ * скрипт страницы (сигнал идёт через window), а запускает он уход из комнаты
+ * и прямой запрос поиска. Поэтому сигнал только УСКОРЯЕТ решение, которое
+ * доказывает DOM: on_stop_game принимаем лишь после того, как сами видели
+ * отсчёт роспуска и он дошёл почти до нуля (ревью 09.11.2026) — подделка
+ * посреди отсчёта или без него ничего не запускает.
+ */
+export function onRoomEvent(e: MessageEvent): void {
+  if (e.source !== window) return;
+  const data = e.data as { source?: unknown; name?: unknown } | null;
+  if (data?.source !== ROOM_EVENT_SOURCE || typeof data.name !== "string") return;
+  if (!settings || settings.requeue_after_lobby_fail_enabled === false) return;
+  if (!isGameRoomPage() || gameStarted) return;
+  // Старт стадии во время отсчёта — все успели, матч пошёл: уводить нельзя.
+  // ДО отсчёта сигнал не трогаем — стартом матча там занимается DOM.
+  if (data.name === "on_game_disbandment") {
+    disbandmentSignaled = true;
+    return;
+  }
+  if (data.name === "on_start_stage") {
+    if (disbandmentSeen || disbandmentSignaled) {
+      noteMatchStarted("сервер начал стадию во время отсчёта роспуска — матч идёт, не вмешиваемся");
+    }
+    return;
+  }
+  if (data.name !== "on_stop_game" || stopGameSignalAt) return;
+  // Прямой on_stop_game без отсчёта — не «лобби не собралось» (исключение,
+  // ошибка сервера): им занимается DOM-путь с узкой классификацией экрана
+  // (RQ-5/RQ-7). Ускоряем только доказанный роспуск.
+  if (!disbandmentNearZero()) return;
+  stopGameSignalAt = Date.now();
+  log.info(SCOPE, "сервер распустил комнату (on_stop_game) — решаем сразу, не дожидаясь экрана сайта");
+  tick();
+}
+
+/**
+ * Перезагрузить страницу поиска ОДИН раз на эпизод: сайт застрял в
+ * состоянии «игрок ещё в игре» (предзагрузка снята, пока комната была жива,
+ * или сервер поиска узнал о роспуске на мгновение позже нашего клика).
+ * Свежая загрузка спрашивает сервер заново. false — перезагрузка уже была,
+ * пусть машина доживает своё окно и честно сдаётся.
+ */
+function waitForSearchService(now: number): boolean {
+  const anchor = firstPlayClickAt || consumedMark?.roomStoppedAt || 0;
+  const remaining = anchor + IN_GAME_RETRY_SETTLE_MS - now;
+  if (!anchor || remaining <= 0) return false;
+  scheduleDecision(remaining);
+  return true;
+}
+
+function reloadSearchOnce(reason: string, budgeted = true): boolean {
+  const now = Date.now();
+  try {
+    if (budgeted) {
+      const prev = Number(sessionStorage.getItem(RELOAD_KEY));
+      // Время из будущего — мусор недоверенного хранилища: перезагрузки не было.
+      if (prev > 0 && prev <= now && now - prev < RELOAD_GUARD_MS) return false;
+      sessionStorage.setItem(RELOAD_KEY, String(now));
+    }
+    // Мост обязан пережить перезагрузку — и остаться ТЕМ ЖЕ эпизодом:
+    // новый issuedAt обнулял бы потолок эпизода на каждой перезагрузке.
+    sessionStorage.setItem(PENDING_KEY, serializeMark(refreshMark(consumedMark, now)));
+  } catch {
+    return false;
+  }
+  log.info(
+    SCOPE,
+    reason,
+    budgeted
+      ? "— перезагружаем страницу поиска (один раз на эпизод) и повторяем"
+      : "— перезагружаем устаревшую предзагрузку (вне бюджета перезагрузок) и повторяем",
+  );
+  location.reload();
+  return true;
+}
+
+/**
+ * Можно ли действовать СЕЙЧАС: не поперёк живого ввода (§4 п.2, бэкофф с
+ * собственным пробуждением, RQ-6) и не в фоновой вкладке (разбудит
+ * visibilitychange). Общий гейт клика и перезагрузок страницы поиска.
+ */
+function mayActNow(now: number): boolean {
+  // Игрок только что кликал/печатал сам — он у панели, дорога его (ревью №3).
+  if (now - lastTrustedInputAt < USER_BACKOFF_MS) {
+    // По фронту, не на каждый тик: строка нужна, чтобы отличить «мы уступили
+    // человеку» от «машина умерла», но тиков тут четыре в секунду (QR-1).
+    if (!backoffLogged) {
+      backoffLogged = true;
+      log.info(SCOPE, "автовозврат отложен: игрок только что действовал сам");
+    }
+    scheduleDecision(lastTrustedInputAt + USER_BACKOFF_MS - now + 100);
+    return false;
+  }
+  // Фоновая вкладка = игрока может не быть у экрана: действие запрещено, но
+  // гейт стоит ИМЕННО ЗДЕСЬ, в секции действий — состояние и окно выше живут
+  // и в фоне (dom.ts тикает таймером), и окно честно истекает. Ранний return
+  // в начале tick замораживал disappearedAt=0 — возврат на вкладку спустя
+  // минуты начинал окно заново и кликал по забытому состоянию (ревью, р.3).
+  return !document.hidden;
+}
+
 /** Игрок принял игру в ТЕКУЩЕМ сборе лобби. */
 let accepted = false;
 /** Взведение пришло мостом из распущенной комнаты (для честного тоста). */
@@ -194,6 +531,8 @@ let lastTrustedInputAt = 0;
  */
 export function noteTrustedInput(): void {
   lastTrustedInputAt = Date.now();
+  if(directResuming){directPort?.cancel();directResumeRequested=false;scheduleDecision(USER_BACKOFF_MS+100);}
+  if(directPending){directPort?.cancel();directPending=false;directQueued=false;roomExitDone=false;scheduleDecision(USER_BACKOFF_MS+100);}
 }
 let trustedListener: ((e: Event) => void) | null = null;
 /** Слушатель доверенных кликов для латча намерения (RQ-2). */
@@ -333,20 +672,19 @@ function readyConfirmed(): boolean {
 
 /** Тик комнаты: следим за готовностью и смертью комнаты. */
 function roomTick(): void {
+  if(directPending){
+    if(matchIsRunning()){noteMatchStarted("матч начался — прямой поиск отменён");directPending=false;return;}
+    if(!directQueued&&Date.now()-directStartedAt>=DIRECT_SILENCE_MS){
+      log.warn(SCOPE,"страница не ответила на прямой запрос поиска — переходим к штатному восстановлению");
+      noteDirectRequeueResult("unavailable",stopGameSignalAt,0,Date.now());return;
+    }
+    finishDirectRequeue();return;
+  }
   if (!settings || settings.requeue_after_lobby_fail_enabled === false) return;
   if (gameStarted) return;
 
   if (matchIsRunning()) {
-    gameStarted = true;
-    disbandmentSeen = false;
-    disbandmentGoneAt = 0;
-    disbandmentLastSeconds = -1;
-    disbandmentSampleChangedAt = 0;
-    // Запланированное решение не отменяем: лишний tick() увидит gameStarted
-    // и выйдет. Игра всё-таки началась — мост обязан умереть, иначе он
-    // утащил бы игрока в поиск прямо из матча (или после его конца).
-    clearPending();
-    log.info(SCOPE, "матч начался — возвраты в поиск выключены до ухода со страницы");
+    noteMatchStarted("матч начался — возвраты в поиск выключены до ухода со страницы");
     return;
   }
 
@@ -363,15 +701,30 @@ function roomTick(): void {
   // разбор жалобы упирается в догадки (разбор лога 02.08.2026).
   if (timerVisible && !disbandmentLogged) {
     disbandmentLogged = true;
-    log.info(SCOPE, "виден обратный отсчёт роспуска; готовность подтверждена:", roomReady);
+    // Зонд — источник быстрого сигнала on_stop_game. Без него (первая
+    // комната после включения настройки) «сигнал не пришёл» иначе не
+    // отличить от «зонда нет» (ревью 29.10.2026).
+    log.info(
+      SCOPE,
+      "виден обратный отсчёт роспуска; готовность подтверждена:",
+      roomReady,
+      "; зонд комнаты:",
+      document.documentElement.hasAttribute(PROBE_READY_ATTR) ? "есть" : "нет (будет медленный путь)",
+    );
   }
   if (roomExitDone) return;
+
+  // Сервер уже сказал on_stop_game после отсчёта — это доказательство
+  // роспуска сильнее любого экрана: ни ждать экран (2 с), ни грейс-паузу
+  // (12 с) незачем. Отсчёт при этом может ещё секунду показывать «00:01» —
+  // клиентский таймер отстаёт от серверного на задержку сети.
+  const serverStopped = stopGameSignalAt > 0 && disbandmentNearZero();
 
   // Трекинг отсчёта идёт и БЕЗ готовности (RQ-7): терминальный роспуск надо
   // уметь доказать для любого игрока — неготовому мы обязаны честно сказать,
   // почему возврата не будет, а не промолчать. Готовность гейтит только
   // ДЕЙСТВИЯ: мост и уход.
-  if (timer && timerVisible) {
+  if (timer && timerVisible && !serverStopped) {
     if (!disbandmentSeen) {
       disbandmentSeen = true;
       if (roomReady) {
@@ -395,6 +748,9 @@ function roomTick(): void {
       // Метка времени — по СМЕНЕ значения (см. комментарий у поля).
       disbandmentSampleChangedAt = Date.now();
     }
+    // Предзагрузка поиска — только тому, кого после роспуска вернём
+    // автокликом; на финишной прямой отсчёта (см. PRERENDER_LEAD_S).
+    if (roomReady && seconds >= 0 && seconds <= PRERENDER_LEAD_S) ensurePrerender();
     disbandmentGoneAt = 0;
     return;
   }
@@ -421,7 +777,11 @@ function roomTick(): void {
     // отсчёта: исключить могли и ВО ВРЕМЯ него — и тогда мост уже лежит в
     // sessionStorage. Не погасить его В ЭТОМ ЖЕ тике = вернуть исключённого
     // в очередь через «На главную» → elsewhereTick (ревью 04.08, блокер 1).
+    // Предзагрузку — тоже: ссылка сайта «/game-search» на экране исключения
+    // активировала бы её, а предзагруженная страница может держать КОПИЮ
+    // хранилища с ещё живой меткой (ревью 29.10.2026, RQ-5 под быстрым путём).
     clearPending();
+    cancelPrerender();
     if (!ambiguousErrorLogged) {
       ambiguousErrorLogged = true;
       log.info(SCOPE, "автовозврат не выполнен: экран ошибки комнаты не подтверждает развал");
@@ -431,8 +791,10 @@ function roomTick(): void {
 
   // Отсчёт был и пропал: либо время вышло (роспуск), либо все успели и игра
   // стартовала. Узкая форма экрана смерти решает сама — дискриминатор по
-  // сэмплу и грейс-пауза нужны только когда экрана нет.
-  if (!screen && disbandmentSeen && !disbandmentGoneAt) {
+  // сэмплу и грейс-пауза нужны только когда экрана нет. Сигнал сервера
+  // (serverStopped) решает тоже сам: ждать здесь — ровно те секунды, которые
+  // мы проигрывали ручной второй вкладке.
+  if (!serverStopped && !screen && disbandmentSeen && !disbandmentGoneAt) {
     // Первый дискриминатор — последнее показанное значение: при роспуске
     // отсчёт доходит до ~00:00, при старте игры гаснет на произвольном.
     // Дискриминатору можно верить, только пока сэмпл СВЕЖИЙ: после hidden-
@@ -450,6 +812,7 @@ function roomTick(): void {
       );
       gameStarted = true;
       clearPending();
+      cancelPrerender();
       return;
     }
     if (!sampleFresh && disbandmentLastSeconds > DISBAND_ZERO_TOLERANCE_S) {
@@ -469,7 +832,7 @@ function roomTick(): void {
 
   const graceExpired =
     disbandmentSeen && disbandmentGoneAt > 0 && Date.now() - disbandmentGoneAt > DISBAND_GRACE_MS;
-  if (screen?.kind !== "disbandment" && !graceExpired) {
+  if (!serverStopped && screen?.kind !== "disbandment" && !graceExpired) {
     // Ложное пробуждение до конца паузы (например, foreground grace):
     // перепланировать остаток обязана сама ждущая ветка — таймер один.
     if (disbandmentGoneAt > 0) {
@@ -482,7 +845,10 @@ function roomTick(): void {
   // находка 5): в фоновой вкладке отсрочка держала чужую метку этапа 1
   // живой, и сайтовая навигация на поиск успела бы нажать «Играть» за
   // неготового. Гашение метки безопасно в любом состоянии — ждать нечего.
-  if (!roomReady) clearPending();
+  if (!roomReady) {
+    clearPending();
+    cancelPrerender();
+  }
 
   // Те же правила, что и на поиске: не в фоне и не поперёк живого человека.
   // Обе отсрочки — по фронту: DOM распущенной комнаты замер, повторной точки
@@ -512,8 +878,20 @@ function roomTick(): void {
   // здесь, а на АВТОКЛИКЕ «Играть»: неготовый приземляется на страницу
   // поиска БЕЗ метки — кнопку жмёт сам. Порчу лобби зацикливал бы автоклик,
   // а не перевод на страницу, где человек решает.
+  if (stopGameSignalAt) {
+    // Цена решения в миллисекундах — то, за что эта ветка и боролась
+    // (СКОРОСТЬ в шапке). Ненулевое значение = отсрочка (фон, живой ввод).
+    log.info(SCOPE, "уход из комнаты через", Date.now() - stopGameSignalAt, "мс после on_stop_game");
+  }
   if (roomReady) {
-    armPending(true); // force: метка обязана лечь до навигации
+    armPending(true, stopGameSignalAt); // время сигнала переживает навигацию и reload
+    // Новый эпизод — своя разовая перезагрузка на поиске: запрет прошлого
+    // эпизода (даже неуспешного) сюда не переносится.
+    try {
+      sessionStorage.removeItem(RELOAD_KEY);
+    } catch {
+      /* приватный режим */
+    }
     // Тост здесь не рисуем: страница сейчас сменится, плашка мелькнёт на
     // миллисекунды. О возврате скажет тост на странице поиска (armedFromRoom).
     log.info(SCOPE, "комната распущена после готовности — уходим на страницу поиска");
@@ -532,6 +910,15 @@ function roomTick(): void {
       "роспуск без подтверждённой готовности — уводим на страницу поиска БЕЗ автоклика «Играть»",
     );
   }
+  if(roomReady&&stopGameSignalAt&&directPort?.start(stopGameSignalAt)){
+    directPending=true;directQueued=false;directGameFound=false;directHandoffAt=0;
+    directStartedAt=Date.now();scheduleDecision(DIRECT_SILENCE_MS+50);return;
+  }
+  if (roomReady && directPort?.resume) {
+    // Even a cold fallback uses the site's startSearch method, never a DOM click.
+    writeDirectHandoff(stopGameSignalAt || Date.now(), false);
+  }
+  cancelPrerender();
   if (screen?.kind === "disbandment") {
     // Сайт показал ссылку узкой формы развала — идём по ней (обычная
     // навигация сайта).
@@ -587,7 +974,7 @@ let lastArmWriteAt = 0;
  */
 const ARM_REFRESH_MIN_MS = 5000;
 
-function armPending(force = false): void {
+function armPending(force = false, roomStoppedAt = 0): void {
   try {
     const now = Date.now();
     if (!force && now - lastArmWriteAt < ARM_REFRESH_MIN_MS) return;
@@ -598,7 +985,9 @@ function armPending(force = false): void {
     // бы потолок: новый честный мост рождался бы уже «старше 10 минут»
     // (ревью 04.08.2026, блокер 2).
     const prior = verdict?.ok ? verdict.mark : null;
-    sessionStorage.setItem(PENDING_KEY, serializeMark(refreshMark(prior, now)));
+    const mark = refreshMark(prior, now);
+    if (roomStoppedAt > 0) mark.roomStoppedAt = roomStoppedAt;
+    sessionStorage.setItem(PENDING_KEY, serializeMark(mark));
   } catch {
     // Приватный режим/запрет хранилища: перейдём без автоклика на поиске.
     // Раньше отказ был нем, и «мост не сработал» не отличалось от «мост не
@@ -692,7 +1081,25 @@ function elsewhereTick(): void {
  * Флаг одноразовый: снимается при первом же чтении.
  */
 function consumePendingFromRoom(): void {
+  if (isSearchPage() && directPort?.resume) {
+    try {
+      const raw = sessionStorage.getItem(DIRECT_HANDOFF_KEY);
+      const mark = raw === null ? null : JSON.parse(raw);
+      // Legacy timestamps carry no evidence that the server accepted a search.
+      const signal = typeof mark === "number" ? mark : mark?.signalAt;
+      if (Number.isSafeInteger(signal) && signal > 0 && signal <= Date.now() && Date.now() - signal < DIRECT_HANDOFF_TTL) {
+        clearPending(); directResuming = true; directResumeRequested = false;
+        directResumeAt = signal; directResumeQueued = mark?.queued === true;
+        tryDirectResume(); return;
+      }
+      sessionStorage.removeItem(DIRECT_HANDOFF_KEY);
+    } catch { /* fall back to ordinary requeue */ }
+  }
   if (!isSearchPage()) return;
+  // Предзагруженная страница ещё не показана игроку: метку читаем на
+  // активации (prerenderingchange), иначе окно ARM_WINDOW_MS начало бы
+  // тикать с момента предзагрузки и истекло бы раньше роспуска.
+  if (isPrerendering()) return;
   // Мост-объяснение неготовому (одноразовый): его увели с роспуска БЕЗ
   // автоклика, и без этой плашки принудительный перенос был бы молчаливым
   // («меня куда-то перекинуло», adversarial 28.09.2026, находка 4).
@@ -727,6 +1134,8 @@ function consumePendingFromRoom(): void {
   accepted = true;
   armedFromRoom = true;
   disappearedAt = Date.now();
+  fromRoomAt = disappearedAt;
+  consumedMark = verdict.mark;
   log.info(SCOPE, "пришли из распущенной комнаты — взводим автоклик «Играть»");
 }
 
@@ -831,6 +1240,9 @@ function reset(): void {
   disappearedAt = 0;
   attempts = 0;
   lastClickAt = 0;
+  fromRoomAt = 0;
+  consumedMark = null;
+  firstPlayClickAt = 0;
 }
 
 
@@ -862,6 +1274,7 @@ function syncRoute(): void {
 
 /** Сброс состояния комнатного эпизода (уход со страницы / выключение). */
 function resetRoomEpisode(): void {
+  directPending=false;directQueued=false;directGameFound=false;directHandoffAt=0;directResumeRequested=false;directResuming=false;
   roomReady = false;
   gameStarted = false;
   roomExitDone = false;
@@ -875,6 +1288,28 @@ function resetRoomEpisode(): void {
   roomExitDeferLogged.retryScreen = false;
   gameStartingLogged = false;
   ambiguousErrorLogged = false;
+  stopGameSignalAt = 0;
+  disbandmentSignaled = false;
+  cancelPrerender();
+}
+
+/**
+ * Матч пошёл: возвраты выключены до ухода со страницы. Запланированное
+ * решение не отменяем — лишний tick() увидит gameStarted и выйдет. Мост
+ * обязан умереть, иначе он утащил бы игрока в поиск прямо из матча (или
+ * после его конца); предзагрузка поиска — тоже.
+ */
+function noteMatchStarted(reason: string): void {
+  try{sessionStorage.removeItem("pn_direct_requeue_handoff");}catch{/* unavailable storage */}
+  gameStarted = true;
+  disbandmentSeen = false;
+  disbandmentSignaled = false;
+  disbandmentGoneAt = 0;
+  disbandmentLastSeconds = -1;
+  disbandmentSampleChangedAt = 0;
+  clearPending();
+  cancelPrerender();
+  log.info(SCOPE, reason);
 }
 
 function tick(): void {
@@ -883,6 +1318,7 @@ function tick(): void {
     return;
   }
   syncRoute();
+  if(isSearchPage()&&directResuming){tryDirectResume();return;}
   if (!isSearchPage()) {
     reset();
     // Этап 2: в комнате своя машина (готовность → роспуск → уход).
@@ -896,6 +1332,13 @@ function tick(): void {
   if (acceptEl) {
     disappearedAt = 0;
     attempts = 0;
+    // Новое лобби на поиске — уже не «путь из комнаты»: без сброса оно
+    // унаследовало бы частый опрос, перезагрузки и плашку комнаты (ревью
+    // 29.10.2026).
+    armedFromRoom = false;
+    fromRoomAt = 0;
+    consumedMark = null;
+    firstPlayClickAt = 0;
     // ДВУСТОРОННЕЕ присваивание, не «односторонний if»: если развал лобби A
     // и сборка лобби B уложились в один тик, cursor-pointer на месте — это
     // НОВОЕ, не принятое лобби, и accepted обязан сброситься. Иначе клик
@@ -929,8 +1372,26 @@ function tick(): void {
     // (аудит наблюдаемости 02.08.2026, QR-1).
     if (attempts > 0 || armedFromRoom) {
       log.info(SCOPE, "поиск возобновлён: секундомер очереди подтверждён");
+      if (armedFromRoom) {
+        const now = Date.now();
+        log.info(SCOPE, "замер автовозврата, мс:", {
+          stopToClick: consumedMark?.roomStoppedAt && firstPlayClickAt
+            ? firstPlayClickAt - consumedMark.roomStoppedAt : null,
+          stopToQueue: consumedMark?.roomStoppedAt ? now - consumedMark.roomStoppedAt : null,
+          landingToClick: firstPlayClickAt ? firstPlayClickAt - fromRoomAt : null,
+          clickToQueue: firstPlayClickAt ? now - firstPlayClickAt : null,
+          prerendered: prerenderActivatedAt > 0,
+        });
+      }
     }
     clearPending();
+    // Эпизод закрыт успехом — следующему роспуску (бывает и через минуту)
+    // своя перезагрузка обязана быть доступна.
+    try {
+      sessionStorage.removeItem(RELOAD_KEY);
+    } catch {
+      /* приватный режим */
+    }
     reset();
     return;
   }
@@ -970,6 +1431,14 @@ function tick(): void {
   // Сайт открыл модалку (например «Вы уже в поиске» при рассинхроне с
   // сервером) — дальше решает игрок, автоклики прекращаем.
   if (siteModalOpen()) {
+    // Путь из комнаты, модалка сразу после НАШЕГО клика — скорее всего «вы
+    // ещё в игре»: сервер поиска узнал о роспуске на мгновение позже (ревью
+    // 29.10.2026). Одна перезагрузка спрашивает его заново; вторая модалка —
+    // решает игрок. Не поперёк его ввода и не в фоне.
+    if (armedFromRoom && attempts > 0 && siteElementVisible(SITE.inProgressModal)) {
+      if (!mayActNow(now) || waitForSearchService(now)) return;
+      if (reloadSearchOnce("после клика «Играть» сайт подтвердил «вы ещё в игре»")) return;
+    }
     clearPending();
     log.warn(SCOPE, "открыта модалка сайта — прекращаем автоповтор");
     reset();
@@ -978,6 +1447,30 @@ function tick(): void {
 
   const play = document.querySelector<HTMLButtonElement>(SITE.profileSearchButton);
   if (!play || !isVisible(play)) {
+    if (armedFromRoom) {
+      // Путь из распущенной комнаты — гонка за место в очереди, решают
+      // сотни миллисекунд (СКОРОСТЬ в шапке). Решающий блок «Продолжить /
+      // Покинуть игру» лечим перезагрузкой вместо ожидания до конца окна.
+      // Крутилку после клика НЕ трогаем: в час роспуска очередь нагружена,
+      // медленный ответ на start_game_search нормален, а перезагрузка рвёт
+      // сокет поиска и может выбросить уже выданное место (ревью 29.10.2026).
+      if (siteElementVisible(SITE.searchDecideBlock)) {
+        if (!mayActNow(now) || waitForSearchService(now)) return;
+        // Сразу после активации предзагрузки решающий блок — устаревшее
+        // знание страницы, собранной, пока комната была жива. Такая
+        // перезагрузка не тратит разовый бюджет: он — для настоящего
+        // рассинхрона с сервером. Повториться она не может: после
+        // перезагрузки страница уже не предзагружена.
+        if (prerenderActivatedAt && reloadSearchOnce("предзагруженная страница считает игрока ещё в игре", false)) {
+          return;
+        }
+        if (reloadSearchOnce("сайт считает, что игрок ещё в игре (решающий блок)")) return;
+      }
+      // Ждём кнопку частым опросом: мутация разбудила бы нас только через
+      // 250-мс дроссель общего наблюдателя. Опрос ограничен тем же окном.
+      scheduleDecision(FAST_POLL_MS);
+      return;
+    }
     // Скелетон загрузки — ждём в пределах окна. Появление кнопки — это
     // мутация, она разбудит сама; таймер нужен ТЕРМИНАЛЬНОМУ исходу: без
     // него на замёрзшей странице warn «кнопка не появилась» был недостижим
@@ -986,6 +1479,10 @@ function tick(): void {
     return;
   }
   if (play.disabled || play.hasAttribute("disabled")) {
+    if (armedFromRoom && now - disappearedAt < DISABLED_GRACE_MS) {
+      scheduleDecision(FAST_POLL_MS);
+      return;
+    }
     // Не выбраны очереди — решение за игроком, не за нами. Раньше выходили
     // молча, и в файле это не отличалось от «машина перестала тикать» (QR-1).
     clearPending();
@@ -1005,26 +1502,23 @@ function tick(): void {
     scheduleDecision(lastClickAt + MIN_CLICK_INTERVAL_MS - now + 50);
     return;
   }
-  // Игрок только что кликал/печатал сам — он у панели, дорога его (ревью №3).
-  if (now - lastTrustedInputAt < USER_BACKOFF_MS) {
-    // По фронту, не на каждый тик: строка нужна, чтобы отличить «мы уступили
-    // человеку» от «машина умерла», но тиков тут четыре в секунду (QR-1).
-    if (!backoffLogged) {
-      backoffLogged = true;
-      log.info(SCOPE, "автовозврат отложен: игрок только что действовал сам");
-    }
-    scheduleDecision(lastTrustedInputAt + USER_BACKOFF_MS - now + 100);
-    return;
-  }
-  // Фоновая вкладка = игрока может не быть у экрана: клик запрещён, но гейт
-  // стоит ИМЕННО ЗДЕСЬ, в кликовой секции — состояние и окно выше живут и в
-  // фоне (dom.ts тикает таймером), и окно честно истекает. Ранний return в
-  // начале tick замораживал disappearedAt=0 — возврат на вкладку спустя
-  // минуты начинал окно заново и кликал по забытому состоянию (ревью, р.3).
-  if (document.hidden) return;
+  if (!mayActNow(now)) return;
   attempts++;
   lastClickAt = now;
+  if (attempts === 1) firstPlayClickAt = now;
+  // Сначала клик, потом лог и плашка: в гонке за очередь не тратим на них
+  // ни миллисекунды до действия.
+  safeClick(play);
   log.info(SCOPE, "лобби развалилось — возвращаем в поиск, попытка", attempts);
+  if (attempts === 1 && fromRoomAt) {
+    log.info(
+      SCOPE,
+      "клик «Играть» через",
+      now - fromRoomAt,
+      "мс после прихода из комнаты",
+      prerenderActivatedAt ? "(страница была предзагружена)" : "(обычная загрузка страницы)",
+    );
+  }
   // Формулировка без аванса: подтверждение старта — секундомер сайта.
   // Для пути «из комнаты» текст свой: про развал лобби поиска он бы врал.
   if (attempts === 1) {
@@ -1035,7 +1529,6 @@ function tick(): void {
       { key: `requeue-acting-${Date.now()}` },
     );
   }
-  safeClick(play);
   // accepted намеренно не сбрасываем: успех виден по секундомеру поиска
   // (ветка searchInProgress выше сделает reset), а неуспех повторит клик.
   // Проверка результата — своя: сайт мог проглотить клик без единой мутации,
@@ -1068,6 +1561,8 @@ export const queueRequeueFeature: Feature = {
     // проверился бы ни разу. На возврат сверяем окно явно.
     visibilityListener = () => {
       if (document.hidden) {
+        if(directResuming){directPort?.cancel();directResumeRequested=false;}
+        if(directPending){directPort?.cancel();directPending=false;directQueued=false;roomExitDone=false;}
         if (accepted) hiddenAt = Date.now();
         return;
       }
@@ -1080,9 +1575,29 @@ export const queueRequeueFeature: Feature = {
       // либо навигирует поперёк живого клика, либо попадает в бэкофф без
       // следующего пробуждения (RQ-6). Пауза даёт клику осесть в бэкофф,
       // а бэкофф-ветки планируют своё продолжение сами.
-      scheduleDecision(FOREGROUND_GRACE_MS);
+      // Исключение — активация нашей же предзагрузки: игрок не возвращался
+      // кликом, это мы перевели вкладку, и пауза была бы чистой потерей.
+      const justActivated = prerenderActivatedAt > 0 && Date.now() - prerenderActivatedAt < ACTIVATION_FAST_MS;
+      scheduleDecision(armedFromRoom && justActivated ? MIN_DECISION_DELAY_MS : FOREGROUND_GRACE_MS);
     };
     document.addEventListener("visibilitychange", visibilityListener);
+    // Сигналы жизненного цикла комнаты от зонда (если он есть): on_stop_game
+    // доказывает роспуск на 2 с раньше экрана сайта.
+    roomEventListener = (e: MessageEvent) => onRoomEvent(e);
+    window.addEventListener("message", roomEventListener);
+    commandRoomEvents(true);
+    if (isPrerendering()) {
+      // Страница поиска предзагружена из комнаты и игроку ещё не показана.
+      // Мост читаем в момент показа — это и есть «переход после роспуска».
+      prerenderListener = () => {
+        if (prerenderListener) document.removeEventListener("prerenderingchange", prerenderListener);
+        prerenderListener = null;
+        prerenderActivatedAt = Date.now();
+        consumePendingFromRoom();
+        tick();
+      };
+      document.addEventListener("prerenderingchange", prerenderListener);
+    }
     // Пришли на страницу поиска из распущенной комнаты? (одноразовый флаг)
     consumePendingFromRoom();
     unsubscribe = onDomChange(() => tick());
@@ -1094,6 +1609,7 @@ export const queueRequeueFeature: Feature = {
   },
 
   disable() {
+    directResuming=false;directResumeRequested=false;
     unsubscribe?.();
     unsubscribe = null;
     if (trustedListener) {
@@ -1109,6 +1625,16 @@ export const queueRequeueFeature: Feature = {
       document.removeEventListener("visibilitychange", visibilityListener);
       visibilityListener = null;
     }
+    if (roomEventListener) {
+      window.removeEventListener("message", roomEventListener);
+      roomEventListener = null;
+    }
+    commandRoomEvents(false);
+    if (prerenderListener) {
+      document.removeEventListener("prerenderingchange", prerenderListener);
+      prerenderListener = null;
+    }
+    prerenderActivatedAt = 0;
     hiddenAt = 0;
     resetRoomEpisode();
     elsewhereDone = false;

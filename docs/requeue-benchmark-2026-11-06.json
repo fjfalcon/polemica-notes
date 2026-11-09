@@ -1,0 +1,71 @@
+{
+  "version": "9.76.0",
+  "date": "2026-11-06",
+  "implementation": "Preconnect the site's original Socket.IO client during disbandment countdown; hold only start_game_search until a proven on_stop_game and player readiness. Send the site's original payload directly, await ACK, then navigate the same tab to the standard search page and restore via the site's client without a DOM click.",
+  "siteEvidence": {
+    "source": "https://polemicagame.com/bundle/game-search.js",
+    "downloaded": "2026-11-06",
+    "sha256": "0c567ff21de3c93d9d09ae8aab66071d24087ef24c4148f2cc079e7df40e027b",
+    "fixture": "tests/fixtures/search-start-methods.json",
+    "recovery": "checkIfUserInSearch calls /api/search/me; disconnected search starts a new connection. session_initialized with own timeInSearch restores state without another start_game_search. This demonstrates the intended client recovery path, not a live proof of unchanged server priority."
+  },
+  "comparison": {
+    "kind": "deterministic replay using actual downloaded startSearch/connectSocketAndStartSearch methods",
+    "command": "node node_modules/vitest/vitest.mjs run tests/unit/direct-search-live-methods.test.ts --reporter=verbose --disableConsoleIntercept",
+    "assumptionsMs": {
+      "socketHandshake": 150,
+      "serverReply": 40,
+      "manualReaction": 200
+    },
+    "resultsMsAfterDisbandment": [
+      {
+        "scenario": "preconnected direct request",
+        "request": 0,
+        "ack": 40
+      },
+      {
+        "scenario": "already loaded neighboring page, zero reaction",
+        "request": 150,
+        "ack": 190
+      },
+      {
+        "scenario": "already loaded neighboring page, reaction 200 ms",
+        "request": 350,
+        "ack": 390
+      }
+    ],
+    "recoveryReplay": {
+      "serverTimeInSearch": 1000,
+      "restoredTimeInSearch": 1000,
+      "additionalStartRequests": 0
+    },
+    "notMeasured": [
+      "real browser IPC and scheduling cost",
+      "real authenticated search service latency",
+      "actual human reaction",
+      "server queue priority before and after disconnect"
+    ]
+  },
+  "productionTelemetry": [
+    "direct request: stopToRequest, stopToAck, requestToAck",
+    "restored: own timeInSearch observed in session_initialized",
+    "new: successful new start_game_search after handoff, prior position unconfirmed",
+    "already searching: active search observed, prior position unconfirmed"
+  ],
+  "validation": {
+    "offlineFull": {
+      "files": 169,
+      "testsPassed": 2900
+    },
+    "finalFocused": {
+      "files": 7,
+      "testsPassed": 121
+    },
+    "productionTypecheck": "passed",
+    "testTypecheck": "passed with --allowImportingTsExtensions (existing native Node .ts import in roles test)",
+    "adversarialReview": "ready; mandatory findings fixed and checked by the same reviewer",
+    "liveAuthenticatedGame": "not run; no controllable authenticated browser session available"
+  },
+  "supersededBy": "requeue-benchmark-2026-11-08.json",
+  "followup": "The 2026-11-08 audit found early site lifecycle and recovery races in the initial version. They are corrected in 9.76.1; this file preserves the earlier controlled replay only."
+}

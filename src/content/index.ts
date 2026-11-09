@@ -4,6 +4,7 @@
  * поэтому отдельный роутинг сообщений в каждом модуле больше не нужен.
  */
 import { log } from "@core/log";
+import { setupDirectRequeue } from "./direct-requeue-transport";
 import { installErrorCapture } from "@core/errors";
 import { getSetting, onSettingsChanged } from "@core/settings";
 import { FeatureManager } from "@core/feature";
@@ -14,7 +15,7 @@ import { clearToasts } from "@core/toast";
 import { setupNicknameLengthsResponder } from "./nickname-lengths";
 import { setupDiagnostics } from "./diag";
 import { startOrphanWatch, stopOrphanWatch } from "./orphan-watch";
-import { LEGACY_PROBE_FLAG_KEY, WS_LOG_FLAG_KEY } from "./page/room-probe-inject";
+import { LEGACY_PROBE_FLAG_KEY, REQUEUE_FLAG_KEY, WS_LOG_FLAG_KEY } from "./page/room-probe-inject";
 import { getOwnUserId } from "@core/own-user";
 
 import { searchFeature } from "./features/search";
@@ -32,6 +33,7 @@ import { roleFakerFeature } from "./features/role-faker";
 import { pauseHotkeyFeature } from "./features/pause-hotkey";
 import { f5RefreshFeature } from "./features/f5-refresh";
 import { roleMarkerFeature } from "./features/role-marker";
+import { rolesPredictorFeature } from "./features/roles-predictor";
 import { protocolEmojiFeature } from "./features/protocol-emoji";
 import { updateNotifyFeature } from "./features/update-notify";
 import { connectionDiagFeature, syncConnectionDiagRoute } from "./features/connection-diag";
@@ -59,6 +61,8 @@ import { twitchPanelFeature } from "./panels/twitch-panel";
 import { hideRatingFeature } from "./features/hide-rating";
 import { ppkGuardFeature } from "./features/ppk-guard";
 
+setupDirectRequeue();
+
 const manager = new FeatureManager().register(
   searchFeature,
   autoStartFeature,
@@ -72,6 +76,8 @@ const manager = new FeatureManager().register(
   obsPanelFeature,
   roleFakerFeature,
   autoReadyFeature,
+  // Возврат в очередь не ждёт асинхронной загрузки заметок и панелей.
+  queueRequeueFeature,
   playerNotesFeature,
   matchStatsFeature,
   tooltipFeature,
@@ -81,12 +87,12 @@ const manager = new FeatureManager().register(
   freezeWatchFeature,
   f5RefreshFeature,
   roleMarkerFeature,
+  rolesPredictorFeature,
   protocolEmojiFeature,
   updateNotifyFeature,
   connectionDiagFeature,
   queueGuardFeature,
   queuePeekFeature,
-  queueRequeueFeature,
   postgameSearchFeature,
   nickPlateFeature,
   wsLogFeature,
@@ -211,7 +217,8 @@ setupNicknameLengthsResponder();
 setupDiagnostics();
 
 /**
- * Зеркало настройки «Полный лог общения с сервером» в localStorage страницы.
+ * Зеркала настроек, от которых зависит зонд комнаты («Полный лог общения с
+ * сервером» и автовозврат в поиск), в localStorage страницы.
  *
  * Ранний инжектор зонда (document_start) обязан решить «ставить или нет»
  * СИНХРОННО — иначе он опоздает к созданию сокета комнаты, ради чего и
@@ -220,9 +227,9 @@ setupDiagnostics();
  * изменение настройки. Значение применится со следующей загрузки страницы —
  * зонд ставится один раз и снимается только перезагрузкой.
  */
-function mirrorWsLogFlag(on: boolean): void {
+function mirrorProbeFlag(key: string, on: boolean): void {
   try {
-    localStorage.setItem(WS_LOG_FLAG_KEY, on ? "1" : "0");
+    localStorage.setItem(key, on ? "1" : "0");
   } catch {
     /* приватный режим: зонд останется на дефолте */
   }
@@ -237,9 +244,17 @@ void getOwnUserId();
 
 void getSetting("ws_full_log_enabled")
   .catch(() => false)
-  .then((on) => mirrorWsLogFlag(on === true));
+  .then((on) => mirrorProbeFlag(WS_LOG_FLAG_KEY, on === true));
+// Тот же зонд нужен автовозврату: сигнал on_stop_game на 2 с раньше экрана
+// роспуска (см. REQUEUE_FLAG_KEY). Флаг — тоже со следующей загрузки комнаты.
+void getSetting("requeue_after_lobby_fail_enabled")
+  .catch(() => false)
+  .then((on) => mirrorProbeFlag(REQUEUE_FLAG_KEY, on === true));
 onSettingsChanged((patch) => {
-  if ("ws_full_log_enabled" in patch) mirrorWsLogFlag(patch.ws_full_log_enabled === true);
+  if ("ws_full_log_enabled" in patch) mirrorProbeFlag(WS_LOG_FLAG_KEY, patch.ws_full_log_enabled === true);
+  if ("requeue_after_lobby_fail_enabled" in patch) {
+    mirrorProbeFlag(REQUEUE_FLAG_KEY, patch.requeue_after_lobby_fail_enabled === true);
+  }
 });
 // Зеркало убранной фичи «кто поставил паузу»: без уборки строка осталась бы
 // в localStorage САЙТА у всех, кто ставил прежние версии.
