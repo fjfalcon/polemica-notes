@@ -272,7 +272,7 @@ describe("перехват сокета", () => {
   });
 });
 
-describe("сигналы жизненного цикла для автовозврата (9.75.0)", () => {
+describe("сигналы жизненного цикла для автовозврата (9.78.0)", () => {
   function startLifecycle(): void {
     window.dispatchEvent(
       new MessageEvent("message", { data: { source: "pn-room-events-cmd", on: true }, source: window }),
