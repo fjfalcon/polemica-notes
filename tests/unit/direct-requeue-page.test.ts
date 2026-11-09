@@ -4,11 +4,14 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 let created: any, events = new Map<string, Set<(value: any) => void>>();
 const makeSocket = vi.hoisted(() => vi.fn());
 vi.mock("@content/page/search-socket", () => ({ connectSearchSocket: makeSocket }));
-import { ENTER_SPREAD_MS, gameForm } from "@content/page/direct-requeue-page";
+import { ENTER_SPREAD_MS, bindPort, gameForm } from "@content/page/direct-requeue-page";
+/** Приватный порт к контент-скрипту — синхронный двойник (транспорт сам — MessageChannel). */
+const pagePort = { postMessage: vi.fn(), onmessage: null as ((event: MessageEvent) => void) | null };
+function answer(id: unknown, epochOf: unknown, ok: boolean) { pagePort.onmessage!({ data: { authority: true, id, epoch: epochOf, ok } } as MessageEvent); }
 let reports: any[], epoch = 0;
 const markup = `<meta name="csrf-param" content="_csrf-test"><meta name="csrf-token" content="fake-csrf"><game-search current-user='{"id":7,"authKey":"fake-key","mmr":{"value":1200}}' :verification-statuses='{"isVerified":true}' rating-game-search-service-url="https://game.polemicagame.com/search" :new-game-service='{"httpUrl":"https://game.polemicagame.com"}'></game-search>`;
 function command(op: string, signalAt = Date.now(), queued = false) {
-  window.dispatchEvent(new CustomEvent("pn-direct-requeue-command", { detail: JSON.stringify({ op, signalAt, epoch, queued }) }));
+  pagePort.onmessage!({ data: { op, signalAt, epoch, queued } } as MessageEvent);
 }
 function fire(name: string, value?: unknown) { for (const cb of [...(events.get(name) || [])]) cb(value); }
 function mount() {
@@ -25,10 +28,10 @@ beforeEach(() => {
   makeSocket.mockReset().mockReturnValue(created);
   vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, text: async () => markup,
     json: async () => ({ queues: { standard: { available: true }, polite: { available: true }, prime: { available: false } } }) })));
-  vi.spyOn(window, "postMessage").mockImplementation(((data: any) => {
+  bindPort(pagePort); pagePort.postMessage.mockReset().mockImplementation((data: any) => {
     reports.push(data);
-    if (["authorize-resume", "authorize-quit", "authorize-start"].includes(data?.state)) window.dispatchEvent(new MessageEvent("message", { source: window, data: { source: "pn-direct-requeue-resume-authority", id: data.id, epoch: data.epoch, ok: true } }));
-  }) as typeof window.postMessage);
+    if (["authorize-resume", "authorize-quit", "authorize-start"].includes(data?.state)) answer(data.id, data.epoch, true);
+  });
 });
 afterEach(() => { epoch++; command("cancel"); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 test("подготовка не выполняет HTML/iframe и не отправляет start_game_search", async () => {
@@ -65,9 +68,9 @@ test("молчащий socket заканчивает восстановлени�
   mount(); command("resume"); await vi.advanceTimersByTimeAsync(10_001); expect(reports.some(x => x.state === "resume-timeout")).toBe(true);
 });
 test("нет разрешения — startSearch не вызывается", async () => {
-  const { p } = mount(); vi.mocked(window.postMessage).mockImplementation(((data: any) => {
-    if (data?.state === "authorize-resume") window.dispatchEvent(new MessageEvent("message", { source: window, data: { source: "pn-direct-requeue-resume-authority", id: data.id, epoch: data.epoch, ok: false } }));
-  }) as typeof window.postMessage);
+  const { p } = mount(); pagePort.postMessage.mockImplementation((data: any) => {
+    if (data?.state === "authorize-resume") answer(data.id, data.epoch, false);
+  });
   command("resume"); await vi.advanceTimersByTimeAsync(1000); expect(p.startSearch).not.toHaveBeenCalled();
   expect(reports.some(x => x.state === "resume-new")).toBe(false);
 });
@@ -180,11 +183,11 @@ test("quit timeout is ambiguous and never repeats a potentially completed exit",
 });
 test("cancel before exit authorization prevents the HTTP side effect", async () => {
   await preparedPostgame();
-  vi.mocked(window.postMessage).mockImplementation(((data: any) => { reports.push(data); }) as typeof window.postMessage);
+  pagePort.postMessage.mockImplementation((data: any) => { reports.push(data); });
   command("quit-start"); await vi.advanceTimersByTimeAsync(0);
   const auth = reports.find(x => x.state === "authorize-quit");
   epoch++; command("cancel");
-  window.dispatchEvent(new MessageEvent("message", { source: window, data: { source: "pn-direct-requeue-resume-authority", id: auth.id, epoch: auth.epoch, ok: true } }));
+  answer(auth.id, auth.epoch, true);
   await vi.advanceTimersByTimeAsync(5000);
   expect(fetch).toHaveBeenCalledTimes(2); expect(starts()).toHaveLength(0);
 });
@@ -198,12 +201,10 @@ test.each(["cancel", "pagehide"])("%s while quit is in flight ignores its late s
 });
 test("new input or a new game may revoke start after the successful quit", async () => {
   await preparedPostgame();
-  vi.mocked(window.postMessage).mockImplementation(((data: any) => {
+  pagePort.postMessage.mockImplementation((data: any) => {
     reports.push(data);
-    if (data?.state?.startsWith("authorize-")) window.dispatchEvent(new MessageEvent("message", {
-      source: window, data: { source: "pn-direct-requeue-resume-authority", id: data.id, epoch: data.epoch, ok: data.state === "authorize-quit" },
-    }));
-  }) as typeof window.postMessage);
+    if (data?.state?.startsWith("authorize-")) answer(data.id, data.epoch, data.state === "authorize-quit");
+  });
   vi.mocked(fetch).mockImplementationOnce(async () => ({ ok: true }) as Response);
   command("quit-start"); await vi.advanceTimersByTimeAsync(1);
   expect(reports.some(x => x.state === "quit-confirmed")).toBe(true);
@@ -228,4 +229,19 @@ test("отмена попытки снимает отложенный вход �
   const submit = vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => {});
   command("enter"); epoch++; command("cancel");
   await vi.advanceTimersByTimeAsync(ENTER_SPREAD_MS + 1); expect(submit).not.toHaveBeenCalled();
+});
+test("команды и «разрешено» через window не действуют — только приватный порт", async () => {
+  command("prepare"); await vi.advanceTimersByTimeAsync(1); fire("session_initialized", null);
+  // Скрипт сайта шлёт прежнюю команду через window — запроса нет.
+  window.dispatchEvent(new CustomEvent("pn-direct-requeue-command", { detail: JSON.stringify({ op: "start", signalAt: Date.now(), epoch, queued: false }) }));
+  expect(created.emit).not.toHaveBeenCalled();
+  // Запрос разрешения уходит в порт; подделка ответа через window его не даёт.
+  pagePort.postMessage.mockImplementation((data: any) => {
+    reports.push(data);
+    if (data?.state === "authorize-quit") window.postMessage({ source: "pn-direct-requeue-resume-authority", id: data.id, epoch: data.epoch, ok: true }, "*");
+  });
+  vi.mocked(fetch).mockImplementationOnce(async () => ({ ok: true }) as Response);
+  command("quit-start"); await vi.advanceTimersByTimeAsync(4001);
+  expect(reports.some(x => x.state === "deferred")).toBe(true);
+  expect(reports.some(x => x.state === "quit-confirmed"), "выход не ушёл").toBe(false);
 });

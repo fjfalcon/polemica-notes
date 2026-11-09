@@ -7,20 +7,29 @@ type Owner = "queue" | "postgame";
 
 /** One PAGE connection and monotonically increasing epoch for both features.
  * A feature may cancel only its own work; queue cleanup must not kill postgame.
+ *
+ * Канал с миром страницы — ПРИВАТНЫЙ MessageChannel (ревью 09.11.2026): через
+ * window любой скрипт сайта, включая сторонние SDK, мог прислать команду
+ * «выйти и встать в поиск» и сам ответить «разрешено» вместо этого
+ * контент-скрипта. Порт уходит странице один раз при установке скрипта с
+ * одноразовым nonce из его тега; дальше команды и ответы о разрешении идут
+ * только через порт, подделать их со страницы нельзя.
  */
 export function setupDirectRequeue(): void {
   let owner: Owner | null = null;
   let ready = false, requested = false, found = false, epoch = 0;
   let installed: Promise<boolean> | null = null;
   let loadFailures = 0, lastLoadFailureAt = 0;
-  const command = (op: string, signalAt = 0, queued = false) => window.dispatchEvent(new CustomEvent("pn-direct-requeue-command", {
-    detail: JSON.stringify({ op, signalAt, epoch, queued }),
-  }));
+  let pagePort: MessagePort | null = null;
+  const command = (op: string, signalAt = 0, queued = false) => pagePort?.postMessage({ op, signalAt, epoch, queued });
   const ensure = (): Promise<boolean> => {
     if (installed) return installed;
     installed = new Promise(resolve => {
       const script = document.createElement("script");
       script.src = browser.runtime.getURL("direct-requeue-page.js");
+      const nonce = crypto.randomUUID();
+      script.dataset.pnNonce = nonce;
+      const channel = new MessageChannel();
       let settled = false;
       const finish = (ok: boolean) => {
         if (settled) return;
@@ -29,7 +38,14 @@ export function setupDirectRequeue(): void {
         resolve(ok);
       };
       const timer = setTimeout(() => finish(false), 3000);
-      script.onload = () => finish(true); script.onerror = () => finish(false);
+      script.onload = () => {
+        pagePort?.close();
+        pagePort = channel.port1;
+        pagePort.onmessage = (event: MessageEvent) => onReport(event.data);
+        window.postMessage({ source: "pn-direct-requeue-init", nonce }, location.origin, [channel.port2]);
+        finish(true);
+      };
+      script.onerror = () => finish(false);
       (document.head || document.documentElement).appendChild(script);
     });
     return installed;
@@ -79,9 +95,9 @@ export function setupDirectRequeue(): void {
   window.addEventListener("pagehide", () => {
     requested = ready = found = false; owner = null; ++epoch; command("cancel");
   });
-  window.addEventListener("message", event => {
-    const data = event.data;
-    if (event.source !== window || data?.source !== "pn-direct-requeue" || data.epoch !== epoch || owner === null) return;
+  const authority = (id: unknown, ok: boolean) => pagePort?.postMessage({ authority: true, id, epoch, ok });
+  function onReport(data: any): void {
+    if (data?.source !== "pn-direct-requeue" || data.epoch !== epoch || owner === null) return;
     const scope = owner;
     const logger = scope === "queue" ? "queue-requeue" : "postgame-search";
     if (["authorize-resume", "authorize-quit", "authorize-start"].includes(data.state)) {
@@ -92,10 +108,9 @@ export function setupDirectRequeue(): void {
         : canPostgameDirectAct(data.signalAt, action);
       void Promise.resolve(allowed).then(ok => {
         if (token !== epoch || owner !== scope) return;
-        window.postMessage({ source: "pn-direct-requeue-resume-authority", id: data.id, epoch, ok: ok === true }, location.origin);
+        authority(data.id, ok === true);
       }).catch(() => {
-        if (token === epoch && owner === scope)
-          window.postMessage({ source: "pn-direct-requeue-resume-authority", id: data.id, epoch, ok: false }, location.origin);
+        if (token === epoch && owner === scope) authority(data.id, false);
       });
       return;
     }
@@ -123,5 +138,5 @@ export function setupDirectRequeue(): void {
         notePostgameDirectResult(data.state, data.signalAt, data.sentAt, data.at, data.firstSentAt, data.attempt);
     } else if (["sent", "queued", "refused", "unavailable", "found"].includes(data.state))
       noteDirectRequeueResult(data.state, data.signalAt, data.sentAt, data.at, data.firstSentAt, data.attempt);
-  });
+  }
 }

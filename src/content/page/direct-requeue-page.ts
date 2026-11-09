@@ -42,10 +42,22 @@ function later(value: Run, callback: () => void, delay: number): void {
   const timer = setTimeout(() => { value.timers.delete(timer); if (current(value)) callback(); }, delay);
   value.timers.add(timer);
 }
+/**
+ * Приватный порт к контент-скрипту (см. direct-requeue-transport): только
+ * через него приходят команды и ответы о разрешении. window для них больше
+ * не слушаем — там их мог подделать любой скрипт сайта.
+ */
+interface PortLike { postMessage(data: unknown): void; onmessage: ((event: MessageEvent) => void) | null }
+let port: PortLike | null = null;
+/** Ждущие ответа о разрешении: id → ответ. */
+const pendingAuthority = new Map<string, (data: { epoch?: unknown; ok?: unknown }) => void>();
+function post(data: Record<string, unknown>): void {
+  try { port?.postMessage(data); } catch { /* контент-скрипт ушёл */ }
+}
 function report(value: Run, state: string, extra: Record<string, unknown> = {}): void {
-  if (current(value)) window.postMessage({ source: RESULT, state, epoch: value.epoch,
+  if (current(value)) post({ source: RESULT, state, epoch: value.epoch,
     signalAt: value.signalAt, quitSentAt: value.quitSentAt, quitConfirmedAt: value.quitConfirmedAt,
-    ...value.search?.requestTiming(), at: Date.now(), ...extra }, location.origin);
+    ...value.search?.requestTiming(), at: Date.now(), ...extra });
 }
 function cancel(): void {
   const old = run;
@@ -62,17 +74,13 @@ function authorize(value: Run, action: "quit" | "start" | "resume" = "resume"): 
     const id = crypto.randomUUID();
     const finish = (ok: boolean) => {
       clearTimeout(timer); value.timers.delete(timer); value.authorizations.delete(abort);
-      window.removeEventListener("message", receive); resolve(ok && current(value));
+      pendingAuthority.delete(id); resolve(ok && current(value));
     };
     const abort = () => finish(false);
-    const receive = (event: MessageEvent) => {
-      if (event.source === window && event.data?.source === "pn-direct-requeue-resume-authority" &&
-        event.data.id === id && event.data.epoch === value.epoch) finish(event.data.ok === true);
-    };
     const timer = setTimeout(abort, action === "resume" ? 750 : 4000);
     value.timers.add(timer); value.authorizations.add(abort);
-    window.addEventListener("message", receive);
-    window.postMessage({ source: RESULT, state: "authorize-" + action, id, epoch: value.epoch, signalAt: value.signalAt }, location.origin);
+    pendingAuthority.set(id, data => { if (data.epoch === value.epoch) finish(data.ok === true); });
+    post({ source: RESULT, state: "authorize-" + action, id, epoch: value.epoch, signalAt: value.signalAt });
   });
 }
 async function prepare(value: Run): Promise<void> {
@@ -214,11 +222,30 @@ function handleCommand(command: Command): void {
       Math.round(ENTER_SPREAD_MS * Math.random()));
   }
 }
+/** Привязать приватный порт: команды и ответы о разрешении. Экспорт — тестовый шов. */
+export function bindPort(next: PortLike): void {
+  port = next;
+  next.onmessage = (event: MessageEvent) => {
+    const data = event.data;
+    if (data?.authority === true) { pendingAuthority.get(data.id)?.(data); return; }
+    try { handleCommand(data); } catch { /* unsupported command */ }
+  };
+}
 const marker = "data-pn-direct-requeue-installed";
-if (!document.documentElement.hasAttribute(marker)) {
+// Одноразовый nonce из СВОЕГО тега: init с портом принимаем только с ним —
+// иначе скрипт сайта мог бы первым подсунуть свой порт.
+const nonce = (document.currentScript as HTMLScriptElement | null)?.dataset.pnNonce ?? "";
+// Каждый экземпляр (после перезагрузки расширения скрипт ставится заново)
+// гасит СВОЮ попытку на уходе со страницы; метка — для smoke-проверки бандла.
 document.documentElement.setAttribute(marker, "1");
-window.addEventListener("pn-direct-requeue-command", event => {
-  try { handleCommand(JSON.parse((event as CustomEvent<string>).detail)); } catch { /* unsupported command */ }
-});
 window.addEventListener("pagehide", cancel);
+if (nonce) {
+  const onInit = (event: MessageEvent) => {
+    if (event.source !== window || event.data?.source !== "pn-direct-requeue-init" || event.data.nonce !== nonce) return;
+    const received = event.ports?.[0];
+    if (!received) return;
+    window.removeEventListener("message", onInit);
+    bindPort(received);
+  };
+  window.addEventListener("message", onInit);
 }

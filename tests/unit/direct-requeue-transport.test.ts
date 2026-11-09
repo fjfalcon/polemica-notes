@@ -15,19 +15,38 @@ import { setupDirectRequeue } from "@content/direct-requeue-transport";
 interface Port { prepare(): void; cancel(): void; start(at: number): boolean; resume(at: number, queued: boolean): void; enterGame(): boolean }
 let queue: Port, postgame: Port;
 let commands: { op: string; epoch: number; signalAt: number }[] = [];
+/** Ответы о разрешении, ушедшие странице через приватный порт. */
+let authorities: { id: unknown; epoch: number; ok: boolean }[] = [];
+/** Синхронный двойник MessageChannel: порт страницы — port2. */
+class FakePort {
+  onmessage: ((event: { data: any }) => void) | null = null;
+  other!: FakePort;
+  postMessage(data: unknown) { this.other.onmessage?.({ data }); }
+  close() {}
+}
+class FakeChannel {
+  port1 = new FakePort(); port2 = new FakePort();
+  constructor() { this.port1.other = this.port2; this.port2.other = this.port1; }
+}
+let pagePort: FakePort | null = null;
+let inits: { data: any; transfer: unknown[] }[] = [];
 beforeAll(() => {
-  window.addEventListener("pn-direct-requeue-command", event => commands.push(JSON.parse((event as CustomEvent<string>).detail)));
+  vi.stubGlobal("MessageChannel", FakeChannel);
   setupDirectRequeue(); queue = mocks.queuePort.mock.calls[0][0]; postgame = mocks.postgamePort.mock.calls[0][0];
 });
 beforeEach(() => {
-  queue.cancel(); postgame.cancel(); commands = []; vi.clearAllMocks();
+  queue.cancel(); postgame.cancel(); commands = []; authorities = []; vi.clearAllMocks();
   mocks.queueAuth.mockReturnValue(true); mocks.postgameAuth.mockReturnValue(true);
-  vi.spyOn(window, "postMessage").mockImplementation(() => {});
+  vi.spyOn(window, "postMessage").mockImplementation(((data: any, _origin: string, transfer?: unknown[]) => {
+    if (data?.source !== "pn-direct-requeue-init") return;
+    inits.push({ data, transfer: transfer ?? [] });
+    pagePort = (transfer?.[0] as FakePort) ?? null;
+    if (pagePort) pagePort.onmessage = e => (e.data?.authority ? authorities.push(e.data) : commands.push(e.data));
+  }) as typeof window.postMessage);
 });
 afterEach(() => { queue.cancel(); postgame.cancel(); vi.restoreAllMocks(); });
 function report(state: string, epoch = commands.at(-1)!.epoch) {
-  window.dispatchEvent(new MessageEvent("message", { source: window,
-    data: { source: "pn-direct-requeue", epoch, state, id: "request", signalAt: 123, at: 200 } }));
+  pagePort!.postMessage({ source: "pn-direct-requeue", epoch, state, id: "request", signalAt: 123, at: 200 });
 }
 async function prepare(port: Port) {
   port.prepare(); document.querySelector<HTMLScriptElement>('script[src$="direct-requeue-page.js"]')?.dispatchEvent(new Event("load"));
@@ -50,15 +69,15 @@ test("late async authority from a cancelled postgame cannot grant a new owner", 
   let grant!: (ok: boolean) => void; mocks.postgameAuth.mockReturnValue(new Promise<boolean>(resolve => { grant = resolve; }));
   await prepare(postgame); report("authorize-quit");
   postgame.cancel(); await prepare(queue); grant(true); await Promise.resolve();
-  expect(window.postMessage).not.toHaveBeenCalled();
+  expect(authorities).toEqual([]);
 });
 test("queue owner cannot authorize postgame quit; current postgame routes async gates", async () => {
   await prepare(queue); report("authorize-quit"); await Promise.resolve();
   expect(mocks.postgameAuth).not.toHaveBeenCalled();
-  expect(window.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false }), location.origin);
+  expect(authorities.at(-1)).toEqual(expect.objectContaining({ ok: false }));
   queue.cancel(); await prepare(postgame); report("authorize-start"); await Promise.resolve();
   expect(mocks.postgameAuth).toHaveBeenCalledWith(123, "start");
-  expect(window.postMessage).toHaveBeenLastCalledWith(expect.objectContaining({ ok: true }), location.origin);
+  expect(authorities.at(-1)).toEqual(expect.objectContaining({ ok: true }));
 });
 test("found game enters once and resume results reach only their owner", async () => {
   await prepare(postgame); report("found"); expect(postgame.enterGame()).toBe(true); expect(postgame.enterGame()).toBe(false);
@@ -76,4 +95,18 @@ test("BFCache return cannot reuse PAGE readiness disposed at pagehide", async ()
   window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
   report("ready", oldEpoch); expect(postgame.start(123)).toBe(false);
   await prepare(postgame); expect(postgame.start(123)).toBe(true);
+});
+
+test("канал приватный: порт уходит странице один раз с nonce тега; window-подделки не действуют", async () => {
+  expect(inits).toHaveLength(1);
+  const [{ data, transfer }] = inits;
+  expect(typeof data.nonce).toBe("string");
+  expect(data.nonce.length).toBeGreaterThan(10);
+  expect(transfer).toHaveLength(1);
+  await prepare(postgame);
+  // Подделка «разрешено» и отчёта через window — как раньше — ничего не меняет.
+  window.dispatchEvent(new MessageEvent("message", { source: window,
+    data: { source: "pn-direct-requeue", epoch: commands.at(-1)!.epoch, state: "found", signalAt: 1, at: 1 } }));
+  expect(postgame.enterGame(), "found пришёл не через порт").toBe(false);
+  report("found"); expect(postgame.enterGame()).toBe(true);
 });
