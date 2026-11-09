@@ -378,10 +378,12 @@ test("мост после отсрочки ввода помнит время с
 
 describe("прямой запрос из комнаты",()=>{
   test("подготовленный сокет запускается по роспуску, переход только после ACK",()=>{
-    const start=vi.fn(()=>true);setDirectRequeuePort({prepare:vi.fn(),cancel:vi.fn(),start});
+    const start=vi.fn(()=>true);const handoff=vi.fn();setDirectRequeuePort({prepare:vi.fn(),cancel:vi.fn(),start,handoff});
     pregameWithCountdown(true,"00:02");queueRequeueFeature.enable(ctx);
     const at=Date.now();roomEvent("on_stop_game");expect(start).toHaveBeenCalledExactlyOnceWith(at);expect(assignSpy).not.toHaveBeenCalled();
     vi.advanceTimersByTime(40);noteDirectRequeueResult("queued",at,at,Date.now());vi.advanceTimersByTime(50);expect(assignSpy).toHaveBeenCalledExactlyOnceWith("/game-search");
+    // Передача ДО навигации: отмена в её окне не сняла бы подтверждённую очередь.
+    expect(handoff).toHaveBeenCalledTimes(1);
     expect(JSON.parse(sessionStorage.getItem("pn_direct_requeue_handoff")!)).toEqual({ signalAt: at, queued: true });
   });
   test("DOM-стадия после запроса отменяет прямой путь до позднего ACK",()=>{

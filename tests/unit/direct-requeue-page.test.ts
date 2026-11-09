@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 let created: any, events = new Map<string, Set<(value: any) => void>>();
 const makeSocket = vi.hoisted(() => vi.fn());
 vi.mock("@content/page/search-socket", () => ({ connectSearchSocket: makeSocket }));
-import { bindPort, gameForm, listenForInit } from "@content/page/direct-requeue-page";
+import { HANDOFF_TTL_MS, bindPort, gameForm, listenForInit } from "@content/page/direct-requeue-page";
 /** Приватный порт к контент-скрипту — синхронный двойник (транспорт сам — MessageChannel). */
 const pagePort = { postMessage: vi.fn(), onmessage: null as ((event: MessageEvent) => void) | null };
 function answer(id: unknown, epochOf: unknown, ok: boolean) { pagePort.onmessage!({ data: { authority: true, id, epoch: epochOf, ok } } as MessageEvent); }
@@ -321,4 +321,13 @@ test("после передачи (handoff) отмена только закры
   command("handoff"); epoch++; command("cancel");
   expect(created.emit).not.toHaveBeenCalledWith("stop_game_search");
   expect(created.disconnect).toHaveBeenCalled();
+});
+
+test("переданная попытка без навигации закрывается через HANDOFF_TTL_MS, без stop", async () => {
+  command("prepare"); await vi.advanceTimersByTimeAsync(1); fire("session_initialized", null);
+  command("start"); fire("on_start_game_search", { success: true });
+  command("handoff");
+  await vi.advanceTimersByTimeAsync(HANDOFF_TTL_MS - 1); expect(created.disconnect).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1); expect(created.disconnect).toHaveBeenCalled();
+  expect(created.emit).not.toHaveBeenCalledWith("stop_game_search");
 });

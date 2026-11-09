@@ -293,6 +293,14 @@ describe("stop(): снимаем только свой поиск", () => {
     expect(sock.disconnect).toHaveBeenCalled();
   });
 
+  test("группа нашлась, пока ждём ответа на отменённый запрос — снимаем, не входим", async () => {
+    const { search, sock, handlers } = await sentSearch();
+    search.stop();
+    handlers.get("on_game_found")!({ gameId: 5, dynamicFilling: false });
+    expect(sock.emit).toHaveBeenCalledExactlyOnceWith("stop_game_search");
+    expect(search.foundGame()).toBeNull();
+  });
+
   test("в очереди — stop сразу", async () => {
     const { search, sock, handlers } = await sentSearch();
     handlers.get("on_start_game_search")!({ success: true });

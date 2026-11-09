@@ -36,6 +36,8 @@ interface Run {
   authorizations: Set<() => void>;
 }
 const RESULT = "pn-direct-requeue";
+/** Сколько живёт переданная попытка, если навигация так и не случилась. */
+export const HANDOFF_TTL_MS = 15_000;
 let run: Run | null = null;
 let lastEpoch = 0;
 const current = (value: Run) => run === value;
@@ -224,6 +226,9 @@ function handleCommand(command: Command): void {
     if (!Number.isFinite(command.signalAt) || command.signalAt <= 0 || command.signalAt > Date.now() || !value.search?.start()) report(value, "unavailable");
   } else if (command.op === "handoff") {
     value.handedOff = true;
+    // Навигация не случилась (beforeunload и т.п.) — ничейный сокет не живёт
+    // вечно: закрываем без stop, поиск восстановит страница поиска.
+    later(value, () => cancel(), HANDOFF_TTL_MS);
   } else if (command.op === "enter") {
     const found = value.search?.foundGame();
     if (!found || !value.config || value.entered) return;
