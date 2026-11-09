@@ -13,6 +13,7 @@ import {
   roomPpkProbes,
   ruPpkProbes,
   roomPlayerActionProbes,
+  roomPlayerVolumeProbes,
   ruPlayerActionProbes,
   ratingPageProbes,
   runProbes,
@@ -72,6 +73,7 @@ describe("живые семантические контракты бандло�
       ...runProbes(ruPpkProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
       ...runProbes(roomPlayerActionProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
       ...runProbes(ruPlayerActionProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
+      ...runProbes(roomPlayerVolumeProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
       ...runProbes(ratingPageProbes, ratingPage).map((r) => ({ ...r, bundle: "rating" })),
     ].filter((r) => !r.ok);
     expect(

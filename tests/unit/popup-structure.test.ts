@@ -196,6 +196,7 @@ describe("вкладка «Иконки» собрала всё про плит�
       "btn_hide_video_enabled",
       "camera_rotate_enabled",
       "player_mute_enabled",
+      "player_volume_memory_enabled",
       "role_marker_enabled",
       "nick_colors_enabled",
       "note_frame_width",

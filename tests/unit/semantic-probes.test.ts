@@ -14,6 +14,7 @@ import {
   roomPpkProbes,
   ruPpkProbes,
   roomPlayerActionProbes,
+  roomPlayerVolumeProbes,
   ruPlayerActionProbes,
   ratingPageProbes,
   siteCssProbes,
@@ -43,6 +44,7 @@ const ROOM_PPK = snip("room-ppk.txt");
 const RU_PPK = snip("ru-ppk.txt");
 const ROOM_PA = snip("room-player-actions.txt");
 const RU_PA = snip("ru-player-actions.txt");
+const ROOM_PV = snip("room-player-volume.txt");
 const RATING_PAGE = snip("rating-page.txt");
 
 describe("пробы зелёные на реальных фрагментах бандлов", () => {
@@ -58,6 +60,7 @@ describe("пробы зелёные на реальных фрагментах �
     ["RU: ППК", ruPpkProbes, RU_PPK],
     ["room-main: действия игрока", roomPlayerActionProbes, ROOM_PA],
     ["RU: действия игрока", ruPlayerActionProbes, RU_PA],
+    ["room-main: громкость игрока", roomPlayerVolumeProbes, ROOM_PV],
     ["rating: страница лидеров", ratingPageProbes, RATING_PAGE],
   ] as const)("%s", (_name, probes, text) => {
     const failed = runProbes(probes, text).filter((r) => !r.ok);
@@ -274,6 +277,31 @@ describe("каждая проба умирает от своего дрифта"
       (t) => t.replace("Сделать выстрел", "Выстрелить")],
     ["pa RU check: подпись сменилась", ruPlayerActionProbes, "check", RU_PA,
       (t) => t.replace("Раскрыть роль", "Проверить")],
+    // Громкость игрока
+    ["pv updateVolumeIcon: громкость не v/100", roomPlayerVolumeProbes, "updateVolumeIcon", ROOM_PV,
+      (t) => t.replace("var t=this.currentVolume/100;", "var t=this.currentVolume/50;")],
+    ["pv menuCallsUpdateVolumeIcon: меню ведёт в другой метод", roomPlayerVolumeProbes, "menuCallsUpdateVolumeIcon", ROOM_PV,
+      (t) => t.replace("onPlayerVolumeChanged:o.updateVolumeIcon}", "onPlayerVolumeChanged:o.setPlayerVolume}")],
+    ["pv sliderShowsCurrentVolume: ползунок не от currentVolume", roomPlayerVolumeProbes, "sliderShowsCurrentVolume", ROOM_PV,
+      (t) => t.replace("volume:i.player.currentVolume,", "volume:i.player.volume,")],
+    ["pv sliderMarkup: шкала не 0…100", roomPlayerVolumeProbes, "sliderMarkup", ROOM_PV,
+      (t) => t.replace('min:"0",max:"100"', 'min:"0",max:"1"')],
+    ["pv sliderEmitsValue: значение пересчитывается", roomPlayerVolumeProbes, "sliderEmitsValue", ROOM_PV,
+      (t) => t.replace("parseFloat(e.target.value))", "parseFloat(e.target.value)/100)")],
+    ["pv menuContainerClass: контейнер меню переименован", roomPlayerVolumeProbes, "menuContainerClass", ROOM_PV,
+      (t) => t.replace('{class:"menu__container"}', '{class:"menu__body"}')],
+    ["pv profileLinkHref: ссылка по нику", roomPlayerVolumeProbes, "profileLinkHref", ROOM_PV,
+      (t) => t.replaceAll('"/profile/".concat(this.player.playerView.user.id)', '"/profile/".concat(this.player.playerView.user.username)')],
+    ["pv profileLinkInMenu: ссылка ушла из меню", roomPlayerVolumeProbes, "profileLinkInMenu", ROOM_PV,
+      (t) => t.replace('[yo("a",{href:o.playerProfileLink', '[yo("button",{onClick:o.openProfile')],
+    ["pv currentVolumeData: поле переименовано", roomPlayerVolumeProbes, "currentVolumeData", ROOM_PV,
+      (t) => t.replace("currentVolume:100,", "volume:100,")],
+    ["pv itsMeComputed: своя плитка по-другому", roomPlayerVolumeProbes, "itsMeComputed", ROOM_PV,
+      (t) => t.replace("itsMe:function(){return this.id===this.$store.state.playerId}", "isMine:function(){return this.id===this.$store.state.playerId}")],
+    ["pv outcryRestores: выкрик не сохраняет громкость", roomPlayerVolumeProbes, "outcryRestores", ROOM_PV,
+      (t) => t.replace("this.savedVolume=this.currentVolume,", "")],
+    ["pv outcryWatcherRestores: сайт не возвращает громкость после выкрика", roomPlayerVolumeProbes, "outcryWatcherRestores", ROOM_PV,
+      (t) => t.replace("&&this.updateVolumeIcon(this.savedVolume)}", "}")],
     // Страница лидеров /ratings
     ["rating columnsOrder: колонка MMR переехала", ratingPageProbes, "columnsOrder", RATING_PAGE,
       (t) => t.replace('{key:"name",title:"Игрок"},{key:"mmr",title:"MMR"}', '{key:"mmr",title:"MMR"},{key:"name",title:"Игрок"}')],

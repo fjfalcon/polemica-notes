@@ -66,6 +66,8 @@ export const DEFAULT_SETTINGS: Settings = {
   role_phase_auto_switch_enabled: false,
   camera_rotate_enabled: true,
   player_mute_enabled: true,
+  // Сайт сбрасывает громкость игрока с каждой игрой (просьба владельца 09.11.2026).
+  player_volume_memory_enabled: true,
   nick_colors_enabled: true,
   nick_aliases_enabled: true,
   nick_aliases_on_stream: true,

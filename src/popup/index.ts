@@ -1701,6 +1701,7 @@ document.addEventListener("DOMContentLoaded", () => {
     set("camera_reload_enabled", items.camera_reload_enabled);
     set("stream_lost_icon_enabled", items.stream_lost_icon_enabled);
     set("player_mute_enabled", items.player_mute_enabled);
+    set("player_volume_memory_enabled", items.player_volume_memory_enabled);
     set("nick_colors_enabled", items.nick_colors_enabled);
     set("nick_aliases_enabled", items.nick_aliases_enabled);
     set("nick_aliases_on_stream", items.nick_aliases_on_stream);
@@ -1865,6 +1866,7 @@ document.addEventListener("DOMContentLoaded", () => {
       camera_reload_enabled: cb("camera_reload_enabled", true),
       stream_lost_icon_enabled: cb("stream_lost_icon_enabled", true),
       player_mute_enabled: cb("player_mute_enabled", true),
+      player_volume_memory_enabled: cb("player_volume_memory_enabled", true),
       nick_colors_enabled: cb("nick_colors_enabled", true),
       nick_aliases_enabled: cb("nick_aliases_enabled", true),
       nick_aliases_on_stream: cb("nick_aliases_on_stream", true),
@@ -2092,6 +2094,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "camera_reload_enabled",
     "stream_lost_icon_enabled",
     "player_mute_enabled",
+    "player_volume_memory_enabled",
     "nick_colors_enabled",
     "nick_aliases_enabled",
     "nick_aliases_on_stream",

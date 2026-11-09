@@ -83,6 +83,8 @@ const EXEMPT: Record<string, { count: number; reason: string }> = {
     { count: 1, reason: "syncOpenAttrs пишет open-атрибут только при расхождении с Set opened (сравнение перед записью); гейты compactOn/childList" },
   "src/content/features/player-notes.ts":
     { count: 1, reason: "страховочный проход целиком на маркер-гейтах (data-pn-*); кандидат №1 на сценарий при следующем касании файла" },
+  "src/content/features/player-volume-memory.ts":
+    { count: 1, reason: "подписчик читает ники плиток и шлёт команду page-скрипту (дроссель 500 мс, подпись стола); единственный свой узел — тег page-скрипта, один раз под флагом probe" },
   "src/content/features/postgame-search.ts":
     { count: 1, reason: "tick() машины кликает по кнопкам сайта и может показать тост (общий core-тост, не пер-батч); собственных узлов в страницу не пишет" },
   "src/content/features/queue-guard.ts":

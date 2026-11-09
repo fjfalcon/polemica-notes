@@ -707,6 +707,53 @@ export const ruPlayerActionProbes: Record<string, Probe> = {
   check: has('reveal_role:"Раскрыть роль"', "кнопка проверки — ровно эта подпись"),
 };
 
+/**
+ * Громкость игрока (player-volume-memory, 09.11.2026). Page-скрипт зовёт у
+ * компонента плитки метод сайта updateVolumeIcon(v) — тот же, что ползунок
+ * меню; content запоминает отпущенный ползунок по id из ссылки «Профиль».
+ */
+export const roomPlayerVolumeProbes: Record<string, Probe> = {
+  updateVolumeIcon: re(
+    /updateVolumeIcon:function\((\w+)\)\{this\.currentVolume=\1;var (\w+)=this\.currentVolume\/100;this\.\$store\.state\.useAudioAmplification\?this\.volumeAmplifier\.setVolume\(\2\):this\.\$refs\.audioOutput\.volume=\2\}/,
+    "updateVolumeIcon(v): currentVolume = v и громкость звука v/100 (усилитель или <audio>)",
+  ),
+  menuCallsUpdateVolumeIcon: re(
+    /onPlayerVolumeChanged:\w+\.updateVolumeIcon[,}]/,
+    "ползунок меню плитки ведёт в updateVolumeIcon",
+  ),
+  sliderShowsCurrentVolume: re(
+    /\(\w+,\{volume:\w+\.player\.currentVolume,onChanged:\w+\.playerVolumeChanged\}/,
+    "ползунок показывает currentVolume плитки",
+  ),
+  sliderMarkup: re(
+    /\w+=\{class:"volume__container"\},\w+=\{class:"volume"\}[\s\S]{0,1200}yo\("input",\{type:"range",min:"0",max:"100",value:\w+\.volume/,
+    "ползунок — input[type=range] 0…100 в .volume__container > .volume",
+  ),
+  sliderEmitsValue: re(
+    /changeValue:function\((\w+)\)\{return this\.\$emit\("changed",parseFloat\(\1\.target\.value\)\)\}/,
+    "значение ползунка — его value как есть (шкала 0…100)",
+  ),
+  menuContainerClass: re(/\w+=\{class:"menu"\},\w+=\{class:"menu__container"\}/, "меню плитки — .menu > .menu__container"),
+  profileLinkHref: re(
+    /playerProfileLink:function\(\)\{[^}]*\?"\/profile\/"\.concat\(this\.player\.playerView\.user\.id\):null\}/,
+    "ссылка «Профиль» меню — /profile/<playerView.user.id>",
+  ),
+  profileLinkInMenu: re(
+    /\w+\.playerProfileLink\?\(to\(\),ao\("li",\w+,\[yo\("a",\{href:\w+\.playerProfileLink/,
+    "ссылка профиля — <a href> в том же меню, что ползунок",
+  ),
+  currentVolumeData: re(/actionTimerDuration:0,currentVolume:100,/, "currentVolume — поле data плитки"),
+  itsMeComputed: re(/itsMe:function\(\)\{return this\.id===this\.\$store\.state\.playerId\}/, "itsMe — своя плитка"),
+  outcryRestores: re(
+    /startOutcry:function\(\w+\)\{this\.isOutcry=!0,this\.savedVolume=this\.currentVolume,/,
+    "выкрик: isOutcry и сохранение громкости (её вернёт сайт)",
+  ),
+  outcryWatcherRestores: re(
+    /isOutcry:function\((\w+)\)\{!\1&&this\.currentVolume===this\.outcryVolume&&this\.\$store\.state\.useAudioAmplification&&this\.updateVolumeIcon\(this\.savedVolume\)\}/,
+    "конец выкрика: сайт сам возвращает сохранённую громкость (поэтому во время выкрика не применяем)",
+  ),
+};
+
 export function runProbes(
   probes: Record<string, Probe>,
   text: string,

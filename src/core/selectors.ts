@@ -181,6 +181,16 @@ export const SITE = {
    */
   playerMenuItem: ".player .menu__container li",
   /**
+   * Ползунок «Громкость игрока» в меню плитки (VolumeControl, room/bundle,
+   * сверено 09.11.2026): `.menu__container … .volume input[type=range]`,
+   * 0…100. Меню рисуется только открытым (v-if) — ползунок живёт, пока оно
+   * открыто. Тот же блок в меню судьи.
+   */
+  playerVolumeSlider: '.player .menu__container .volume input[type="range"]',
+  playerMenuContainer: ".player .menu__container",
+  /** Ссылка «Профиль» в том же меню: playerProfileLink = /profile/<userId>. */
+  playerMenuProfileLink: 'a[href^="/profile/"]',
+  /**
    * Голосование за наказание на плитке обвиняемого (PenaltyVoting): заголовок
    * `${type}_voting_title` и кнопки «Да»/«Нет». Тот же блок у технического фола
    * и удаления — ППК узнаём по заголовку.

@@ -67,6 +67,8 @@ export interface Settings {
   camera_rotate_enabled: boolean;
   /** Кнопка локального мьюта игрока (глушит его звук только у меня). */
   player_mute_enabled: boolean;
+  /** Громкость игрока с ползунка сайта запоминается и возвращается в следующих играх. */
+  player_volume_memory_enabled: boolean;
   /** Цветные ники игроков (цвет задаётся в заметке; палитра — как у рамок). */
   nick_colors_enabled: boolean;
   /**
