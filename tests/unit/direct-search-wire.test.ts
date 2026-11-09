@@ -1,14 +1,15 @@
-/** Real socket.io-client 2.x over a local WebSocket server, with EIO3/SIO4
- * framing. No browser, game account, external server or fake client is used.
+/** Наш клиент Socket.IO 2 (search-socket.ts) поверх настоящего WebSocket к
+ * локальному серверу с кадрами EIO3/SIO4 — как у сервера поиска сайта. Без
+ * браузера, аккаунта и внешней сети. ws — только dev-зависимость тестов.
  */
-import { createRequire } from "node:module";
 import { once } from "node:events";
 import type { EventEmitter } from "node:events";
 import type { IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
-import io from "socket.io-client";
+import { WebSocketServer as WsServer, WebSocket as WsClient } from "ws";
 import { expect, test } from "vitest";
 import { DirectSearch, type PreparedConfig, type SearchOutcome } from "@content/page/direct-search";
+import { connectSearchSocket } from "@content/page/search-socket";
 
 interface Peer extends EventEmitter {
   send(data: string): void;
@@ -19,10 +20,8 @@ interface WireServer extends EventEmitter {
   address(): AddressInfo | string | null;
   close(done: (error?: Error) => void): void;
 }
-// ws is the existing engine.io-client transitive dependency; no additional
-// dependency or ambient module declaration is needed for this test.
-const require = createRequire(import.meta.url);
-const WebSocketServer = require("ws").Server as new (options: { host: string; port: number }) => WireServer;
+const WebSocketServer = WsServer as unknown as new (options: { host: string; port: number }) => WireServer;
+const WebSocketImpl = WsClient as unknown as { new (url: string): WebSocket };
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -90,9 +89,9 @@ test.each([false, true])("real EIO3 /search wire: existing queue = %s", async ex
       endpoint: `http://127.0.0.1:${address.port}/search`,
       request: { gameMode: "league", role: "player", userId: 7, authKey: "wire-test-only", censorship: ["standard", "prime"] },
     };
-    search = new DirectSearch(config, settings => io(settings.endpoint, {
-      transports: ["websocket"], forceNew: true, reconnection: false,
+    search = new DirectSearch(config, settings => connectSearchSocket(settings.endpoint, {
       query: { userId: settings.request.userId, authKey: settings.request.authKey, intention: "game_search" },
+      WebSocketImpl,
     }), state => {
       outcomes.push(state);
       if (state === "ready" || state === "existing-search") initialization.resolve(state);
@@ -114,6 +113,8 @@ test.each([false, true])("real EIO3 /search wire: existing queue = %s", async ex
     expect(urls[0].searchParams.get("authKey")).toBe("wire-test-only");
     expect(urls[0].searchParams.get("intention")).toBe("game_search");
     expect(connectPackets).toHaveLength(1);
+    // Как socket.io-client 2.x: query — и в пакете подключения пространства имён.
+    expect(connectPackets[0]).toBe("40/search?userId=7&authKey=wire-test-only&intention=game_search,");
     expect(requests).toEqual([]);
 
     if (existing) {

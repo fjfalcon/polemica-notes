@@ -1,4 +1,4 @@
-import io from "socket.io-client";
+import { connectSearchSocket } from "./search-socket";
 import { DirectSearch, type FoundGame, type SearchOutcome } from "./direct-search";
 import { parseSearchBootstrap, applySearchAvailability, type SearchBootstrap } from "./search-bootstrap";
 import { ResumeSearch, type ResumeClient, type ResumeResult } from "./resume-search";
@@ -33,6 +33,8 @@ interface Run {
   authorizations: Set<() => void>;
 }
 const RESULT = "pn-direct-requeue";
+/** Разброс входа в найденную игру — константа сайта (Math.round(1e4*Math.random())). */
+export const ENTER_SPREAD_MS = 10_000;
 let run: Run | null = null;
 let lastEpoch = 0;
 const current = (value: Run) => run === value;
@@ -98,8 +100,7 @@ async function prepare(value: Run): Promise<void> {
     const config = applySearchAvailability(bootstrap, state);
     if (!config) { report(value, "unavailable"); return; }
     value.config = config;
-    const search = new DirectSearch(config, settings => io(settings.endpoint, {
-      transports: ["websocket"], forceNew: true, reconnection: false,
+    const search = new DirectSearch(config, settings => connectSearchSocket(settings.endpoint, {
       query: { userId: settings.request.userId, authKey: settings.request.authKey, intention: "game_search" },
     }), (state: SearchOutcome) => report(value, state));
     value.search = search;
@@ -205,7 +206,12 @@ function handleCommand(command: Command): void {
     const found = value.search?.foundGame();
     if (!found || !value.config || value.entered) return;
     value.entered = true;
-    const form = gameForm(found, value.config); document.body.appendChild(form); form.submit();
+    // Как у сайта (on_game_found): вход в найденную игру — через случайные
+    // 0–10 с, чтобы весь стол не ломился на сервер в один миг. Отменяется
+    // вместе с попыткой (later → таймеры run).
+    const config = value.config;
+    later(value, () => { const form = gameForm(found, config); document.body.appendChild(form); form.submit(); },
+      Math.round(ENTER_SPREAD_MS * Math.random()));
   }
 }
 const marker = "data-pn-direct-requeue-installed";

@@ -32,6 +32,7 @@
     "@types/chrome": "^0.0.270",
     "@types/node": "^26.1.2",
     "@types/webextension-polyfill": "^0.12.5",
+    "@types/ws": "^8.18.1",
     "fast-check": "^4.9.0",
     "fast-glob": "^3.3.3",
     "jsdom": "^30.0.1",
@@ -39,10 +40,10 @@
     "tsup": "^8.3.5",
     "typescript": "^5.7.2",
     "vitest": "^5.0.3",
-    "web-ext": "^10.7.0"
+    "web-ext": "^10.7.0",
+    "ws": "^8.18.3"
   },
   "dependencies": {
-    "socket.io-client": "2.5.0",
     "webextension-polyfill": "^0.12.0"
   },
   "overrides": {

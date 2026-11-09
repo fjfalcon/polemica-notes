@@ -3,8 +3,8 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 let created: any, events = new Map<string, Set<(value: any) => void>>();
 const makeSocket = vi.hoisted(() => vi.fn());
-vi.mock("socket.io-client", () => ({ default: makeSocket }));
-import { gameForm } from "@content/page/direct-requeue-page";
+vi.mock("@content/page/search-socket", () => ({ connectSearchSocket: makeSocket }));
+import { ENTER_SPREAD_MS, gameForm } from "@content/page/direct-requeue-page";
 let reports: any[], epoch = 0;
 const markup = `<meta name="csrf-param" content="_csrf-test"><meta name="csrf-token" content="fake-csrf"><game-search current-user='{"id":7,"authKey":"fake-key","mmr":{"value":1200}}' :verification-statuses='{"isVerified":true}' rating-game-search-service-url="https://game.polemicagame.com/search" :new-game-service='{"httpUrl":"https://game.polemicagame.com"}'></game-search>`;
 function command(op: string, signalAt = Date.now(), queued = false) {
@@ -214,6 +214,18 @@ test("game found immediately after postgame start enters only once", async () =>
   command("quit-start"); await vi.advanceTimersByTimeAsync(1);
   fire("on_game_found", { gameId: 91, dynamicFilling: true });
   const submit = vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => {});
-  command("enter"); command("enter"); expect(submit).toHaveBeenCalledTimes(1);
+  vi.spyOn(Math, "random").mockReturnValue(0.5);
+  command("enter"); command("enter");
+  // Как у сайта: вход — через случайную долю ENTER_SPREAD_MS, не мгновенно.
+  await vi.advanceTimersByTimeAsync(ENTER_SPREAD_MS / 2 - 1); expect(submit).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1); expect(submit).toHaveBeenCalledTimes(1);
   expect(document.querySelector('input[name="game_id"]')?.getAttribute("value")).toBe("91");
+});
+test("отмена попытки снимает отложенный вход в найденную игру", async () => {
+  await preparedPostgame(); vi.mocked(fetch).mockImplementationOnce(async () => ({ ok: true }) as Response);
+  command("quit-start"); await vi.advanceTimersByTimeAsync(1);
+  fire("on_game_found", { gameId: 92, dynamicFilling: false });
+  const submit = vi.spyOn(HTMLFormElement.prototype, "submit").mockImplementation(() => {});
+  command("enter"); epoch++; command("cancel");
+  await vi.advanceTimersByTimeAsync(ENTER_SPREAD_MS + 1); expect(submit).not.toHaveBeenCalled();
 });
