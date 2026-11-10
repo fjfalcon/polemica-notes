@@ -26,6 +26,7 @@ import { freezeWatchFeature } from "./features/freeze-watch";
 import { hotkeyHintsFeature } from "./features/hotkey-hints";
 import { outcryHotkeyFeature } from "./features/outcry-hotkey";
 import { playerActionKeysFeature } from "./features/player-action-keys";
+import { finishSpeechHotkeyFeature } from "./features/finish-speech-hotkey";
 import { playerVolumeMemoryFeature } from "./features/player-volume-memory";
 import { playerNotesFeature, syncPlayerNotesRoute } from "./features/player-notes";
 import { matchStatsFeature, syncMatchStatsRoute } from "./features/match-stats";
@@ -84,6 +85,7 @@ const manager = new FeatureManager().register(
   tooltipFeature,
   pauseHotkeyFeature,
   outcryHotkeyFeature,
+  finishSpeechHotkeyFeature,
   cameraHealthFeature,
   playerVolumeMemoryFeature,
   freezeWatchFeature,

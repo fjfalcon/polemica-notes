@@ -292,7 +292,10 @@ src/
     features/*      ~25 фич. Крупные группы:
                     стол и игра — auto-start, match-stats, tooltip, nick-plate,
                       role-faker, role-marker, pause-hotkey, outcry-hotkey,
-                      player-action-keys (действия по цифрам), ppk-guard,
+                      finish-speech-hotkey («Завершите речь» с клавиши; клавиши
+                      центра контролов делит controls-keys — выкрик и конец
+                      речи можно на одну), player-action-keys (действия по
+                      цифрам + ЛХ по клавишам: панель режима, Q/W/A), ppk-guard,
                       hotkey-hints, controls-safety, f5-refresh, camera-health;
                     очередь — queue-guard, queue-peek, queue-requeue,
                       requeue-pending, postgame-search, search,

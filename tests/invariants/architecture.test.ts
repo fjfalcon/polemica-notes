@@ -953,6 +953,13 @@ describe("§4.7 lifecycle heuristic", () => {
         "+1 таймер (9.23.1) — шаги лесенки ставят setTimeout трижды при одном clearTimeout-поле verdictTimer, " +
         "каждый прежний таймер снимается перед новым и в disable()",
     },
+    "src/content/features/player-action-keys.ts": {
+      listeners: 1,
+      timers: 0,
+      reason:
+        "click-обработчик живёт на панели ЛХ #pn-best-move-panel и умирает вместе с её узлом: " +
+        "renderPanel() убирает панель, как только кнопок ЛХ нет, и в disable() (10.11.2026)",
+    },
     "src/content/features/mic-sync.ts": {
       listeners: 3,
       timers: 1,

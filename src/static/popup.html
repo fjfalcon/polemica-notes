@@ -311,7 +311,13 @@
             <div class="row"><span>— Клавиша выкрика</span>
                 <button id="outcry_hotkey_code" class="btn-key">C</button>
             </div>
-            <div class="row"><span>Действия по цифрам<span class="hint">клавиша места жмёт кнопку действия на плитке игрока — как клик мышью. Работает только в игре и только когда кнопка есть. «Лучший ход» не трогает. Выключено по умолчанию: выстрел и голос не отменить</span></span>
+            <div class="row"><span>«Завершите речь» с клавиши<span class="hint">нажал — твоя речь закончилась досрочно. Работает только в твою речь, когда кнопка есть. Можно поставить на ту же клавишу, что и выкрик: в свою речь она завершит речь, в чужую — выкрикнет. Выключено по умолчанию: речь не вернуть</span></span>
+                <label class="switch"><input type="checkbox" id="finish_speech_hotkey_enabled"><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>— Клавиша конца речи</span>
+                <button id="finish_speech_hotkey_code" class="btn-key">S</button>
+            </div>
+            <div class="row"><span>Действия по цифрам<span class="hint">клавиша места жмёт кнопку действия на плитке игрока — как клик мышью. Работает только в игре и только когда кнопка есть. Лучший ход — отдельной галочкой «ЛХ по клавишам» ниже. Выключено по умолчанию: выстрел и голос не отменить</span></span>
                 <label class="switch"><input type="checkbox" id="player_action_keys_enabled"><span class="slider"></span></label>
             </div>
             <div class="row" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">— Что нажимать<span class="hint">выстрел и проверку включайте сами: промах клавишей на выстреле — несострел</span></span>
@@ -334,6 +340,14 @@
             </div>
             <div class="row"><span>— И цифры нумпада<span class="hint">Num 1…9 — игроки 1…9, Num 0 — игрок 10</span></span>
                 <label class="switch"><input type="checkbox" id="player_action_numpad" checked><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>— ЛХ по клавишам<span class="hint">во время твоего лучшего хода сверху панель режима: пистолет (мафия), сердце (мирный), корона (главный). Клавиша режима переключает, цифры отмечают игроков. «Оставить ЛХ» жмёшь сам. Включено вместе с «Действиями по цифрам» — не нужно, выключи</span></span>
+                <label class="switch"><input type="checkbox" id="player_action_guess" checked><span class="slider"></span></label>
+            </div>
+            <div class="row" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">— Клавиши режимов ЛХ</span>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">🔫 Мафия<button id="guess_key_maf" class="btn-key">Q</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">❤️ Мирный<button id="guess_key_civ" class="btn-key">W</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">👑 Главный<button id="guess_key_vice" class="btn-key">A</button></label>
             </div>
             <div class="row"><span>Писать клавиши на кнопках<span class="hint">«Выкрикнуть (C)», «Пауза (F8)» — подпись появляется там, где клавиша сейчас сработает</span></span>
                 <label class="switch"><input type="checkbox" id="hotkey_hints_enabled" checked><span class="slider"></span></label>

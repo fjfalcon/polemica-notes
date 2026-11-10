@@ -754,6 +754,62 @@ export const roomPlayerVolumeProbes: Record<string, Probe> = {
   ),
 };
 
+/**
+ * «Завершите речь» с клавиши и ЛХ по клавишам (10.11.2026).
+ * finish-speech-hotkey жмёт действие skip центра контролов; player-action-keys
+ * во время ЛХ жмёт кнопки guessMaf/guessCiv/guessVice на плитках и
+ * переключает режим сайта (guessRoles/guessVice) его кнопкой в контролах.
+ */
+export const roomBestMoveProbes: Record<string, Probe> = {
+  skipIsFinishSpeech: re(
+    /case"skip":return\{label:\w+\.\$root\.Loc\.speech_player_finish,tooltip:\w+\.\$root\.Loc\.finish_speech_tooltip,icon:[^}]*onClick:function\(\)\{\w+\.runAction\(\w+\)\}\}/,
+    "действие skip — кнопка «Завершите речь» (speech_player_finish), клик запускает skip",
+  ),
+  skipHasNoSiteHotKey: re(
+    /case"skip":return\{(?:(?!hotKey)[^}])*\}/,
+    "у skip нет своей клавиши сайта (наша её не перебивает)",
+  ),
+  guessActionLabels: re(
+    /case"guessMaf":return this\.\$root\.Loc\.make_guess_maf;case"guessCiv":return this\.\$root\.Loc\.make_guess_civ;case"guessVice":return this\.\$root\.Loc\.make_guess_vice;/,
+    "кнопки ЛХ на плитке: guessMaf/guessCiv/guessVice → make_guess_maf/civ/vice",
+  ),
+  tileButtonsByMode: re(
+    /return"guessRoles"===this\.\$store\.state\.playerAction\?[^;]{0,200}?return\["guessCiv","guessMaf"\]\.includes\(\w+\)\}\)\):"guessVice"===this\.\$store\.state\.playerAction\?[^;]{0,200}?return"guessVice"===\w+\}/,
+    "режим guessRoles — на плитке пистолет и сердце, guessVice — корона",
+  ),
+  modesFromActions: re(
+    /\["guessMaf","guessCiv"\]\.includes\((\w+)\)&&\(\1="guessRoles"\)/,
+    "режимы ЛХ сайта — guessRoles (из guessMaf/guessCiv) и guessVice",
+  ),
+  modeToggleRepeatClears: re(
+    /togglePlayerAction:function\((\w+),(\w+)\)\{\1\.playerAction===\2\?\1\.playerAction=null:\1\.playerAction=\2\}/,
+    "повторный клик по активному режиму СНИМАЕТ его — активный не кликаем",
+  ),
+  modeToggleMarkup: re(
+    /co\(\w+,\{class:\w+\(\{activated:(\w+)===\w+\.\$store\.state\.playerAction,"not-activated":\1!==\w+\.\$store\.state\.playerAction\}\)[\s\S]{0,300}onClick:function\(\)\{\w+\.onPlayerActionToggle\(\1\)\}\},\{default:\w+\(\(function\(\)\{return\[\w+\(\w+\(\w+\.\$root\.Loc\["action_"\.concat\(\1\)\]\)/,
+    "переключатель режима — кнопка контролов с классом activated и подписью Loc.action_<режим>",
+  ),
+};
+
+export const ruBestMoveProbes: Record<string, Probe> = {
+  guessMaf: has('make_guess_maf:"Оставить мафией"', "пистолет — ровно эта подпись"),
+  guessCiv: has('make_guess_civ:"Оставить мирным"', "сердце — ровно эта подпись"),
+  guessVice: has('make_guess_vice:"Оставить за главного"', "корона — ровно эта подпись"),
+  modeRoles: has('action_guessRoles:"Угадать роли"', "режим ролей — ровно эта подпись"),
+  modeVice: has('action_guessVice:"Оставить за главного"', "режим короны — ровно эта подпись"),
+  finishSpeech: has('speech_player_finish:"Завершите речь"', "конец речи — ровно эта подпись"),
+};
+
+/** EN-подписи тех же кнопок: TEXT.guessAction / guessModeButton / finishSpeechButton. */
+export const enBestMoveProbes: Record<string, Probe> = {
+  guessMaf: has('make_guess_maf:"Select as mafia"', "пистолет (EN) — ровно эта подпись"),
+  guessCiv: has('make_guess_civ:"Select as civilian"', "сердце (EN) — ровно эта подпись"),
+  guessVice: has('make_guess_vice:"Leave in charge"', "корона (EN) — ровно эта подпись"),
+  modeRoles: has('action_guessRoles:"Guess roles"', "режим ролей (EN) — ровно эта подпись"),
+  modeVice: has('action_guessVice:"Leave in charge"', "режим короны (EN) — ровно эта подпись"),
+  finishSpeech: has('speech_player_finish:"End the speech"', "конец речи (EN) — ровно эта подпись"),
+};
+
 export function runProbes(
   probes: Record<string, Probe>,
   text: string,

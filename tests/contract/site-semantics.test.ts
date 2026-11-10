@@ -14,6 +14,9 @@ import {
   ruPpkProbes,
   roomPlayerActionProbes,
   roomPlayerVolumeProbes,
+  roomBestMoveProbes,
+  ruBestMoveProbes,
+  enBestMoveProbes,
   ruPlayerActionProbes,
   ratingPageProbes,
   runProbes,
@@ -38,9 +41,9 @@ describe("живые семантические контракты бандло�
   test("состояния, ветки и матрицы кнопок означают то, что мы им приписываем", async ({
     skip,
   }) => {
-    let gs: string, room: string, ru: string, css: string, roomCss: string, profile: string, ratingPage: string;
+    let gs: string, room: string, ru: string, css: string, roomCss: string, profile: string, ratingPage: string, en: string;
     try {
-      [gs, room, ru, css, roomCss, profile, ratingPage] = (
+      [gs, room, ru, css, roomCss, profile, ratingPage, en] = (
         await Promise.all([
           download(siteFixture.bundles.gameSearch.url),
           download(siteFixture.bundles.roomMain.url),
@@ -54,6 +57,8 @@ describe("живые семантические контракты бандло�
           download(siteFixture.bundles.profile.url),
           // Страница лидеров /ratings (скрыть рейтинг).
           download(siteFixture.bundles.ratingPage.url),
+          // EN-локаль: подписи кнопок ЛХ и конца речи (точное совпадение).
+          download(siteFixture.bundles.localeEn.url),
         ])
       ).map((d) => d.text);
     } catch (error) {
@@ -74,6 +79,9 @@ describe("живые семантические контракты бандло�
       ...runProbes(roomPlayerActionProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
       ...runProbes(ruPlayerActionProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
       ...runProbes(roomPlayerVolumeProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
+      ...runProbes(roomBestMoveProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
+      ...runProbes(ruBestMoveProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
+      ...runProbes(enBestMoveProbes, en).map((r) => ({ ...r, bundle: "EN" })),
       ...runProbes(ratingPageProbes, ratingPage).map((r) => ({ ...r, bundle: "rating" })),
     ].filter((r) => !r.ok);
     expect(

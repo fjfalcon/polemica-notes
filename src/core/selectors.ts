@@ -472,6 +472,26 @@ export const TEXT = {
   finishSpeechButton: ["завершите речь", "end the speech"] as readonly string[],
   outcryButton: ["выкрикнуть", "outcry"] as readonly string[],
   /**
+   * ТОЧНЫЕ подписи кнопок лучшего хода на плитке (PlayerAction, сверено
+   * 10.11.2026): guessMaf make_guess_maf (пистолет), guessCiv make_guess_civ
+   * (сердце), guessVice make_guess_vice (корона).
+   */
+  guessAction: {
+    maf: ["оставить мафией", "select as mafia"],
+    civ: ["оставить мирным", "select as civilian"],
+    vice: ["оставить за главного", "leave in charge"],
+  } as Readonly<Record<"maf" | "civ" | "vice", readonly string[]>>,
+  /**
+   * ТОЧНЫЕ подписи переключателей режима ЛХ в центре контролов
+   * (Loc["action_" + playerAction]): guessRoles — пистолеты и сердца на
+   * плитках, guessVice — корона. Подпись guessVice совпадает с кнопкой
+   * короны на плитке — различаем контейнером (контролы, не плитка).
+   */
+  guessModeButton: {
+    roles: ["угадать роли", "guess roles"],
+    vice: ["оставить за главного", "leave in charge"],
+  } as Readonly<Record<"roles" | "vice", readonly string[]>>,
+  /**
    * ТОЧНЫЕ подписи кнопки действия на плитке (PlayerAction.actionText, RU и EN
    * локали комнаты, сверено 04.11.2026). Действие узнаём по подписи: в
    * isolated world вид действия из стора сайта не прочитать.
@@ -744,6 +764,8 @@ export const SITE_CLASS = {
   button: "button",
   /** Кнопка сайта в недоступном состоянии. */
   disabled: "disabled",
+  /** Выбранный режим ЛХ в контролах (ControlsButton playerActions). */
+  activated: "activated",
   /** Контейнеры vue-scroll: по ним ищем прокручиваемого предка. */
   vueScroll: "__vuescroll",
   vueScrollPanel: "__panel",

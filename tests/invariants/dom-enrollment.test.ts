@@ -73,6 +73,8 @@ const EXEMPT: Record<string, { count: number; reason: string }> = {
     { count: 2, reason: "кликает по кнопкам сайта и мутирует стили ролей через applyRolePhase — с латч-гейтами применённого состояния; своих узлов не создаёт" },
   "src/content/features/camera-health.ts":
     { count: 1, reason: "бейдж/кнопка пишутся с маркер-гейтами (data-атрибуты), покрыто идемпотентность-тестами файла" },
+  "src/content/features/controls-keys.ts":
+    { count: 1, reason: "только при общей клавише выкрика и конца речи: подписчик ЧИТАЕТ, видна ли «Завершите речь», и пишет время в переменную; DOM не пишет" },
   "src/content/features/controls-safety.ts":
     { count: 1, reason: "держит <style> (сравнение textContent перед записью) и классы-метки с contains-гейтами; узлы не переставляет" },
   "src/content/features/hotkey-hints.ts":
@@ -147,6 +149,7 @@ describe("зачисление DOM-подписчиков (§4, механика
       "src/content/features/auto-ready.ts": 1,
       "src/content/features/hide-rating.ts": 1,
       "src/content/features/mic-sync.ts": 1,
+      "src/content/features/player-action-keys.ts": 1,
       "src/content/features/profile-crossover.ts": 1,
       "src/content/features/profile-mmr-chart.ts": 1,
       "src/content/features/profile-photo.ts": 1,
@@ -176,6 +179,7 @@ describe("зачисление DOM-подписчиков (§4, механика
       "src/content/features/auto-ready.ts",
       "src/content/features/hide-rating.ts",
       "src/content/features/mic-sync.ts",
+      "src/content/features/player-action-keys.ts",
       "src/content/features/profile-crossover.ts",
       "src/content/features/profile-mmr-chart.ts",
       "src/content/features/profile-photo.ts",

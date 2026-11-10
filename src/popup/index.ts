@@ -94,6 +94,8 @@ const OPERATIONAL_KEYS = [
   "enable_role_faker",
   "disable_webcam_clicks",
   "player_action_keys_enabled",
+  // Досрочный конец своей речи необратим (10.11.2026).
+  "finish_speech_hotkey_enabled",
   // Выключены по умолчанию и необратимы: при уже включённой фиче файл
   // включал бы выстрел по клавише молча (ревью 04.11.2026, M1).
   "player_action_shot",
@@ -120,6 +122,7 @@ const OPERATIONAL_LABELS: Record<string, string> = {
   player_action_keys_enabled: "действия по цифрам (выставление, голос, выстрел, проверка с клавиш)",
   player_action_shot: "выстрел по клавише места",
   player_action_check: "проверка по клавише места",
+  finish_speech_hotkey_enabled: "«Завершите речь» с клавиши",
   skip_start_screen_enabled: "автоклик стартового экрана игры",
   obs_auto_record_enabled: "автозапись игр в OBS",
   obs_clip_enabled: "клипы OBS (настройка и запуск Replay Buffer)",
@@ -809,14 +812,21 @@ document.addEventListener("DOMContentLoaded", () => {
               "hotkey_role_hide",
               "hotkey_role_peek",
               "outcry_hotkey_code",
+              "finish_speech_hotkey_code",
               "obs_clip_hotkey_code",
               "mic_sync_hotkey",
+              "guess_key_maf",
+              "guess_key_civ",
+              "guess_key_vice",
             ];
             const seen = new Set<string>();
             for (const k of HOTKEYS) {
               const v = settingsPatch[k];
               // "" — «без клавиши» (микрофон), слота не занимает.
               if (typeof v !== "string" || !v) continue;
+              // Выкрик и «Завершите речь» на одной клавише — законно: у них
+              // общий обработчик (controls-keys), кнопки не видны разом.
+              if (k === "finish_speech_hotkey_code" && v === settingsPatch.outcry_hotkey_code) continue;
               if (seen.has(v)) delete settingsPatch[k];
               else seen.add(v);
             }
@@ -1432,20 +1442,32 @@ document.addEventListener("DOMContentLoaded", () => {
   let roleHideCode = "KeyD";
   let rolePeekCode = "KeyV";
   let outcryCode = "KeyC";
+  let finishCode = "KeyS";
+  let guessMafCode = "KeyQ";
+  let guessCivCode = "KeyW";
+  let guessViceCode = "KeyA";
   let clipCode = "F9";
   // Свой цвет кнопок: живёт в замыкании, как хоткеи — <input type=color>
   // больше нет, а source of truth для сохранения нужен один.
   let currentButtonColor = "#ffd54f";
   let reflectButtonColor: (hex: string) => void = () => {};
   const roleKeyRenders: Array<() => void> = [];
-  const setupRoleKey = (id: string, get: () => string, set: (c: string) => void) => {
+  const setupRoleKey = (
+    id: string,
+    get: () => string,
+    set: (c: string) => void,
+    /** Чужие клавиши, которые этой кнопке не конфликт (выкрик ↔ конец речи). */
+    shared: () => string[] = () => [],
+    /** Почему клавишу этой кнопке не дать; null — можно. */
+    reject?: (code: string) => string | null,
+  ) => {
     const btn = $<HTMLButtonElement>(id);
     if (!btn) return;
     const render = () => (btn.textContent = formatKeyCode(get()));
     render();
     roleKeyRenders.push(render);
     hotkeyGetters.push(get);
-    btn.addEventListener("click", () => beginKeyCapture(btn, get, set, render));
+    btn.addEventListener("click", () => beginKeyCapture(btn, get, set, render, reject, shared()));
   };
   setupRoleKey("hotkey_role_fake", () => roleFakeCode, (c) => (roleFakeCode = c));
   setupRoleKey("hotkey_role_reset", () => roleResetCode, (c) => (roleResetCode = c));
@@ -1453,7 +1475,19 @@ document.addEventListener("DOMContentLoaded", () => {
   setupRoleKey("hotkey_role_peek", () => rolePeekCode, (c) => (rolePeekCode = c));
   // Тот же механизм захвата клавиши, что и у ролевых: живёт в замыкании, а не
   // в input.value, иначе чужое изменение откатывалось бы первым же тумблером.
-  setupRoleKey("outcry_hotkey_code", () => outcryCode, (c) => (outcryCode = c));
+  // Выкрик и «Завершите речь» можно поставить на одну клавишу (просьба
+  // игроков 10.11.2026): в свою речь сайт показывает конец речи, в чужую —
+  // выкрик, в одном месте контролов; общий обработчик — content/controls-keys.
+  setupRoleKey("outcry_hotkey_code", () => outcryCode, (c) => (outcryCode = c), () => [finishCode]);
+  setupRoleKey("finish_speech_hotkey_code", () => finishCode, (c) => (finishCode = c), () => [outcryCode]);
+  // Режим ЛХ на цифре/нумпаде или клавише места не встанет никогда: цифры
+  // сайта и места держат действия по цифрам (ревью 10.11.2026) — и при
+  // выключенной фиче, иначе её включение молча отняло бы клавишу у обоих.
+  const rejectGuessKey = (c: string): string | null =>
+    /^(?:Digit|Numpad)\d$/.test(c) || playerKeys.includes(c) ? "Это клавиша игрока" : null;
+  setupRoleKey("guess_key_maf", () => guessMafCode, (c) => (guessMafCode = c), undefined, rejectGuessKey);
+  setupRoleKey("guess_key_civ", () => guessCivCode, (c) => (guessCivCode = c), undefined, rejectGuessKey);
+  setupRoleKey("guess_key_vice", () => guessViceCode, (c) => (guessViceCode = c), undefined, rejectGuessKey);
   setupRoleKey("obs_clip_hotkey_code", () => clipCode, (c) => (clipCode = c));
 
   // ───────────────────────── Клавиши мест (действия по цифрам) ─────────────────────────
@@ -1594,6 +1628,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (typeof patch.hotkey_role_hide === "string") roleHideCode = patch.hotkey_role_hide;
     if (typeof patch.hotkey_role_peek === "string") rolePeekCode = patch.hotkey_role_peek;
     if (typeof patch.outcry_hotkey_code === "string") outcryCode = patch.outcry_hotkey_code;
+    if (typeof patch.finish_speech_hotkey_code === "string") finishCode = patch.finish_speech_hotkey_code;
+    if (typeof patch.guess_key_maf === "string") guessMafCode = patch.guess_key_maf;
+    if (typeof patch.guess_key_civ === "string") guessCivCode = patch.guess_key_civ;
+    if (typeof patch.guess_key_vice === "string") guessViceCode = patch.guess_key_vice;
     if (typeof patch.obs_clip_hotkey_code === "string") clipCode = patch.obs_clip_hotkey_code;
     if (typeof patch.player_action_keys === "string") {
       playerKeys = parsePlayerActionKeys(patch.player_action_keys);
@@ -1605,6 +1643,10 @@ document.addEventListener("DOMContentLoaded", () => {
       patch.hotkey_role_hide ||
       patch.hotkey_role_peek ||
       patch.outcry_hotkey_code ||
+      patch.finish_speech_hotkey_code ||
+      patch.guess_key_maf ||
+      patch.guess_key_civ ||
+      patch.guess_key_vice ||
       patch.obs_clip_hotkey_code
     ) {
       roleKeyRenders.forEach((r) => r());
@@ -1633,6 +1675,10 @@ document.addEventListener("DOMContentLoaded", () => {
     roleHideCode = items.hotkey_role_hide || "KeyD";
     rolePeekCode = items.hotkey_role_peek || "KeyV";
     outcryCode = items.outcry_hotkey_code || "KeyC";
+    finishCode = items.finish_speech_hotkey_code || "KeyS";
+    guessMafCode = items.guess_key_maf || "KeyQ";
+    guessCivCode = items.guess_key_civ || "KeyW";
+    guessViceCode = items.guess_key_vice || "KeyA";
     clipCode = items.obs_clip_hotkey_code || "F9";
     roleKeyRenders.forEach((r) => r());
     playerKeys = parsePlayerActionKeys(items.player_action_keys);
@@ -1752,6 +1798,8 @@ document.addEventListener("DOMContentLoaded", () => {
       if (sel) sel.value = readControlPosition(kind, (items as unknown as Record<string, unknown>)[`ctl_pos_${kind}`]);
     }
     set("outcry_hotkey_enabled", items.outcry_hotkey_enabled);
+    set("finish_speech_hotkey_enabled", items.finish_speech_hotkey_enabled);
+    set("player_action_guess", items.player_action_guess);
     set("player_action_keys_enabled", items.player_action_keys_enabled);
     set("player_action_nominate", items.player_action_nominate);
     set("player_action_vote", items.player_action_vote);
@@ -1918,6 +1966,12 @@ document.addEventListener("DOMContentLoaded", () => {
       hotkey_role_peek: rolePeekCode,
       outcry_hotkey_enabled: cb("outcry_hotkey_enabled", false),
       outcry_hotkey_code: outcryCode,
+      finish_speech_hotkey_enabled: cb("finish_speech_hotkey_enabled", false),
+      finish_speech_hotkey_code: finishCode,
+      player_action_guess: cb("player_action_guess", true),
+      guess_key_maf: guessMafCode,
+      guess_key_civ: guessCivCode,
+      guess_key_vice: guessViceCode,
       player_action_keys_enabled: cb("player_action_keys_enabled", false),
       player_action_nominate: cb("player_action_nominate", true),
       player_action_vote: cb("player_action_vote", true),
@@ -2126,6 +2180,8 @@ document.addEventListener("DOMContentLoaded", () => {
     "ctl_pos_guess",
     "outcry_hotkey_enabled",
     "outcry_hotkey_code",
+    "finish_speech_hotkey_enabled",
+    "player_action_guess",
     "player_action_keys_enabled",
     "player_action_nominate",
     "player_action_vote",

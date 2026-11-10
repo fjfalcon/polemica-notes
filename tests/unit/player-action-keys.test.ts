@@ -166,9 +166,10 @@ describe("клавиша места", () => {
     table("vote");
     const keys = parsePlayerActionKeys(DEFAULT_PLAYER_ACTION_KEYS);
     keys[0] = "KeyQ";
-    playerActionKeysFeature.enable(ctx({ player_action_keys: keys.join(",") }));
+    // ЛХ выключен: его режимы по умолчанию тоже на Q/W, тест — про места.
+    playerActionKeysFeature.enable(ctx({ player_action_keys: keys.join(","), player_action_guess: false }));
     keys[0] = "KeyW";
-    playerActionKeysFeature.update!(ctx({ player_action_keys: keys.join(",") }));
+    playerActionKeysFeature.update!(ctx({ player_action_keys: keys.join(","), player_action_guess: false }));
     press("KeyQ");
     expect(keyboard.isBound("KeyQ")).toBe(false);
     press("KeyW");

@@ -141,6 +141,15 @@ export interface Settings {
   hotkey_role_peek: string;
   /** Выкрикнуть с клавиши. Выключено по умолчанию: действие расходуемое. */
   outcry_hotkey_enabled: boolean;
+  /** «Завершите речь» с клавиши (своя речь заканчивается досрочно). */
+  finish_speech_hotkey_enabled: boolean;
+  finish_speech_hotkey_code: string;
+  /** ЛХ по клавишам: панель режима во время лучшего хода, цифры — игроки. */
+  player_action_guess: boolean;
+  /** Клавиши режимов ЛХ: пистолет (мафия), сердце (мирный), корона (главный). */
+  guess_key_maf: string;
+  guess_key_civ: string;
+  guess_key_vice: string;
   /** Клавиша выкрика (дефолт KeyC). */
   outcry_hotkey_code: string;
   /**

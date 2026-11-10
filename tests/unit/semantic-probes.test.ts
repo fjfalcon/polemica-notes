@@ -15,6 +15,9 @@ import {
   ruPpkProbes,
   roomPlayerActionProbes,
   roomPlayerVolumeProbes,
+  roomBestMoveProbes,
+  ruBestMoveProbes,
+  enBestMoveProbes,
   ruPlayerActionProbes,
   ratingPageProbes,
   siteCssProbes,
@@ -45,6 +48,9 @@ const RU_PPK = snip("ru-ppk.txt");
 const ROOM_PA = snip("room-player-actions.txt");
 const RU_PA = snip("ru-player-actions.txt");
 const ROOM_PV = snip("room-player-volume.txt");
+const ROOM_BM = snip("room-best-move.txt");
+const RU_BM = snip("ru-best-move.txt");
+const EN_BM = snip("en-best-move.txt");
 const RATING_PAGE = snip("rating-page.txt");
 
 describe("пробы зелёные на реальных фрагментах бандлов", () => {
@@ -61,6 +67,9 @@ describe("пробы зелёные на реальных фрагментах �
     ["room-main: действия игрока", roomPlayerActionProbes, ROOM_PA],
     ["RU: действия игрока", ruPlayerActionProbes, RU_PA],
     ["room-main: громкость игрока", roomPlayerVolumeProbes, ROOM_PV],
+    ["room-main: конец речи и ЛХ", roomBestMoveProbes, ROOM_BM],
+    ["RU: конец речи и ЛХ", ruBestMoveProbes, RU_BM],
+    ["EN: конец речи и ЛХ", enBestMoveProbes, EN_BM],
     ["rating: страница лидеров", ratingPageProbes, RATING_PAGE],
   ] as const)("%s", (_name, probes, text) => {
     const failed = runProbes(probes, text).filter((r) => !r.ok);
@@ -302,6 +311,41 @@ describe("каждая проба умирает от своего дрифта"
       (t) => t.replace("this.savedVolume=this.currentVolume,", "")],
     ["pv outcryWatcherRestores: сайт не возвращает громкость после выкрика", roomPlayerVolumeProbes, "outcryWatcherRestores", ROOM_PV,
       (t) => t.replace("&&this.updateVolumeIcon(this.savedVolume)}", "}")],
+    // Конец речи и ЛХ
+    ["bm skipIsFinishSpeech: подпись skip сменилась", roomBestMoveProbes, "skipIsFinishSpeech", ROOM_BM,
+      (t) => t.replace('case"skip":return{label:e.$root.Loc.speech_player_finish', 'case"skip":return{label:e.$root.Loc.end_speech')],
+    ["bm skipHasNoSiteHotKey: у skip появилась клавиша сайта", roomBestMoveProbes, "skipHasNoSiteHotKey", ROOM_BM,
+      (t) => t.replace('buttonSize:e.buttonSize,onClick:function(){e.runAction(t)}};case"guess"', 'buttonSize:e.buttonSize,hotKey:"S",onClick:function(){e.runAction(t)}};case"guess"')],
+    ["bm guessActionLabels: корона переименована", roomBestMoveProbes, "guessActionLabels", ROOM_BM,
+      (t) => t.replace("return this.$root.Loc.make_guess_vice;", "return this.$root.Loc.leave_in_charge;")],
+    ["bm tileButtonsByMode: режим ролей без сердца", roomBestMoveProbes, "tileButtonsByMode", ROOM_BM,
+      (t) => t.replace('["guessCiv","guessMaf"]', '["guessMaf"]')],
+    ["bm modesFromActions: режим ролей переименован", roomBestMoveProbes, "modesFromActions", ROOM_BM,
+      (t) => t.replace('(e="guessRoles")', '(e="guessBoth")')],
+    ["bm modeToggleRepeatClears: повтор больше не снимает режим", roomBestMoveProbes, "modeToggleRepeatClears", ROOM_BM,
+      (t) => t.replace("e.playerAction===t?e.playerAction=null:e.playerAction=t", "e.playerAction=t")],
+    ["bm modeToggleMarkup: класс активного режима сменился", roomBestMoveProbes, "modeToggleMarkup", ROOM_BM,
+      (t) => t.replace("{activated:t===e.$store.state.playerAction", "{selected:t===e.$store.state.playerAction")],
+    ["bm RU guessMaf: подпись сменилась", ruBestMoveProbes, "guessMaf", RU_BM,
+      (t) => t.replace("Оставить мафией", "Мафия")],
+    ["bm RU guessCiv: подпись сменилась", ruBestMoveProbes, "guessCiv", RU_BM,
+      (t) => t.replace("Оставить мирным", "Мирный")],
+    ["bm RU guessVice: подпись сменилась", ruBestMoveProbes, "guessVice", RU_BM,
+      (t) => t.replace('make_guess_vice:"Оставить за главного"', 'make_guess_vice:"Главный"')],
+    ["bm RU modeRoles: подпись сменилась", ruBestMoveProbes, "modeRoles", RU_BM,
+      (t) => t.replace("Угадать роли", "Роли")],
+    ["bm RU modeVice: подпись сменилась", ruBestMoveProbes, "modeVice", RU_BM,
+      (t) => t.replace('action_guessVice:"Оставить за главного"', 'action_guessVice:"Корона"')],
+    ["bm RU finishSpeech: подпись сменилась", ruBestMoveProbes, "finishSpeech", RU_BM,
+      (t) => t.replace("Завершите речь", "Закончить речь")],
+    ["bm EN guessMaf", enBestMoveProbes, "guessMaf", EN_BM, (t) => t.replace("Select as mafia", "Mafia")],
+    ["bm EN guessCiv", enBestMoveProbes, "guessCiv", EN_BM, (t) => t.replace("Select as civilian", "Civilian")],
+    ["bm EN guessVice", enBestMoveProbes, "guessVice", EN_BM,
+      (t) => t.replace('make_guess_vice:"Leave in charge"', 'make_guess_vice:"Chief"')],
+    ["bm EN modeRoles", enBestMoveProbes, "modeRoles", EN_BM, (t) => t.replace("Guess roles", "Roles")],
+    ["bm EN modeVice", enBestMoveProbes, "modeVice", EN_BM,
+      (t) => t.replace('action_guessVice:"Leave in charge"', 'action_guessVice:"Crown"')],
+    ["bm EN finishSpeech", enBestMoveProbes, "finishSpeech", EN_BM, (t) => t.replace("End the speech", "Finish")],
     // Страница лидеров /ratings
     ["rating columnsOrder: колонка MMR переехала", ratingPageProbes, "columnsOrder", RATING_PAGE,
       (t) => t.replace('{key:"name",title:"Игрок"},{key:"mmr",title:"MMR"}', '{key:"mmr",title:"MMR"},{key:"name",title:"Игрок"}')],
