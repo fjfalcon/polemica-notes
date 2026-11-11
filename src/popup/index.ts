@@ -40,6 +40,7 @@ import { formatKeyCode, isModifierCode } from "@core/keyboard";
 import { PLATE_POSITIONS } from "@shared/nick-plate";
 import { setupPlayerSearch } from "./player-search";
 import { setupOwnAvatarSection } from "./own-avatar-section";
+import { mountCalm } from "@core/calm-ui";
 import {
   DEFAULT_PROTOCOL_EMOJI,
   PROTOCOL_EMOJI_PALETTE,
@@ -156,6 +157,12 @@ document.addEventListener("DOMContentLoaded", () => {
   installErrorCapture("popup");
   setupPlayerSearch();
   setupOwnAvatarSection();
+  // Вкладка «Тильт»: упражнения для успокоения; крутятся, только пока вкладка открыта.
+  {
+    const calm = $("calm_panel");
+    const tiltPanel = calm?.closest<HTMLElement>(".panel");
+    if (calm) mountCalm(calm, () => tiltPanel?.classList.contains("active") === true);
+  }
 
   // Онбординг: попап открыт — настройки найдены. Снимаем точку с иконки и
   // больше никогда не навязываем страницу-приветствие (см. background,
@@ -543,10 +550,19 @@ document.addEventListener("DOMContentLoaded", () => {
   const panels = Array.from(document.querySelectorAll<HTMLElement>(".panel"));
   const TAB_LS = "polemica:popupTab";
   const activateTab = (name: string) => {
-    const exists = tabs.some((t) => t.dataset.tab === name);
+    // По панелям, а не по кнопкам: у «Тильта» кнопки в ряду нет — его
+    // открывает красная кнопка в шапке (девятой вкладке нет места).
+    const exists = panels.some((p) => p.dataset.panel === name);
     const target = exists ? name : "game";
     tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === target));
     panels.forEach((p) => p.classList.toggle("active", p.dataset.panel === target));
+    // У «Тильта» вкладки нет — «нажатой» показывается кнопка в шапке.
+    const tiltBtn = $("tilt_open");
+    tiltBtn?.classList.toggle("active", target === "tilt");
+    tiltBtn?.setAttribute("aria-pressed", String(target === "tilt"));
+    // «Тильт» не запоминаем: попап — прежде всего настройки, упражнения
+    // открываются кнопкой в шапке, когда нужны.
+    if (target === "tilt") return;
     try {
       localStorage.setItem(TAB_LS, target);
     } catch {
@@ -556,6 +572,10 @@ document.addEventListener("DOMContentLoaded", () => {
   tabs.forEach((t) =>
     t.addEventListener("click", () => activateTab(t.dataset.tab || "game")),
   );
+  $("tilt_open")?.addEventListener("click", () => {
+    activateTab("tilt");
+    document.querySelector('.panel[data-panel="tilt"]')?.scrollIntoView({ block: "start" });
+  });
   try {
     const saved = localStorage.getItem(TAB_LS);
     if (saved) activateTab(saved);
@@ -1592,6 +1612,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // появиться/исчезнуть вместе с ней.
     if ("stats_button_theme" in patch) syncCustomColorRow();
     if ("role_marker_enabled" in patch) syncRoleMarkerIconsRow();
+    if ("tilt_mode_enabled" in patch) syncTiltMode();
     if (typeof patch.stats_button_color === "string") {
       reflectButtonColor(readButtonColor(patch.stats_button_color));
     }
@@ -1812,6 +1833,9 @@ document.addEventListener("DOMContentLoaded", () => {
     set("profile_photo_enabled", items.profile_photo_enabled);
     set("search_avatars_enabled", items.search_avatars_enabled);
     set("search_card_avatar_enabled", items.search_card_avatar_enabled);
+    set("tilt_button_enabled", items.tilt_button_enabled);
+    set("tilt_mode_enabled", items.tilt_mode_enabled);
+    syncTiltMode();
     const avatarSource = $<HTMLSelectElement>("own_avatar_source");
     if (avatarSource) avatarSource.value = items.own_avatar_source === "custom" ? "custom" : "site";
     const clipMin = $<HTMLSelectElement>("obs_clip_minutes");
@@ -1994,6 +2018,8 @@ document.addEventListener("DOMContentLoaded", () => {
       profile_photo_enabled: cb("profile_photo_enabled", true),
       search_avatars_enabled: cb("search_avatars_enabled", true),
       search_card_avatar_enabled: cb("search_card_avatar_enabled", true),
+      tilt_button_enabled: cb("tilt_button_enabled", true),
+      tilt_mode_enabled: cb("tilt_mode_enabled", true),
       own_avatar_source:
         $<HTMLSelectElement>("own_avatar_source")?.value === "custom" ? "custom" : "site",
       match_page_stats_enabled: cb("match_page_stats_enabled", true),
@@ -2130,6 +2156,8 @@ document.addEventListener("DOMContentLoaded", () => {
     "profile_photo_enabled",
     "search_avatars_enabled",
     "search_card_avatar_enabled",
+    "tilt_button_enabled",
+    "tilt_mode_enabled",
     "own_avatar_source",
     "obs_auto_record_enabled",
     "obs_clip_enabled",
@@ -2219,6 +2247,28 @@ document.addEventListener("DOMContentLoaded", () => {
     row.style.display = $<HTMLInputElement>("role_marker_enabled")?.checked ? "" : "none";
   }
   $("role_marker_enabled")?.addEventListener("change", syncRoleMarkerIconsRow);
+
+  /**
+   * Режим «Тильт» выключен — нет красной кнопки в шапке (а вкладку «Тильт»
+   * открывает только она); открытый «Тильт» уходит на прежнюю вкладку.
+   * Переключатель — во «Ещё».
+   */
+  function syncTiltMode(): void {
+    const on = $<HTMLInputElement>("tilt_mode_enabled")?.checked !== false;
+    const head = $("tilt_open");
+    if (head) head.style.display = on ? "" : "none";
+    if (!on && document.querySelector('.panel.active[data-panel="tilt"]')) {
+      // Вернуть туда, где был, а не затереть запомненную вкладку «Игрой».
+      let saved: string | null = null;
+      try {
+        saved = localStorage.getItem(TAB_LS);
+      } catch {
+        /* ignore */
+      }
+      activateTab(saved || "game");
+    }
+  }
+  $("tilt_mode_enabled")?.addEventListener("change", syncTiltMode);
 
   /** Значение поля эмодзи метки протокола (нормализованное; "" = не подменять). */
   function readProtocolEmoji(mark: (typeof PROTOCOL_MARKS)[number]): string {

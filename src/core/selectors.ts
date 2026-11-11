@@ -146,6 +146,8 @@ export const SITE = {
    * search-card-avatar ставит туда свою картинку.
    */
   searchProfileMain: ".p-play__profile-main",
+  /** Кнопка «Профиль» в той же карточке (bundle/game-search, 11.11.2026): за ней — «У меня тильт». */
+  searchProfileButtonLink: ".p-play__profile-btn",
   /** Аватар в шапке сайта — это сам пользователь (`getUserAvatarUrl(user.avatar,"100x")`). */
   headerAvatarImg: "img.p-header__userCont-user-avatar",
   /** Список участников (лобби/итоги): строка, ник и аватар внутри неё. */

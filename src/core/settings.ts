@@ -40,6 +40,10 @@ export const DEFAULT_SETTINGS: Settings = {
   profile_photo_enabled: true,
   search_avatars_enabled: true,
   search_card_avatar_enabled: true,
+  // Режим «Тильт» и «У меня тильт» на странице поиска (просьба владельца
+  // 11.11.2026): весь режим отключается одной настройкой.
+  tilt_mode_enabled: true,
+  tilt_button_enabled: true,
   own_avatar_source: "site",
   obs_auto_record_enabled: false,
   obs_clip_enabled: false,

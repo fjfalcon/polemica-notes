@@ -27,6 +27,7 @@ import { hotkeyHintsFeature } from "./features/hotkey-hints";
 import { outcryHotkeyFeature } from "./features/outcry-hotkey";
 import { playerActionKeysFeature } from "./features/player-action-keys";
 import { finishSpeechHotkeyFeature } from "./features/finish-speech-hotkey";
+import { tiltButtonFeature } from "./features/tilt-button";
 import { playerVolumeMemoryFeature } from "./features/player-volume-memory";
 import { playerNotesFeature, syncPlayerNotesRoute } from "./features/player-notes";
 import { matchStatsFeature, syncMatchStatsRoute } from "./features/match-stats";
@@ -110,6 +111,7 @@ const manager = new FeatureManager().register(
   profilePhotoFeature,
   searchAvatarsFeature,
   searchCardAvatarFeature,
+  tiltButtonFeature,
   obsRecordFeature,
   obsClipFeature,
   contractWatchFeature,

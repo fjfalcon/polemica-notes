@@ -300,6 +300,9 @@ src/
                     очередь — queue-guard, queue-peek, queue-requeue,
                       requeue-pending, postgame-search, search,
                       search-avatars (аватары «Участников» по id из ссылки);
+                    тильт — tilt-button («У меня тильт» в карточке поиска,
+                      окно с упражнениями @core/calm-ui; режим целиком —
+                      tilt_mode_enabled, попап — кнопка «Тильт» в шапке);
                     профиль — profile-crossover, profile-mmr-chart,
                       profile-photo (фото на месте 3D-аватара; на своём
                       профиле — «моя картинка»), search-card-avatar

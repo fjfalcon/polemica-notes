@@ -655,6 +655,8 @@ describe("settings, release and manifest consistency", () => {
         // «Участники» поиска: свой ник одной строкой (22.10.2026).
         "participants-item",
         "participants-name",
+        // «У меня тильт» (11.11.2026): угол карточки поиска, поверх её :after.
+        "p-play__profile-main",
         // НАША разметка с общими именами: внутри .player-stats / .pn-tooltip.
         "player-icons",
         "mmr",
@@ -959,6 +961,13 @@ describe("§4.7 lifecycle heuristic", () => {
       reason:
         "click-обработчик живёт на панели ЛХ #pn-best-move-panel и умирает вместе с её узлом: " +
         "renderPanel() убирает панель, как только кнопок ЛХ нет, и в disable() (10.11.2026)",
+    },
+    "src/content/features/tilt-button.ts": {
+      listeners: 4,
+      timers: 0,
+      reason:
+        "клик по кнопке «У меня тильт», клик по крестику, mousedown/click фона окна живут на НАШИХ узлах и умирают " +
+        "вместе с ними (removeButton/closeModal в disable); keydown Esc снимается в closeModal (11.11.2026)",
     },
     "src/content/features/mic-sync.ts": {
       listeners: 3,

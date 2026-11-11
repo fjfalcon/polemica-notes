@@ -40,6 +40,16 @@
         .hdr-ver { font-size: 11px; color: var(--muted); text-decoration: none; }
         a.hdr-ver:hover { color: var(--text); text-decoration: underline; }
         .hdr .switch { margin-left: auto; align-self: center; }
+        /* Большая красная «Тильт»: сразу к упражнениям (вкладка «Тильт»). */
+        .hdr-tilt {
+            margin-left: auto; align-self: center; padding: 6px 14px;
+            border: none; border-radius: 8px; cursor: pointer;
+            font: 700 13px/1 system-ui, sans-serif; color: #fff; background: var(--danger);
+            box-shadow: 0 2px 8px rgba(239,68,68,.35);
+        }
+        .hdr-tilt:hover { filter: brightness(1.1); }
+        .hdr-tilt.active { box-shadow: 0 0 0 2px #fff, 0 2px 8px rgba(239,68,68,.35); }
+        .hdr .hdr-tilt + .switch { margin-left: 4px; }
 
         /* Мастер-выключатель: расширение выключено — всё, кроме шапки, притушено. */
         body.ext-off .hdr {
@@ -220,6 +230,7 @@
     <div class="hdr">
         <span class="hdr-title">Polemica Notes</span>
         <a class="hdr-ver" id="popup_version" href="https://github.com/fjfalcon/polemicagame_phil_extension/releases/latest" target="_blank" rel="noopener" title="Открыть страницу последнего релиза на GitHub"></a>
+        <button type="button" class="hdr-tilt" id="tilt_open" title="Упражнения для успокоения: дыхание, заземление, пауза">Тильт</button>
         <label class="switch" title="Выключить всё расширение разом (заметки не пропадут)">
             <input type="checkbox" id="extension_enabled" checked><span class="slider"></span>
         </label>
@@ -691,8 +702,19 @@
             </div>
         </div>
 
+        <!-- ── Тильт: упражнения для успокоения (наполняет @core/calm-ui; открывает кнопка «Тильт» в шапке) ── -->
+        <div class="panel" data-panel="tilt">
+            <div class="row"><span>Кнопка «У меня тильт» на сайте<span class="hint">в карточке на странице поиска, в правом нижнем углу (под «Профилем»): открывает эти же упражнения поверх страницы</span></span>
+                <label class="switch"><input type="checkbox" id="tilt_button_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div id="calm_panel" style="margin-top:8px"></div>
+        </div>
+
         <!-- ── Ещё ── -->
         <div class="panel" data-panel="misc">
+            <div class="row"><span>Режим «Тильт»<span class="hint">упражнения для успокоения: красная кнопка «Тильт» сверху (открывает упражнения) и кнопка «У меня тильт» на сайте. Выключено — всё это пропадает</span></span>
+                <label class="switch"><input type="checkbox" id="tilt_mode_enabled" checked><span class="slider"></span></label>
+            </div>
             <div class="row" id="update_notify_row"><span>Уведомлять о новой версии<span class="hint">проверка релизов на GitHub раз в час</span></span>
                 <label class="switch"><input type="checkbox" id="update_check_enabled" checked><span class="slider"></span></label>
             </div>

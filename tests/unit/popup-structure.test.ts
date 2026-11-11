@@ -72,7 +72,8 @@ describe("вкладки и панели согласованы", () => {
     const panels = Array.from(d.querySelectorAll(".panel")).map((el) =>
       el.getAttribute("data-panel"),
     );
-    expect(tabs.filter(Boolean).sort()).toEqual(panels.filter(Boolean).sort());
+    // «Тильт» — панель без вкладки: её открывает красная кнопка в шапке.
+    expect(tabs.filter(Boolean).sort()).toEqual(panels.filter((p) => p && p !== "tilt").sort());
     expect(tabs, "вкладка «Иконки» появилась после перекройки меню").toContain("icons");
   });
 
@@ -179,6 +180,24 @@ describe("ни одна настройка не потерялась при пе
       .filter((id) => id in DEFAULT_SETTINGS);
     const unsubscribed = boxes.filter((id) => !popupSource.includes(`"${id}"`));
     expect(unsubscribed, `не подписаны: ${unsubscribed.join(", ")}`).toEqual([]);
+  });
+});
+
+describe("режим «Тильт» отключается целиком", () => {
+  test("выключатель режима — во «Ещё» (вкладка «Тильт» при выключенном режиме скрыта)", () => {
+    const d = doc();
+    expect(d.querySelector('.panel[data-panel="misc"] #tilt_mode_enabled')).not.toBeNull();
+    // Девятой вкладке в 360px нет места: «Тильт» открывает только кнопка шапки.
+    expect(d.querySelector('.tab[data-tab="tilt"]')).toBeNull();
+    expect(d.querySelector('.panel[data-panel="tilt"]')).not.toBeNull();
+    expect(d.querySelector('.panel[data-panel="tilt"] #tilt_button_enabled')).not.toBeNull();
+    expect(d.querySelector(".hdr #tilt_open")).not.toBeNull();
+  });
+
+  test("попап прячет кнопку и вкладку по режиму и уводит с открытой вкладки", () => {
+    expect(popupSource).toContain("function syncTiltMode()");
+    expect(popupSource).toMatch(/if \("tilt_mode_enabled" in patch\) syncTiltMode\(\)/);
+    expect(popupSource).toContain('$("tilt_mode_enabled")?.addEventListener("change", syncTiltMode)');
   });
 });
 

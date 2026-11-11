@@ -17,6 +17,7 @@ import {
   roomBestMoveProbes,
   ruBestMoveProbes,
   enBestMoveProbes,
+  searchCardProbes,
   ruPlayerActionProbes,
   ratingPageProbes,
   runProbes,
@@ -68,6 +69,7 @@ describe("живые семантические контракты бандло�
 
     const failed = [
       ...runProbes(gameSearchProbes, gs).map((r) => ({ ...r, bundle: "game-search" })),
+      ...runProbes(searchCardProbes, gs).map((r) => ({ ...r, bundle: "game-search" })),
       ...runProbes(roomProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
       ...runProbes(ruLocaleProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
       ...runProbes(siteCssProbes, css).map((r) => ({ ...r, bundle: "main.css" })),

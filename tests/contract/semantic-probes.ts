@@ -810,6 +810,17 @@ export const enBestMoveProbes: Record<string, Probe> = {
   finishSpeech: has('speech_player_finish:"End the speech"', "конец речи (EN) — ровно эта подпись"),
 };
 
+/**
+ * Карточка профиля на странице поиска (bundle/game-search): «У меня тильт»
+ * встаёт за кнопкой «Профиль» прямым ребёнком .p-play__profile-main (11.11.2026).
+ */
+export const searchCardProbes: Record<string, Probe> = {
+  profileButtonInMain: re(
+    /t\("div",\{staticClass:"p-play__profile-main"\},\[t\("div",\{staticClass:"p-play__profile-info"\}[\s\S]{0,4000}?\]\),\w+\._v\(" "\),t\("button",\{staticClass:"p-play__profile-btn[^"]*",attrs:\{type:"button"\},on:\{click:\w+\.goToProfile\}\}/,
+    "«Профиль» — button.p-play__profile-btn прямым ребёнком карточки, после блока инфо",
+  ),
+};
+
 export function runProbes(
   probes: Record<string, Probe>,
   text: string,

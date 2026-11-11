@@ -102,6 +102,7 @@ import { searchAvatarsFeature } from "@content/features/search-avatars";
 import { searchCardAvatarFeature } from "@content/features/search-card-avatar";
 import { hideRatingFeature } from "@content/features/hide-rating";
 import { playerActionKeysFeature } from "@content/features/player-action-keys";
+import { tiltButtonFeature } from "@content/features/tilt-button";
 import type { FeatureContext } from "@core/feature";
 
 const ROUND_MS = 600;
@@ -170,6 +171,7 @@ afterEach(() => {
   searchCardAvatarFeature.disable();
   hideRatingFeature.disable();
   playerActionKeysFeature.disable();
+  tiltButtonFeature.disable();
   syncProfileCrossoverRoute(null);
   syncProfileMmrRoute(null);
   vi.useRealTimers();
@@ -284,6 +286,21 @@ describe("§4 fixpoint: панель ЛХ по клавишам", () => {
     const r2 = await driveToFixpoint();
     expect(r2.settled).toBe(true);
     expect(document.getElementById("pn-best-move-panel")).toBeNull();
+  });
+});
+
+describe("§4 fixpoint: «У меня тильт»", () => {
+  test("карточка поиска: кнопка встаёт один раз за «Профилем», DOM тих", async () => {
+    window.history.replaceState(null, "", "/game-search");
+    document.body.innerHTML =
+      '<div class="p-play__profile-main"><div class="p-play__profile-info">fj</div>' +
+      '<button class="p-play__profile-btn" type="button">Профиль</button></div>';
+    const before = domObserver.subscriberCount();
+    tiltButtonFeature.enable({ settings: {} } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    expect(document.querySelectorAll(".pn-tilt-btn")).toHaveLength(1);
   });
 });
 

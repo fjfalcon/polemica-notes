@@ -18,6 +18,7 @@ import {
   roomBestMoveProbes,
   ruBestMoveProbes,
   enBestMoveProbes,
+  searchCardProbes,
   ruPlayerActionProbes,
   ratingPageProbes,
   siteCssProbes,
@@ -51,6 +52,7 @@ const ROOM_PV = snip("room-player-volume.txt");
 const ROOM_BM = snip("room-best-move.txt");
 const RU_BM = snip("ru-best-move.txt");
 const EN_BM = snip("en-best-move.txt");
+const SEARCH_CARD = snip("search-card.txt");
 const RATING_PAGE = snip("rating-page.txt");
 
 describe("пробы зелёные на реальных фрагментах бандлов", () => {
@@ -70,6 +72,7 @@ describe("пробы зелёные на реальных фрагментах �
     ["room-main: конец речи и ЛХ", roomBestMoveProbes, ROOM_BM],
     ["RU: конец речи и ЛХ", ruBestMoveProbes, RU_BM],
     ["EN: конец речи и ЛХ", enBestMoveProbes, EN_BM],
+    ["game-search: карточка профиля", searchCardProbes, SEARCH_CARD],
     ["rating: страница лидеров", ratingPageProbes, RATING_PAGE],
   ] as const)("%s", (_name, probes, text) => {
     const failed = runProbes(probes, text).filter((r) => !r.ok);
@@ -346,6 +349,8 @@ describe("каждая проба умирает от своего дрифта"
     ["bm EN modeVice", enBestMoveProbes, "modeVice", EN_BM,
       (t) => t.replace('action_guessVice:"Leave in charge"', 'action_guessVice:"Crown"')],
     ["bm EN finishSpeech", enBestMoveProbes, "finishSpeech", EN_BM, (t) => t.replace("End the speech", "Finish")],
+    ["card profileButtonInMain: «Профиль» уехал из карточки", searchCardProbes, "profileButtonInMain", SEARCH_CARD,
+      (t) => t.replace('staticClass:"p-play__profile-btn', 'staticClass:"p-play__profile-link')],
     // Страница лидеров /ratings
     ["rating columnsOrder: колонка MMR переехала", ratingPageProbes, "columnsOrder", RATING_PAGE,
       (t) => t.replace('{key:"name",title:"Игрок"},{key:"mmr",title:"MMR"}', '{key:"mmr",title:"MMR"},{key:"name",title:"Игрок"}')],
