@@ -1,0 +1,3 @@
+make_guess_maf:"Оставить мафией",make_guess_civ:"Оставить мирным",make_guess_vice:"Оставить за главного"
+speech_player_finish:"Завершите речь"
+action_guessRoles:"Угадать роли",action_guessVice:"Оставить за главного"

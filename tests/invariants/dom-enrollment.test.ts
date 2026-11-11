@@ -73,6 +73,8 @@ const EXEMPT: Record<string, { count: number; reason: string }> = {
     { count: 2, reason: "кликает по кнопкам сайта и мутирует стили ролей через applyRolePhase — с латч-гейтами применённого состояния; своих узлов не создаёт" },
   "src/content/features/camera-health.ts":
     { count: 1, reason: "бейдж/кнопка пишутся с маркер-гейтами (data-атрибуты), покрыто идемпотентность-тестами файла" },
+  "src/content/features/controls-keys.ts":
+    { count: 1, reason: "только при общей клавише выкрика и конца речи: подписчик ЧИТАЕТ, видна ли «Завершите речь», и пишет время в переменную; DOM не пишет" },
   "src/content/features/controls-safety.ts":
     { count: 1, reason: "держит <style> (сравнение textContent перед записью) и классы-метки с contains-гейтами; узлы не переставляет" },
   "src/content/features/hotkey-hints.ts":
@@ -83,6 +85,8 @@ const EXEMPT: Record<string, { count: number; reason: string }> = {
     { count: 1, reason: "syncOpenAttrs пишет open-атрибут только при расхождении с Set opened (сравнение перед записью); гейты compactOn/childList" },
   "src/content/features/player-notes.ts":
     { count: 1, reason: "страховочный проход целиком на маркер-гейтах (data-pn-*); кандидат №1 на сценарий при следующем касании файла" },
+  "src/content/features/player-volume-memory.ts":
+    { count: 1, reason: "подписчик читает ники плиток и шлёт команду page-скрипту (дроссель 500 мс, подпись стола); единственный свой узел — тег page-скрипта, один раз под флагом probe" },
   "src/content/features/postgame-search.ts":
     { count: 1, reason: "tick() машины кликает по кнопкам сайта и может показать тост (общий core-тост, не пер-батч); собственных узлов в страницу не пишет" },
   "src/content/features/queue-guard.ts":
@@ -90,7 +94,9 @@ const EXEMPT: Record<string, { count: number; reason: string }> = {
   "src/content/features/queue-peek.ts":
     { count: 1, reason: "гейты: существование кнопки, позиция у якоря, сравнение style.display перед записью" },
   "src/content/features/queue-requeue.ts":
-    { count: 1, reason: "подписчик детектит развал лобби и кликает, собственных узлов не пишет" },
+    { count: 1, reason: "подписчик детектит развал лобби и кликает; единственный свой узел — <script type=speculationrules> предзагрузки поиска, вставляется под гейтом существования (querySelector перед вставкой)" },
+  "src/content/features/roles-predictor.ts":
+    { count: 1, reason: "пишет только в СВОЮ плавающую панель и только при смене подписи стола (lastSignature-гейт), пересчёт задросселен 300 мс" },
   "src/content/features/role-faker.ts":
     { count: 1, reason: "оверлей ролей ключуется маркером и пересоздаётся только при смене состояния" },
   "src/content/features/role-marker.ts":
@@ -143,12 +149,14 @@ describe("зачисление DOM-подписчиков (§4, механика
       "src/content/features/auto-ready.ts": 1,
       "src/content/features/hide-rating.ts": 1,
       "src/content/features/mic-sync.ts": 1,
+      "src/content/features/player-action-keys.ts": 1,
       "src/content/features/profile-crossover.ts": 1,
       "src/content/features/profile-mmr-chart.ts": 1,
       "src/content/features/profile-photo.ts": 1,
       "src/content/features/protocol-emoji.ts": 1,
       "src/content/features/search-avatars.ts": 1,
       "src/content/features/search-card-avatar.ts": 1,
+      "src/content/features/tilt-button.ts": 1,
       "src/content/panels/table-summary-panel.ts": 1,
     };
     // Каждый покрытый файл обязан иметь пин (07.10.2026): auto-ready и
@@ -172,12 +180,14 @@ describe("зачисление DOM-подписчиков (§4, механика
       "src/content/features/auto-ready.ts",
       "src/content/features/hide-rating.ts",
       "src/content/features/mic-sync.ts",
+      "src/content/features/player-action-keys.ts",
       "src/content/features/profile-crossover.ts",
       "src/content/features/profile-mmr-chart.ts",
       "src/content/features/profile-photo.ts",
       "src/content/features/protocol-emoji.ts",
       "src/content/features/search-avatars.ts",
       "src/content/features/search-card-avatar.ts",
+      "src/content/features/tilt-button.ts",
       "src/content/panels/table-summary-panel.ts",
     ]);
   });

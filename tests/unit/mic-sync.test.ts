@@ -14,6 +14,13 @@ const obsReply = vi.hoisted(() => ({
   /** Эхо InputMuteStateChanged ДО ответа на SetInputMute (как в живом OBS). */
   echoBeforeReply: false,
   handler: null as ((msg: unknown) => unknown) | null,
+  /** Имя главного микрофона OBS, которым фон отвечает на «авто» (пусто в запросе). */
+  mainMic: "Mic/Aux",
+  /** Придержать ответ на запрос про этот источник до release() — гонка смены источника. */
+  hold: null as string | null,
+  release: null as (() => void) | null,
+  /** Мьют по источникам; нет в карте — общий obsReply.muted. */
+  mutedBy: {} as Record<string, boolean>,
 }));
 vi.mock("@core/messaging", () => ({
   onMessage: vi.fn((fn: (msg: unknown) => unknown) => {
@@ -22,9 +29,17 @@ vi.mock("@core/messaging", () => ({
       obsReply.handler = null;
     };
   }),
-  sendRuntime: vi.fn(async (msg: { command: string; data?: { muted?: boolean } }) => {
+  sendRuntime: vi.fn(async (msg: { command: string; data?: { muted?: boolean; inputName?: string } }) => {
     sent.push({ command: msg.command, muted: msg.data?.muted });
+    const asked = msg.data?.inputName || obsReply.mainMic;
+    if (obsReply.hold !== null && asked === obsReply.hold) {
+      obsReply.hold = null;
+      await new Promise<void>((r) => (obsReply.release = r));
+    }
     if (obsReply.fail) return { success: false, error: obsReply.fail };
+    if (msg.command === "get_input_mute" && asked in obsReply.mutedBy) {
+      return { success: true, data: { muted: obsReply.mutedBy[asked], inputName: asked } };
+    }
     if (msg.command === "set_input_mute") {
       obsReply.muted = msg.data?.muted === true;
       if (obsReply.echoBeforeReply) {
@@ -36,7 +51,8 @@ vi.mock("@core/messaging", () => ({
         await new Promise((r) => setTimeout(r, 20));
       }
     }
-    return { success: true, data: { muted: obsReply.muted } };
+    // Как фон 9.75.0: в ответе — настоящее имя источника («авто» → главный микрофон).
+    return { success: true, data: { muted: obsReply.muted, inputName: msg.data?.inputName || obsReply.mainMic } };
   }),
 }));
 vi.mock("@core/dom", () => ({
@@ -91,6 +107,10 @@ beforeEach(() => {
   obsReply.fail = null;
   obsReply.muted = false;
   obsReply.echoBeforeReply = false;
+  obsReply.mainMic = "Mic/Aux";
+  obsReply.hold = null;
+  obsReply.release = null;
+  obsReply.mutedBy = {};
 });
 
 afterEach(() => micSyncFeature.disable());
@@ -132,6 +152,11 @@ describe("pillView", () => {
   });
   test("нет источника — называет имя, которое искали", () => {
     expect(pillView({ muted: null, problem: "missing" }, null, "Мой мик").text).toContain("«Мой мик»");
+  });
+  test("«авто», а главного микрофона в OBS нет — просит выбрать источник, а не «Нет источника «»»", () => {
+    const text = pillView({ muted: null, problem: "missing" }, null, "").text;
+    expect(text).toContain("главный микрофон");
+    expect(text).not.toContain("«»");
   });
 });
 
@@ -194,5 +219,87 @@ describe("toggleMic", () => {
     void micSyncFeature.enable(ctx({ obs_enabled: false }));
     await toggleMic();
     expect(sent).toEqual([]);
+  });
+});
+
+describe("«авто»: главный микрофон OBS (9.75.0)", () => {
+  const event = (inputName: string, inputMuted: boolean) =>
+    obsReply.handler?.({ type: "obs_event", eventType: "obs_input_mute_changed", data: { inputName, inputMuted } });
+
+  test("события мьюта узнаются по НАСТОЯЩЕМУ имени из ответа фона, чужие — нет", async () => {
+    obsReply.mainMic = "Мик/Доп";
+    const btn = micButton(false);
+    void micSyncFeature.enable(ctx({ mic_sync_input: "" }));
+    await vi.waitFor(() => expect(sent.some((s) => s.command === "get_input_mute")).toBe(true));
+    await new Promise((r) => setTimeout(r, 0));
+    event("Звук рабочего стола", true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(btn.classList.contains("off"), "чужой источник не трогает игру").toBe(false);
+    event("Мик/Доп", true);
+    await vi.waitFor(() => expect(btn.classList.contains("off"), "мьют главного микрофона догоняет игру").toBe(true));
+  });
+
+  test("сменили источник в настройках — старое имя больше не узнаётся", async () => {
+    obsReply.mainMic = "Мик/Доп";
+    const btn = micButton(false);
+    void micSyncFeature.enable(ctx({ mic_sync_input: "" }));
+    await vi.waitFor(() => expect(sent.some((s) => s.command === "get_input_mute")).toBe(true));
+    await new Promise((r) => setTimeout(r, 0));
+    obsReply.fail = "OBS не ответил"; // новый источник ещё не подтверждён фоном
+    micSyncFeature.update?.(ctx({ mic_sync_input: "Shure" }));
+    event("Мик/Доп", true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(btn.classList.contains("off")).toBe(false);
+  });
+});
+
+describe("ревью 02.11.2026: смена и переименование источника", () => {
+  const pillEl = () => [...document.body.querySelectorAll<HTMLElement>("div")].find((d) => d.textContent?.startsWith("🎙") || d.textContent?.startsWith("🔇"));
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+
+  test("ответ про СТАРЫЙ источник, пришедший после смены, не ложится на плашку (M2)", async () => {
+    obsReply.mutedBy = { A: true, B: false };
+    micButton(false);
+    obsReply.hold = "A";
+    void micSyncFeature.enable(ctx({ mic_sync_input: "A" }));
+    await vi.waitFor(() => expect(obsReply.release).not.toBeNull());
+    micSyncFeature.update?.(ctx({ mic_sync_input: "B" }));
+    await tick();
+    expect(pillEl()?.textContent).toContain("вкл");
+    obsReply.release?.(); // запоздалый ответ про A: «выключен»
+    await tick();
+    await tick();
+    expect(pillEl()?.textContent, "плашка про B, а не про A").not.toContain("выкл");
+  });
+
+  test("главный микрофон переименовали в OBS — «авто» узнаёт события по новому имени (M3)", async () => {
+    obsReply.mainMic = "Мик/Доп";
+    const btn = micButton(false);
+    void micSyncFeature.enable(ctx({ mic_sync_input: "" }));
+    await vi.waitFor(() => expect(sent.some((s) => s.command === "get_input_mute")).toBe(true));
+    await tick();
+    obsReply.mainMic = "Мой мик";
+    obsReply.handler?.({ type: "obs_event", eventType: "obs_input_renamed", data: { oldInputName: "Мик/Доп", inputName: "Мой мик" } });
+    obsReply.handler?.({ type: "obs_event", eventType: "obs_input_mute_changed", data: { inputName: "Мой мик", inputMuted: true } });
+    await vi.waitFor(() => expect(btn.classList.contains("off")).toBe(true));
+  });
+
+  test("своё имя переименовали в OBS — плашка называет пропавший источник, а не новое имя", async () => {
+    obsReply.mutedBy = { Shure: false };
+    micButton(false);
+    void micSyncFeature.enable(ctx({ mic_sync_input: "Shure" }));
+    await vi.waitFor(() => expect(sent.some((s) => s.command === "get_input_mute")).toBe(true));
+    await tick();
+    obsReply.fail = "No source was found by the name of `Shure`.";
+    obsReply.handler?.({ type: "obs_event", eventType: "obs_input_renamed", data: { oldInputName: "Shure", inputName: "Shure2" } });
+    await vi.waitFor(() => expect(pillEl()?.textContent).toContain("«Shure»"));
+    expect(pillEl()?.title).toBe("Источник в OBS: Shure");
+  });
+
+  test("в подсказке плашки — каким источником OBS управляем (L1)", async () => {
+    obsReply.mainMic = "Мик/Доп";
+    micButton(false);
+    void micSyncFeature.enable(ctx({ mic_sync_input: "" }));
+    await vi.waitFor(() => expect(pillEl()?.title).toBe("Источник в OBS: Мик/Доп"));
   });
 });

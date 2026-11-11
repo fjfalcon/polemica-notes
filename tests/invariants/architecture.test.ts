@@ -618,7 +618,14 @@ describe("settings, release and manifest consistency", () => {
           }
         }
         if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-          check(node, node.text);
+          // Module specifiers are syntax, not CSS. Keep checking every other
+          // literal (including selector arguments containing the same text).
+          const parent = node.parent;
+          const moduleName = parent && (
+            ((ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) && parent.moduleSpecifier === node) ||
+            (ts.isModuleDeclaration(parent) && parent.name === node)
+          );
+          if (!moduleName) check(node, node.text);
         } else if (ts.isTemplateExpression(node)) {
           // Шаблон с подстановками: проверяем статические куски — именно в
           // них живут классы (`.player__role[data-x="${id}"]`).
@@ -648,6 +655,8 @@ describe("settings, release and manifest consistency", () => {
         // «Участники» поиска: свой ник одной строкой (22.10.2026).
         "participants-item",
         "participants-name",
+        // «У меня тильт» (11.11.2026): угол карточки поиска, поверх её :after.
+        "p-play__profile-main",
         // НАША разметка с общими именами: внутри .player-stats / .pn-tooltip.
         "player-icons",
         "mmr",
@@ -671,6 +680,19 @@ describe("settings, release and manifest consistency", () => {
         "mmr_diff",
         "positive-mmr",
         "negative-mmr",
+        // Страница лидеров /ratings (05.11.2026): карточка и таблица.
+        "p-rating-person",
+        "p-rating-person__statistic",
+        "p-rating-table__inner",
+        "p-rating-table__head",
+        "p-rating-table__row",
+        "p-rating-table__cell",
+        "p-rating-table__place",
+        "p-rating-table__amount",
+        "p-rating",
+        "p-rating__filterbtns-btn",
+        "p-rating-main",
+        "p-rating__tablecont",
       ],
     };
     for (const [file, known] of Object.entries(cssKnown)) {
@@ -932,6 +954,20 @@ describe("§4.7 lifecycle heuristic", () => {
         "click-обработчик живёт на кнопке #pn-camera-reload и удаляется вместе с её узлом в disable(); " +
         "+1 таймер (9.23.1) — шаги лесенки ставят setTimeout трижды при одном clearTimeout-поле verdictTimer, " +
         "каждый прежний таймер снимается перед новым и в disable()",
+    },
+    "src/content/features/player-action-keys.ts": {
+      listeners: 1,
+      timers: 0,
+      reason:
+        "click-обработчик живёт на панели ЛХ #pn-best-move-panel и умирает вместе с её узлом: " +
+        "renderPanel() убирает панель, как только кнопок ЛХ нет, и в disable() (10.11.2026)",
+    },
+    "src/content/features/tilt-button.ts": {
+      listeners: 4,
+      timers: 0,
+      reason:
+        "клик по кнопке «У меня тильт», клик по крестику, mousedown/click фона окна живут на НАШИХ узлах и умирают " +
+        "вместе с ними (removeButton/closeModal в disable); keydown Esc снимается в closeModal (11.11.2026)",
     },
     "src/content/features/mic-sync.ts": {
       listeners: 3,

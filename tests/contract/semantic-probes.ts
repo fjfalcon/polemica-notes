@@ -278,7 +278,7 @@ export const roomProbes: Record<string, Probe> = {
   ),
   /** Пара without-hover/with-hover принадлежит кнопке продолжения паузы. */
   withoutHoverContinue: re(
-    /class:"without-hover",textContent:v\(\w+\.\$parent\.readinessTextWithoutHoverContinue\)/,
+    /class:"without-hover",textContent:\w+\(\w+\.\$parent\.readinessTextWithoutHoverContinue\)/,
     "without-hover привязан к тексту продолжения паузы (F8)",
   ),
   /** Строка суммы в таблице статистики подписана «Итог» (захардкожено сайтом). */
@@ -332,7 +332,7 @@ export const roomProbes: Record<string, Probe> = {
   ),
   /** Номер игрока: класс player-N (id), подпись — id+1. */
   playerNumberBinding: re(
-    /\["player-number","player-"\.concat\(\w+\.id\)\][^)]*\)[^)]*textContent:v\(\w+\.id\+1\)/,
+    /\["player-number","player-"\.concat\(\w+\.id\)\][^)]*\)[^)]*textContent:\w+\(\w+\.id\+1\)/,
     "PlayerNumber: класс player-<id>, текст id+1 (id 0-based, подпись с единицы)",
   ),
   /**
@@ -569,6 +569,256 @@ export const profileRatingProbes: Record<string, Probe> = {
     "± истории игр — profileGames__table-body-row-item-cont-mmr",
   ),
   historyMmrColumn: has('{title:"MMR",key:"mmr"}', "колонка истории игр подписана «MMR» (метка по подписи)"),
+};
+
+/**
+ * Подтверждение ППК (04.11.2026): ppk-guard узнаёт пункт меню и голос «Да»
+ * по разметке и подписям. Дрейф — и защита от бана молча перестаёт спрашивать.
+ */
+export const roomPpkProbes: Record<string, Probe> = {
+  menuContainer: re(
+    /\w+=\{class:"menu"\},\w+=\{class:"menu__container"\}/,
+    "меню игрока: .menu > .menu__container (селектор пункта ППК)",
+  ),
+  menuItemStartsVoting: re(
+    /yo\("li",\{class:\w+\(\{disabled:!e\.\$parent\.canStartVotingForStop\}\),onClick:[\s\S]{0,160}startStopVoting[\s\S]{0,60}Loc\.vote_for_menu_stop/,
+    "пункт <li> «ППК» запускает голосование, недоступный — класс disabled",
+  ),
+  votingTitleByType: has(
+    'title:function(){var e="".concat(this.type,"_voting_title")',
+    "заголовок голосования — `${type}_voting_title` (ППК узнаём по нему)",
+  ),
+  votingTitleClass: re(/\w+=\{key:0,class:"voting__top-title"\}/, "заголовок голосования — .voting__top-title"),
+  votingRoot: has('ao("div",{class:d(["voting",', "корень голосования — .voting (closest от кнопки «Да»)"),
+  votingYesButton: re(
+    /yo\("button",\{class:"voting__bottom-button",onClick:[^}]*o\.vote\(!0\)\}\)\},g\(this\.\$root\.Loc\.yes\)/,
+    "голос «за» — button.voting__bottom-button с подписью Loc.yes",
+  ),
+};
+
+export const ruPpkProbes: Record<string, Probe> = {
+  menuLabel: has('vote_for_menu_stop:"ППК"', "пункт меню — ровно «ППК»"),
+  votingTitle: has('stop_voting_title:"Проголосовать за ППК?"', "заголовок голосования за ППК"),
+  yesLabel: has('yes:"Да"', "кнопка голоса «за» — ровно «Да»"),
+};
+
+/**
+ * Скрыть рейтинг на странице лидеров /ratings (05.11.2026, bundle/rating.js):
+ * rating-hide.css узнаёт вкладку по MMR по значку .mmrLabel в строке и
+ * карточке, а заголовки колонок — по порядку.
+ */
+export const ratingPageProbes: Record<string, Probe> = {
+  columnsOrder: has(
+    '[{key:"position",title:"Место"},{key:"name",title:"Игрок"},{key:"mmr",title:"MMR"},{key:"total_games",title:"Игры"}]',
+    "колонки вкладки по MMR: Место, Игрок, MMR, Игры (CSS гасит 1-й и 3-й заголовок)",
+  ),
+  headInInner: re(
+    /staticClass:"p-rating-table__inner"\},\[\w+\("div",\{staticClass:"p-rating-table__head"\},\w+\._l\(\w+\.columns/,
+    "заголовок — .p-rating-table__head внутри .p-rating-table__inner, ячейки по columns",
+  ),
+  rowPlaceCell: re(
+    /staticClass:"p-rating-table__row"\},\[\w+\.position\?\w+\("span",\{staticClass:"p-rating-table__cell p-rating-table__place"\}/,
+    "место в рейтинге — .p-rating-table__place прямым ребёнком строки",
+  ),
+  mmrCellLabel: re(
+    /showMmrColumn\?\w+\("span",\{staticClass:"p-rating-table__cell p-rating-table__amount"\},\[\w+\("UserMmrLabel"/,
+    "MMR в строке — UserMmrLabel прямо в .p-rating-table__amount, только при колонке MMR",
+  ),
+  personMmrLabel: re(/\w+\.ratingInfo\.mmr\?\w+\("UserMmrLabel"/, "значок MMR в карточке — только на вкладке по MMR"),
+  personStatistic: re(
+    /staticClass:"p-rating-person__statistic"\},\w+\._l\(\w+\.ratingInfo/,
+    "блок «Место / MMR» карточки — .p-rating-person__statistic по ratingInfo",
+  ),
+  mmrLabelClass: has('return"mmrLabel ".concat(this.containerClass)', "UserMmrLabel — класс mmrLabel на корне"),
+  mmrLabelOnRoot: re(
+    /directives:\[\{name:"show"[^\]]*\}\],class:\w+\.contClassname\}/,
+    "contClassname висит на корне UserMmrLabel (иначе > .mmrLabel не найдёт)",
+  ),
+  userInfoMmrBranch: re(
+    /\{place:\{label:"Место",value:\w+\+1\},mmr:\{label:"MMR",value:this\.toLocaleNumber\(\w+\.mmr\)\}\}/,
+    "карточка вкладки по MMR — ровно {place, mmr}: значок карточки и скрытый блок",
+  ),
+  viewerColumns: has(
+    '[{key:"place",title:"Место"},{key:"name",title:"Игрок"},{key:"points",title:"Мафпоинты"},{key:"total_games",title:"Игры"}]',
+    "«Зрители» — мафпоинты без MMR (их места остаются)",
+  ),
+  personInMain: re(
+    /staticClass:"p-rating-main"\},\[\w+\.userRatingInfo\?\w+\("UserBlock"[\s\S]{0,200}staticClass:"p-rating__tablecont"/,
+    "карточка и таблица — в одном .p-rating-main (запасной селектор карточки)",
+  ),
+  tabsDisabledAttr: re(
+    /staticClass:"p-rating__filterbtns-btn",class:\{[^}]*\},attrs:\{disabled:\w+\.tabsDisabled\}/,
+    "кнопки вкладок disabled на время загрузки",
+  ),
+  loadingWired: re(/on:\{ratingLoading:\w+\.changeTabsDisabled\}/, "ratingLoading списка → блок кнопок вкладок"),
+  rowsWithLoadingEnd: re(
+    /\w+\.rows=\w+,\w+\.\$emit\("ratingLoading",!1\)/,
+    "строки подменяются в том же такте, что снимается блок вкладок",
+  ),
+};
+
+/**
+ * Действия по цифрам (04.11.2026): кнопка действия на плитке (PlayerAction)
+ * подписана по виду действия, клик по ней — doAction(действие) сайта.
+ */
+export const roomPlayerActionProbes: Record<string, Probe> = {
+  actionLabels: re(
+    /case"nominate":return this\.\$root\.Loc\.nominate_player;case"shot":return this\.\$root\.Loc\.aim_player;case"vote":return this\.\$root\.Loc\.vote_player;case"check":return this\.\$root\.Loc\.reveal_role/,
+    "подпись кнопки по действию: nominate/shot/vote/check → Loc.nominate_player/aim_player/vote_player/reveal_role",
+  ),
+  actionRootClick: re(
+    /ao\("div",\{class:\w+\(\["player-action",\w+\.actionClasses\]\),onClick:[^}]*\$emit\("doAction"\)/,
+    "корень кнопки — .player-action, клик по нему — doAction",
+  ),
+  actionContentClass: re(/\w+=\{class:"player-action__content"\}/, "обёртка подписи — .player-action__content"),
+  actionLabelSpan: re(
+    /yo\("span",null,\w+\(\w+\.actionText\),1\)\]\)/,
+    "подпись — <span> прямым ребёнком обёртки (носитель подсказки клавиши)",
+  ),
+  actionsContainer: re(
+    /ao\("div",\{key:\d+,class:\w+\(\["player__actions",[\s\S]{0,260}onDoAction:function\(\)\{return \w+\.doAction\(e\)\}/,
+    "кнопки лежат в .player__actions, клик передаёт действие doAction(e)",
+  ),
+  /**
+   * Цифры сайта зовут doAction() БЕЗ действия — кнопки снимаются, на сервер
+   * ничего не уходит; поэтому, пока кнопки на столе, цифры сайту не отдаём.
+   * Починит сайт — проба упадёт, и глушение надо пересмотреть.
+   */
+  siteDigitKeysWithoutAction: re(
+    /_h\(""\.concat\(\w+,", num_"\)\.concat\(\w+\),\(function\(\)\{return event\.preventDefault\(\),\w+\.doAction\(\),!1\}\)\)/,
+    "цифры сайта (1…0, num_) вызывают doAction() без действия",
+  ),
+  /** …а Player.doAction шлёт РОВНО аргумент: дефолта «текущее действие» нет. */
+  playerDoActionPassesArg: re(
+    /doAction:function\((\w+)\)\{var \w+=\{id:this\.id,position:this\.id\+1,action:\1\};this\.\$EventBus\.\$emit\("player:onAction"/,
+    "Player.doAction(e) отправляет action: e без подстановки",
+  ),
+  /** …и onPlayerAction снимает кнопки ДО разбора действия — потому цифра их и гасит. */
+  onActionClearsFirst: re(
+    /"guess"!==\w+\.action&&this\.preparePlayersToAction\(""\),\w+\.action\)\{case"nominate"/,
+    "onPlayerAction: сначала preparePlayersToAction(\"\"), потом switch по действию",
+  ),
+};
+
+export const ruPlayerActionProbes: Record<string, Probe> = {
+  nominate: has('nominate_player:"Выставить этого игрока"', "кнопка выставления — ровно эта подпись"),
+  vote: has('vote_player:"Проголосовать за этого игрока"', "кнопка голоса — ровно эта подпись"),
+  shot: has('aim_player:"Сделать выстрел"', "кнопка выстрела — ровно эта подпись"),
+  check: has('reveal_role:"Раскрыть роль"', "кнопка проверки — ровно эта подпись"),
+};
+
+/**
+ * Громкость игрока (player-volume-memory, 09.11.2026). Page-скрипт зовёт у
+ * компонента плитки метод сайта updateVolumeIcon(v) — тот же, что ползунок
+ * меню; content запоминает отпущенный ползунок по id из ссылки «Профиль».
+ */
+export const roomPlayerVolumeProbes: Record<string, Probe> = {
+  updateVolumeIcon: re(
+    /updateVolumeIcon:function\((\w+)\)\{this\.currentVolume=\1;var (\w+)=this\.currentVolume\/100;this\.\$store\.state\.useAudioAmplification\?this\.volumeAmplifier\.setVolume\(\2\):this\.\$refs\.audioOutput\.volume=\2\}/,
+    "updateVolumeIcon(v): currentVolume = v и громкость звука v/100 (усилитель или <audio>)",
+  ),
+  menuCallsUpdateVolumeIcon: re(
+    /onPlayerVolumeChanged:\w+\.updateVolumeIcon[,}]/,
+    "ползунок меню плитки ведёт в updateVolumeIcon",
+  ),
+  sliderShowsCurrentVolume: re(
+    /\(\w+,\{volume:\w+\.player\.currentVolume,onChanged:\w+\.playerVolumeChanged\}/,
+    "ползунок показывает currentVolume плитки",
+  ),
+  sliderMarkup: re(
+    /\w+=\{class:"volume__container"\},\w+=\{class:"volume"\}[\s\S]{0,1200}yo\("input",\{type:"range",min:"0",max:"100",value:\w+\.volume/,
+    "ползунок — input[type=range] 0…100 в .volume__container > .volume",
+  ),
+  sliderEmitsValue: re(
+    /changeValue:function\((\w+)\)\{return this\.\$emit\("changed",parseFloat\(\1\.target\.value\)\)\}/,
+    "значение ползунка — его value как есть (шкала 0…100)",
+  ),
+  menuContainerClass: re(/\w+=\{class:"menu"\},\w+=\{class:"menu__container"\}/, "меню плитки — .menu > .menu__container"),
+  profileLinkHref: re(
+    /playerProfileLink:function\(\)\{[^}]*\?"\/profile\/"\.concat\(this\.player\.playerView\.user\.id\):null\}/,
+    "ссылка «Профиль» меню — /profile/<playerView.user.id>",
+  ),
+  profileLinkInMenu: re(
+    /\w+\.playerProfileLink\?\(to\(\),ao\("li",\w+,\[yo\("a",\{href:\w+\.playerProfileLink/,
+    "ссылка профиля — <a href> в том же меню, что ползунок",
+  ),
+  currentVolumeData: re(/actionTimerDuration:0,currentVolume:100,/, "currentVolume — поле data плитки"),
+  itsMeComputed: re(/itsMe:function\(\)\{return this\.id===this\.\$store\.state\.playerId\}/, "itsMe — своя плитка"),
+  outcryRestores: re(
+    /startOutcry:function\(\w+\)\{this\.isOutcry=!0,this\.savedVolume=this\.currentVolume,/,
+    "выкрик: isOutcry и сохранение громкости (её вернёт сайт)",
+  ),
+  outcryWatcherRestores: re(
+    /isOutcry:function\((\w+)\)\{!\1&&this\.currentVolume===this\.outcryVolume&&this\.\$store\.state\.useAudioAmplification&&this\.updateVolumeIcon\(this\.savedVolume\)\}/,
+    "конец выкрика: сайт сам возвращает сохранённую громкость (поэтому во время выкрика не применяем)",
+  ),
+};
+
+/**
+ * «Завершите речь» с клавиши и ЛХ по клавишам (10.11.2026).
+ * finish-speech-hotkey жмёт действие skip центра контролов; player-action-keys
+ * во время ЛХ жмёт кнопки guessMaf/guessCiv/guessVice на плитках и
+ * переключает режим сайта (guessRoles/guessVice) его кнопкой в контролах.
+ */
+export const roomBestMoveProbes: Record<string, Probe> = {
+  skipIsFinishSpeech: re(
+    /case"skip":return\{label:\w+\.\$root\.Loc\.speech_player_finish,tooltip:\w+\.\$root\.Loc\.finish_speech_tooltip,icon:[^}]*onClick:function\(\)\{\w+\.runAction\(\w+\)\}\}/,
+    "действие skip — кнопка «Завершите речь» (speech_player_finish), клик запускает skip",
+  ),
+  skipHasNoSiteHotKey: re(
+    /case"skip":return\{(?:(?!hotKey)[^}])*\}/,
+    "у skip нет своей клавиши сайта (наша её не перебивает)",
+  ),
+  guessActionLabels: re(
+    /case"guessMaf":return this\.\$root\.Loc\.make_guess_maf;case"guessCiv":return this\.\$root\.Loc\.make_guess_civ;case"guessVice":return this\.\$root\.Loc\.make_guess_vice;/,
+    "кнопки ЛХ на плитке: guessMaf/guessCiv/guessVice → make_guess_maf/civ/vice",
+  ),
+  tileButtonsByMode: re(
+    /return"guessRoles"===this\.\$store\.state\.playerAction\?[^;]{0,200}?return\["guessCiv","guessMaf"\]\.includes\(\w+\)\}\)\):"guessVice"===this\.\$store\.state\.playerAction\?[^;]{0,200}?return"guessVice"===\w+\}/,
+    "режим guessRoles — на плитке пистолет и сердце, guessVice — корона",
+  ),
+  modesFromActions: re(
+    /\["guessMaf","guessCiv"\]\.includes\((\w+)\)&&\(\1="guessRoles"\)/,
+    "режимы ЛХ сайта — guessRoles (из guessMaf/guessCiv) и guessVice",
+  ),
+  modeToggleRepeatClears: re(
+    /togglePlayerAction:function\((\w+),(\w+)\)\{\1\.playerAction===\2\?\1\.playerAction=null:\1\.playerAction=\2\}/,
+    "повторный клик по активному режиму СНИМАЕТ его — активный не кликаем",
+  ),
+  modeToggleMarkup: re(
+    /co\(\w+,\{class:\w+\(\{activated:(\w+)===\w+\.\$store\.state\.playerAction,"not-activated":\1!==\w+\.\$store\.state\.playerAction\}\)[\s\S]{0,300}onClick:function\(\)\{\w+\.onPlayerActionToggle\(\1\)\}\},\{default:\w+\(\(function\(\)\{return\[\w+\(\w+\(\w+\.\$root\.Loc\["action_"\.concat\(\1\)\]\)/,
+    "переключатель режима — кнопка контролов с классом activated и подписью Loc.action_<режим>",
+  ),
+};
+
+export const ruBestMoveProbes: Record<string, Probe> = {
+  guessMaf: has('make_guess_maf:"Оставить мафией"', "пистолет — ровно эта подпись"),
+  guessCiv: has('make_guess_civ:"Оставить мирным"', "сердце — ровно эта подпись"),
+  guessVice: has('make_guess_vice:"Оставить за главного"', "корона — ровно эта подпись"),
+  modeRoles: has('action_guessRoles:"Угадать роли"', "режим ролей — ровно эта подпись"),
+  modeVice: has('action_guessVice:"Оставить за главного"', "режим короны — ровно эта подпись"),
+  finishSpeech: has('speech_player_finish:"Завершите речь"', "конец речи — ровно эта подпись"),
+};
+
+/** EN-подписи тех же кнопок: TEXT.guessAction / guessModeButton / finishSpeechButton. */
+export const enBestMoveProbes: Record<string, Probe> = {
+  guessMaf: has('make_guess_maf:"Select as mafia"', "пистолет (EN) — ровно эта подпись"),
+  guessCiv: has('make_guess_civ:"Select as civilian"', "сердце (EN) — ровно эта подпись"),
+  guessVice: has('make_guess_vice:"Leave in charge"', "корона (EN) — ровно эта подпись"),
+  modeRoles: has('action_guessRoles:"Guess roles"', "режим ролей (EN) — ровно эта подпись"),
+  modeVice: has('action_guessVice:"Leave in charge"', "режим короны (EN) — ровно эта подпись"),
+  finishSpeech: has('speech_player_finish:"End the speech"', "конец речи (EN) — ровно эта подпись"),
+};
+
+/**
+ * Карточка профиля на странице поиска (bundle/game-search): «У меня тильт»
+ * встаёт за кнопкой «Профиль» прямым ребёнком .p-play__profile-main (11.11.2026).
+ */
+export const searchCardProbes: Record<string, Probe> = {
+  profileButtonInMain: re(
+    /t\("div",\{staticClass:"p-play__profile-main"\},\[t\("div",\{staticClass:"p-play__profile-info"\}[\s\S]{0,4000}?\]\),\w+\._v\(" "\),t\("button",\{staticClass:"p-play__profile-btn[^"]*",attrs:\{type:"button"\},on:\{click:\w+\.goToProfile\}\}/,
+    "«Профиль» — button.p-play__profile-btn прямым ребёнком карточки, после блока инфо",
+  ),
 };
 
 export function runProbes(

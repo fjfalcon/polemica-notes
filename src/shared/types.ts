@@ -33,6 +33,13 @@ export interface Settings {
   /** Картинка в карточке профиля на странице поиска (на месте 3D-аватара). */
   search_card_avatar_enabled: boolean;
   /**
+   * Режим «Тильт» целиком: красная кнопка в шапке попапа, вкладка «Тильт» с
+   * упражнениями и кнопка «У меня тильт» на сайте. Выключено — ничего из этого.
+   */
+  tilt_mode_enabled: boolean;
+  /** Кнопка «У меня тильт» в карточке на странице поиска (внутри режима «Тильт»). */
+  tilt_button_enabled: boolean;
+  /**
    * Чья картинка «моя»: "site" — фото с сайта, "custom" — своя картинка
    * (pn_own_avatar в storage.local). Действует в карточке поиска и большим
    * фото СВОЕГО профиля.
@@ -67,6 +74,8 @@ export interface Settings {
   camera_rotate_enabled: boolean;
   /** Кнопка локального мьюта игрока (глушит его звук только у меня). */
   player_mute_enabled: boolean;
+  /** Громкость игрока с ползунка сайта запоминается и возвращается в следующих играх. */
+  player_volume_memory_enabled: boolean;
   /** Цветные ники игроков (цвет задаётся в заметке; палитра — как у рамок). */
   nick_colors_enabled: boolean;
   /**
@@ -99,6 +108,11 @@ export interface Settings {
   note_indicator_enabled: boolean;
   /** Квадратик-метка роли у игрока (мой read, сбрасывается за игру). */
   role_marker_enabled: boolean;
+  /**
+   * Панель вероятностей ролей: точный пересчёт P(место чёрное) по составу
+   * стола и уже раскрытой информации + проверенные поправки из research.
+   */
+  roles_predictor_enabled: boolean;
   /** В метке — иконка роли из спрайта сайта; false — прежние «Мир/Шер/Дон». */
   role_marker_icons_enabled: boolean;
   /** Управлять раскладкой кнопок действий в игре. */
@@ -107,9 +121,14 @@ export interface Settings {
   ctl_pos_finish: string;
   ctl_pos_outcry: string;
   ctl_pos_guess: string;
+  /**
+   * Подтверждение ППК (04.11.2026): перед запуском ППК и голосом «Да» за ППК
+   * — короткое напоминание по правилам и практике модерации.
+   */
+  ppk_confirm_enabled: boolean;
   /** Микрофон: один клик/клавиша переключает OBS-источник и микрофон игры. */
   mic_sync_enabled: boolean;
-  /** Имя источника микрофона в микшере OBS. */
+  /** Имя источника микрофона в микшере OBS; "" — главный микрофон OBS (авто). */
   mic_sync_input: string;
   /** Клавиша переключения (KeyboardEvent.code); "" — только клик по плашке. */
   mic_sync_hotkey: string;
@@ -129,8 +148,31 @@ export interface Settings {
   hotkey_role_peek: string;
   /** Выкрикнуть с клавиши. Выключено по умолчанию: действие расходуемое. */
   outcry_hotkey_enabled: boolean;
+  /** «Завершите речь» с клавиши (своя речь заканчивается досрочно). */
+  finish_speech_hotkey_enabled: boolean;
+  finish_speech_hotkey_code: string;
+  /** ЛХ по клавишам: панель режима во время лучшего хода, цифры — игроки. */
+  player_action_guess: boolean;
+  /** Клавиши режимов ЛХ: пистолет (мафия), сердце (мирный), корона (главный). */
+  guess_key_maf: string;
+  guess_key_civ: string;
+  guess_key_vice: string;
   /** Клавиша выкрика (дефолт KeyC). */
   outcry_hotkey_code: string;
+  /**
+   * Действия по цифрам (04.11.2026): клавиша места жмёт кнопку действия сайта
+   * на плитке игрока. Выключено по умолчанию: выстрел и голос не отменить.
+   */
+  player_action_keys_enabled: boolean;
+  /** Какие действия клавиша нажимает: выставление, голос, выстрел, проверка. */
+  player_action_nominate: boolean;
+  player_action_vote: boolean;
+  player_action_shot: boolean;
+  player_action_check: boolean;
+  /** Клавиши игроков 1…10 через запятую (KeyboardEvent.code); "" — места без клавиши. */
+  player_action_keys: string;
+  /** Нумпад тоже: NumpadN — игрок N, Numpad0 — игрок 10. */
+  player_action_numpad: boolean;
   /** Писать клавишу прямо на кнопке: «Выкрикнуть (C)», «Пауза (F8)». */
   hotkey_hints_enabled: boolean;
   /** Кнопка «Перезагрузить камеры» в игре (видео пересоздаётся без F5). */
@@ -235,7 +277,8 @@ export interface ObsCommandMsg {
     | "replay_setup"
     | "room_entered"
     | "get_input_mute"
-    | "set_input_mute";
+    | "set_input_mute"
+    | "get_mic_inputs";
   data?: {
     url?: string;
     password?: string;
@@ -247,7 +290,7 @@ export interface ObsCommandMsg {
     manual?: boolean;
     /** record_start: повтор по obs_connected (OBS поднялся позже), а не вход в комнату. */
     reconnect?: boolean;
-    /** get/set_input_mute: имя источника звука в микшере OBS. */
+    /** get/set_input_mute: имя источника звука в микшере OBS; пусто — главный микрофон. */
     inputName?: string;
     /** set_input_mute: заглушить (true) или включить (false). */
     muted?: boolean;
@@ -263,7 +306,13 @@ export interface ObsEventMsg {
     | "obs_disconnected"
     | "obs_connected"
     /** Трансляция в OBS началась/закончилась: data = { streaming: boolean | null }. */
-    | "obs_stream_state";
+    | "obs_stream_state"
+    /** Мьют источника звука: data = { inputName, inputMuted }. */
+    | "obs_input_mute_changed"
+    /** Источник переименован: data = { oldInputName, inputName }. */
+    | "obs_input_renamed"
+    /** Источник добавлен или удалён — список микрофонов в попапе устарел. */
+    | "obs_inputs_changed";
   data?: unknown;
 }
 

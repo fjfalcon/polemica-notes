@@ -61,10 +61,17 @@ export interface PillView {
   tone: "ok" | "muted" | "warn";
 }
 
-/** Текст плашки по двум состояниям. Чистая функция. */
+/**
+ * Текст плашки по двум состояниям. Чистая функция. input — имя источника;
+ * пусто — «авто», и главный микрофон OBS не нашёлся.
+ */
 export function pillView(obs: ObsMicState, game: { muted: boolean } | null, input: string): PillView {
   if (obs.problem === "down") return { text: "🎙 OBS не подключён", tone: "warn" };
-  if (obs.problem === "missing") return { text: `🎙 Нет источника «${input}» в OBS`, tone: "warn" };
+  if (obs.problem === "missing") {
+    return input
+      ? { text: `🎙 Нет источника «${input}» в OBS`, tone: "warn" }
+      : { text: "🎙 В OBS не задан главный микрофон — выберите источник", tone: "warn" };
+  }
   if (obs.muted === null) return { text: "🎙 OBS: …", tone: "warn" };
   const g = game === null ? "?" : game.muted ? "выкл" : "вкл";
   if (game && game.muted === obs.muted) {
@@ -81,7 +88,16 @@ export function pillView(obs: ObsMicState, game: { muted: boolean } | null, inpu
 // ─────────────────────────── состояние ───────────────────────────
 
 let active = false;
-let inputName = "Mic/Aux";
+/** Источник из настроек; пусто — «авто»: главный микрофон OBS (решает фон). */
+let inputName = "";
+/** Настоящее имя источника из ответа фона — по нему узнаём события мьюта. */
+let obsInput: string | null = null;
+/**
+ * Поколение выбора источника. Ответ на запрос, начатый до смены источника,
+ * — про СТАРЫЙ источник: его мьют не должен лечь на плашку и стать базой
+ * следующего переключения (ревью 02.11.2026, M2).
+ */
+let sourceGen = 0;
 let hotkeyCode = "";
 let obs: ObsMicState = { muted: null, problem: null };
 let pill: HTMLElement | null = null;
@@ -97,21 +113,33 @@ function classifyError(e: unknown): ObsMicState["problem"] {
 }
 
 async function obsCommand(command: "get_input_mute" | "set_input_mute", muted?: boolean): Promise<boolean> {
-  const res = await sendRuntime<{ success?: boolean; data?: { muted?: boolean }; error?: string }>({
+  const requested = inputName;
+  const gen = sourceGen;
+  const res = await sendRuntime<{
+    success?: boolean;
+    data?: { muted?: boolean; inputName?: unknown };
+    error?: string;
+  }>({
     type: "obs_command",
     command,
-    data: { inputName, muted },
+    data: { inputName: requested, muted },
   });
   if (!res?.success) throw new Error(res?.error || "OBS не ответил");
+  if (gen === sourceGen && typeof res.data?.inputName === "string") obsInput = res.data.inputName;
   return res.data?.muted === true;
 }
 
 async function refreshObs(): Promise<void> {
+  const gen = sourceGen;
+  let next: ObsMicState;
   try {
-    obs = { muted: await obsCommand("get_input_mute"), problem: null };
+    next = { muted: await obsCommand("get_input_mute"), problem: null };
   } catch (e) {
-    obs = { muted: null, problem: classifyError(e) };
+    next = { muted: null, problem: classifyError(e) };
   }
+  // Источник сменили, пока шёл запрос: ответ про старый, свежий запрос уже идёт.
+  if (gen !== sourceGen) return;
+  obs = next;
   render();
 }
 
@@ -163,13 +191,14 @@ export async function toggleMic(): Promise<void> {
     const game = readGameMic();
     const current = obs.muted ?? game?.muted ?? false;
     const target = !current;
+    const gen = sourceGen;
     let obsOk = true;
     try {
       await obsCommand("set_input_mute", target);
-      obs = { muted: target, problem: null };
+      if (gen === sourceGen) obs = { muted: target, problem: null };
     } catch (e) {
       obsOk = false;
-      obs = { muted: null, problem: classifyError(e) };
+      if (gen === sourceGen) obs = { muted: null, problem: classifyError(e) };
     }
     const gameOk = await alignGameMic(target);
     render();
@@ -292,15 +321,23 @@ function render(): void {
     return;
   }
   const el = ensurePill();
-  const view = pillView(obs, readGameMic(), inputName);
+  const view = pillView(obs, readGameMic(), obsInput ?? inputName);
   if (el.textContent !== view.text) el.textContent = view.text;
+  // Каким источником OBS управляем — особенно важно при «авто» (ревью, L1).
+  const title = `Источник в OBS: ${obsInput ?? (inputName || "авто — главный микрофон")}`;
+  if (el.title !== title) el.title = title;
   const bg = TONE_BG[view.tone];
   if (el.style.background !== bg) el.style.background = bg;
 }
 
 function readConfig(ctx: FeatureContext): void {
   const s = ctx.settings;
-  inputName = (s.mic_sync_input || "").trim() || "Mic/Aux";
+  const next = (s.mic_sync_input || "").trim();
+  if (next !== inputName) {
+    obsInput = null;
+    sourceGen++;
+  }
+  inputName = next;
   hotkeyCode = s.mic_sync_hotkey || "";
 }
 
@@ -323,12 +360,28 @@ function start(ctx: FeatureContext): void {
   offMsg = onMessage((msg) => {
     const m = msg as { type?: string; eventType?: string; data?: { inputName?: string; inputMuted?: boolean } };
     if (m?.type !== "obs_event") return undefined;
-    if (m.eventType === "obs_input_mute_changed" && m.data?.inputName === inputName) {
+    if (m.eventType === "obs_input_mute_changed" && m.data?.inputName === (obsInput ?? inputName)) {
       const muted = m.data.inputMuted === true;
       obs = { muted, problem: null };
       render();
       // OBS → игра: мьют в OBS догоняет микрофон игры.
       if (isGameRoomPath(location.pathname)) void alignGameMic(muted).then(() => render());
+    } else if (m.eventType === "obs_input_renamed") {
+      // Источник переименовали в OBS: «авто» (и фолбэк прежнего «Mic/Aux»)
+      // продолжает узнавать свои события. Своё имя из настроек не подменяем:
+      // переключение всё равно идёт по нему, и плашка должна назвать
+      // пропавший источник, а не новое имя (контрольное ревью 02.11.2026).
+      const d = (msg as { data?: { oldInputName?: unknown; inputName?: unknown } }).data;
+      const followsOBS = inputName === "" || obsInput !== inputName;
+      if (
+        followsOBS &&
+        typeof d?.oldInputName === "string" &&
+        typeof d.inputName === "string" &&
+        d.oldInputName === obsInput
+      ) {
+        obsInput = d.inputName;
+      }
+      void refreshObs();
     } else if (m.eventType === "obs_connected" || m.eventType === "obs_scenes_updated") {
       void refreshObs();
     } else if (m.eventType === "obs_disconnected") {
@@ -366,6 +419,8 @@ function stop(): void {
     pill = null;
   }
   obs = { muted: null, problem: null };
+  obsInput = null;
+  sourceGen++;
 }
 
 export const micSyncFeature: Feature = {
@@ -375,7 +430,7 @@ export const micSyncFeature: Feature = {
   enable(ctx) {
     if (!micSyncActive(ctx.settings)) return;
     start(ctx);
-    log.info(SCOPE, "enabled, источник:", inputName);
+    log.info(SCOPE, "enabled, источник:", inputName || "авто (главный микрофон OBS)");
   },
   update(ctx) {
     const want = micSyncActive(ctx.settings);

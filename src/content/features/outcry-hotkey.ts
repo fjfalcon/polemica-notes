@@ -19,11 +19,11 @@
  * Автоповтор зажатой клавиши гасит сам роутер, а печать в чате — проверка
  * isTypingContext: KeyC в русской раскладке это «с».
  */
-import { keyboard } from "@core/keyboard";
 import { isVisible, safeClick } from "@core/dom";
 import { log } from "@core/log";
 import { SITE, TEXT, SITE_CLASS } from "@core/selectors";
 import { isGameRoomPath } from "@shared/routes";
+import { setControlKey, type ControlAction } from "./controls-keys";
 import type { Feature, FeatureContext } from "@core/feature";
 
 const SCOPE = "outcry-hotkey";
@@ -74,37 +74,27 @@ export function pressOutcry(): boolean {
   return true;
 }
 
-let off: (() => void) | null = null;
-let boundCode = "";
+const OUTCRY_ACTION: ControlAction = {
+  available: () => isGameRoomPath(location.pathname) && findOutcryButton() !== null,
+  press: pressOutcry,
+  alwaysSwallow: true,
+};
 
-function bind(code: string): void {
-  off?.();
-  boundCode = code || "KeyC";
-  off = keyboard.register(
-    boundCode,
-    () => {
-      pressOutcry();
-    },
-    { preventDefault: true },
-  );
-}
-
+/** Клавиша — у координатора: её можно делить с «Завершите речь» (controls-keys). */
 export const outcryHotkeyFeature: Feature = {
   id: "outcry-hotkey",
   settingKey: "outcry_hotkey_enabled",
 
   enable(ctx: FeatureContext) {
-    bind(ctx.settings.outcry_hotkey_code);
+    setControlKey("outcry", OUTCRY_ACTION, ctx.settings.outcry_hotkey_code || "KeyC");
   },
 
   update(ctx: FeatureContext) {
-    // Смена клавиши применяется на лету, без перезагрузки игры.
-    if (ctx.settings.outcry_hotkey_code !== boundCode) bind(ctx.settings.outcry_hotkey_code);
+    // Смена клавиши применяется на лету; координатор не трогает неизменное.
+    setControlKey("outcry", OUTCRY_ACTION, ctx.settings.outcry_hotkey_code || "KeyC");
   },
 
   disable() {
-    off?.();
-    off = null;
-    boundCode = "";
+    setControlKey("outcry", OUTCRY_ACTION, null);
   },
 };

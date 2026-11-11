@@ -101,6 +101,8 @@ import { profilePhotoFeature } from "@content/features/profile-photo";
 import { searchAvatarsFeature } from "@content/features/search-avatars";
 import { searchCardAvatarFeature } from "@content/features/search-card-avatar";
 import { hideRatingFeature } from "@content/features/hide-rating";
+import { playerActionKeysFeature } from "@content/features/player-action-keys";
+import { tiltButtonFeature } from "@content/features/tilt-button";
 import type { FeatureContext } from "@core/feature";
 
 const ROUND_MS = 600;
@@ -168,6 +170,8 @@ afterEach(() => {
   searchAvatarsFeature.disable();
   searchCardAvatarFeature.disable();
   hideRatingFeature.disable();
+  playerActionKeysFeature.disable();
+  tiltButtonFeature.disable();
   syncProfileCrossoverRoute(null);
   syncProfileMmrRoute(null);
   vi.useRealTimers();
@@ -256,6 +260,47 @@ describe("§4 fixpoint: единороги вместо сердец", () => {
     expect(heart.getAttribute("href")).toBe(`#${symbolId("civ")}`);
     expect(pistol.getAttributeNS(XLINK_NS, "href")).toContain("#guess-maf");
     expect(img.getAttribute("src")).toContain("data:image/svg+xml");
+  });
+});
+
+describe("§4 fixpoint: панель ЛХ по клавишам", () => {
+  test("свой лучший ход: панель рисуется один раз, DOM затихает; ЛХ кончился — панель ушла", async () => {
+    window.history.replaceState(null, "", "/game/77");
+    const guessTile = (seat: number) =>
+      `<div class="player desktop-version"><div class="player-number player-${seat - 1}">${seat}</div>` +
+      `<div class="player__actions">` +
+      `<div class="player-action"><div class="player-action__content"><span>Оставить мафией</span></div></div>` +
+      `<div class="player-action"><div class="player-action__content"><span>Оставить мирным</span></div></div>` +
+      `</div></div>`;
+    document.body.innerHTML = [1, 2, 3].map(guessTile).join("");
+    const before = domObserver.subscriberCount();
+    playerActionKeysFeature.enable({
+      settings: { player_action_keys_enabled: true, player_action_guess: true },
+    } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    expect(document.querySelectorAll("#pn-best-move-panel")).toHaveLength(1);
+    // ЛХ оставлен: сайт убрал кнопки — панель уходит, и снова тишина.
+    document.querySelectorAll(".player__actions").forEach((n) => n.remove());
+    const r2 = await driveToFixpoint();
+    expect(r2.settled).toBe(true);
+    expect(document.getElementById("pn-best-move-panel")).toBeNull();
+  });
+});
+
+describe("§4 fixpoint: «У меня тильт»", () => {
+  test("карточка поиска: кнопка встаёт один раз за «Профилем», DOM тих", async () => {
+    window.history.replaceState(null, "", "/game-search");
+    document.body.innerHTML =
+      '<div class="p-play__profile-main"><div class="p-play__profile-info">fj</div>' +
+      '<button class="p-play__profile-btn" type="button">Профиль</button></div>';
+    const before = domObserver.subscriberCount();
+    tiltButtonFeature.enable({ settings: {} } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    const r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    expect(document.querySelectorAll(".pn-tilt-btn")).toHaveLength(1);
   });
 });
 

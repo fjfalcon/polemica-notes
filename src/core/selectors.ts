@@ -23,6 +23,9 @@
 
 /** CSS-селекторы элементов сайта. */
 export const SITE = {
+  searchBootstrap: "game-search",
+  csrfParam: 'meta[name="csrf-param"]',
+  csrfToken: 'meta[name="csrf-token"]',
   // Игроки и их панели
   player: ".player",
   playerDesktop:
@@ -143,6 +146,8 @@ export const SITE = {
    * search-card-avatar ставит туда свою картинку.
    */
   searchProfileMain: ".p-play__profile-main",
+  /** Кнопка «Профиль» в той же карточке (bundle/game-search, 11.11.2026): за ней — «У меня тильт». */
+  searchProfileButtonLink: ".p-play__profile-btn",
   /** Аватар в шапке сайта — это сам пользователь (`getUserAvatarUrl(user.avatar,"100x")`). */
   headerAvatarImg: "img.p-header__userCont-user-avatar",
   /** Список участников (лобби/итоги): строка, ник и аватар внутри неё. */
@@ -171,8 +176,43 @@ export const SITE = {
    *  отсутствии узла просто ничего не делает — оставлен как безопасный
    *  фолбэк до правки самой фичи. */
   playerMenuWithRole: ".player__menu.with-role",
+  /**
+   * Подтверждение ППК (04.11.2026). Пункт меню игрока на плитке: `<li>` с
+   * подписью Loc.vote_for_menu_stop («ППК»); клик сразу запускает голосование
+   * (подтверждение у сайта только судье). Меню судьи — тот же контейнер.
+   */
+  playerMenuItem: ".player .menu__container li",
+  /**
+   * Ползунок «Громкость игрока» в меню плитки (VolumeControl, room/bundle,
+   * сверено 09.11.2026): `.menu__container … .volume input[type=range]`,
+   * 0…100. Меню рисуется только открытым (v-if) — ползунок живёт, пока оно
+   * открыто. Тот же блок в меню судьи.
+   */
+  playerVolumeSlider: '.player .menu__container .volume input[type="range"]',
+  playerMenuContainer: ".player .menu__container",
+  /** Ссылка «Профиль» в том же меню: playerProfileLink = /profile/<userId>. */
+  playerMenuProfileLink: 'a[href^="/profile/"]',
+  /**
+   * Голосование за наказание на плитке обвиняемого (PenaltyVoting): заголовок
+   * `${type}_voting_title` и кнопки «Да»/«Нет». Тот же блок у технического фола
+   * и удаления — ППК узнаём по заголовку.
+   */
+  penaltyVoting: ".voting",
+  penaltyVotingTitle: ".voting__top-title",
+  penaltyVotingButton: "button.voting__bottom-button",
+  /**
+   * Кнопка действия на плитке игрока (PlayerAction, 04.11.2026): выставить,
+   * проголосовать, выстрел, проверка. Лежит в `.player__actions`, пока у
+   * игрока есть действие (v-if); у выставления контейнер `show-on-hover` —
+   * opacity:0 до наведения, поэтому «видимость» по стилю не проверяем.
+   */
+  playerActionButton: ".player__actions .player-action",
+  /** Подпись кнопки действия (Loc.nominate_player и др.) — носитель подсказки клавиши. */
+  playerActionLabel: ".player-action__content > span",
   // Роли (SVG-спрайты)
   roleUse: "use[href], use[xlink\\:href]",
+  /** Корень Vue-приложения страницы поиска (у него __vue__ — клиент поиска сайта). */
+  vueRoot: "#app",
   /** МЁРТВЫЙ по текущей разметке: роли берутся из внешнего SVG-спрайта,
    *  инлайновых <symbol> на странице нет. Потребители деградируют молча. */
   roleSymbols: "symbol#civilian, symbol#sheriff, symbol#mafia, symbol#godfather",
@@ -433,6 +473,37 @@ export const TEXT = {
    */
   finishSpeechButton: ["завершите речь", "end the speech"] as readonly string[],
   outcryButton: ["выкрикнуть", "outcry"] as readonly string[],
+  /**
+   * ТОЧНЫЕ подписи кнопок лучшего хода на плитке (PlayerAction, сверено
+   * 10.11.2026): guessMaf make_guess_maf (пистолет), guessCiv make_guess_civ
+   * (сердце), guessVice make_guess_vice (корона).
+   */
+  guessAction: {
+    maf: ["оставить мафией", "select as mafia"],
+    civ: ["оставить мирным", "select as civilian"],
+    vice: ["оставить за главного", "leave in charge"],
+  } as Readonly<Record<"maf" | "civ" | "vice", readonly string[]>>,
+  /**
+   * ТОЧНЫЕ подписи переключателей режима ЛХ в центре контролов
+   * (Loc["action_" + playerAction]): guessRoles — пистолеты и сердца на
+   * плитках, guessVice — корона. Подпись guessVice совпадает с кнопкой
+   * короны на плитке — различаем контейнером (контролы, не плитка).
+   */
+  guessModeButton: {
+    roles: ["угадать роли", "guess roles"],
+    vice: ["оставить за главного", "leave in charge"],
+  } as Readonly<Record<"roles" | "vice", readonly string[]>>,
+  /**
+   * ТОЧНЫЕ подписи кнопки действия на плитке (PlayerAction.actionText, RU и EN
+   * локали комнаты, сверено 04.11.2026). Действие узнаём по подписи: в
+   * isolated world вид действия из стора сайта не прочитать.
+   */
+  playerAction: {
+    nominate: ["выставить этого игрока", "nominate this player"],
+    vote: ["проголосовать за этого игрока", "vote for this player"],
+    shot: ["сделать выстрел", "make a shot"],
+    check: ["раскрыть роль", "reveal role"],
+  } as Readonly<Record<"nominate" | "vote" | "shot" | "check", readonly string[]>>,
   /**
    * ТОЧНЫЕ подписи пункта «пауза» в меню настроек игры. Держатся здесь, а не
    * внутри pause-hotkey: их читает ещё и подсказка клавиши на кнопке, а два
@@ -695,6 +766,8 @@ export const SITE_CLASS = {
   button: "button",
   /** Кнопка сайта в недоступном состоянии. */
   disabled: "disabled",
+  /** Выбранный режим ЛХ в контролах (ControlsButton playerActions). */
+  activated: "activated",
   /** Контейнеры vue-scroll: по ним ищем прокручиваемого предка. */
   vueScroll: "__vuescroll",
   vueScrollPanel: "__panel",

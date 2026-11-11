@@ -410,3 +410,48 @@ describe("новый SW и сохранённое «эфира нет» (Н8)", 
     expect(await new ObsClient().getStreaming()).toBe(true);
   });
 });
+
+describe("микрофон из OBS (9.75.0)", () => {
+  const requests = () =>
+    FakeSocket.last!.sent
+      .map((s) => JSON.parse(s) as { op: number; d?: { requestType?: string; requestId?: number; requestData?: { inputName?: string } } })
+      .filter((m) => m.op === 6);
+  const answer = (requestType: string, status: { result: boolean; code?: number; comment?: string }, responseData: unknown = {}) => {
+    const req = requests().filter((m) => m.d?.requestType === requestType).pop();
+    FakeSocket.last!.onmessage?.({
+      data: JSON.stringify({ op: 7, d: { requestId: req?.d?.requestId, requestStatus: status, responseData } }),
+    });
+  };
+  const flush = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  test("код отказа OBS доходит до фолбэка: «Mic/Aux», которого нет, уходит на главный микрофон", async () => {
+    const client = new ObsClient();
+    await connectOk(client);
+    const done = client.withMicInput("Mic/Aux", (name) => client.getInputMute(name));
+    await flush();
+    answer("GetInputMute", { result: false, code: 600, comment: "No source was found by the name of `Mic/Aux`." });
+    await flush();
+    answer("GetSpecialInputs", { result: true }, { mic1: "Мик/Доп", mic2: null });
+    await flush();
+    expect(requests().filter((m) => m.d?.requestType === "GetInputMute").pop()?.d?.requestData?.inputName).toBe("Мик/Доп");
+    answer("GetInputMute", { result: true }, { inputMuted: true });
+    expect(await done).toEqual({ inputName: "Мик/Доп", result: true });
+  });
+
+  test("переименование источника в OBS уходит вкладкам и попапу", async () => {
+    const { broadcastToGameTabs } = await import("@core/messaging");
+    vi.mocked(broadcastToGameTabs).mockClear();
+    const client = new ObsClient();
+    await connectOk(client);
+    FakeSocket.last!.onmessage?.({
+      data: JSON.stringify({ op: 5, d: { eventType: "InputNameChanged", eventData: { oldInputName: "Mic/Aux", inputName: "Мой мик" } } }),
+    });
+    const sent = vi.mocked(broadcastToGameTabs).mock.calls.map((c) => c[0] as { eventType?: string; data?: unknown });
+    expect(sent).toContainEqual({ type: "obs_event", eventType: "obs_input_renamed", data: { oldInputName: "Mic/Aux", inputName: "Мой мик" } });
+    expect(sent.some((m) => m.eventType === "obs_inputs_changed"), "список источников — только попапу").toBe(false);
+    const { sendRuntime } = await import("@core/messaging");
+    expect(vi.mocked(sendRuntime).mock.calls.some((c) => (c[0] as { eventType?: string }).eventType === "obs_inputs_changed")).toBe(true);
+  });
+});

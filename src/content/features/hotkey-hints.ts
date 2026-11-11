@@ -22,6 +22,16 @@ import { formatKeyCode } from "@core/keyboard";
 import { SITE, TEXT, SITE_CLASS } from "@core/selectors";
 import { isGameRoomPath } from "@shared/routes";
 import { findOutcryButton } from "./outcry-hotkey";
+import { findFinishSpeechButton } from "./finish-speech-hotkey";
+import { controlKeyCode } from "./controls-keys";
+import {
+  bestMoveKeysActive,
+  currentGuessMode,
+  enabledKinds,
+  listActionButtons,
+  listGuessButtons,
+  seatKey,
+} from "./player-action-keys";
 import type { Feature, FeatureContext } from "@core/feature";
 import type { Settings } from "@shared/types";
 
@@ -119,8 +129,36 @@ export function apply(root: ParentNode = document): void {
   if (settings.outcry_hotkey_enabled === true) {
     mark(findOutcryButton(root), settings.outcry_hotkey_code ?? "", "KeyC");
   }
+  if (settings.finish_speech_hotkey_enabled === true) {
+    // Фактическая привязка координатора: общая с выкриком клавиша тоже она.
+    const code = controlKeyCode("finish");
+    if (code) mark(findFinishSpeechButton(root), code, code);
+  }
   if (settings.pause_hotkey_enabled !== false) {
     mark(findPauseItem(root), settings.pause_hotkey_code ?? "", "F8");
+  }
+  // Дешёвый гейт: кнопок действий на столе почти всегда нет, а проход идёт
+  // на каждое шевеление DOM (тот же урок, что у MENU_ROOTS).
+  if (settings.player_action_keys_enabled === true && root.querySelector(SITE.playerActionButton)) {
+    // Подпись — у текста кнопки («Выставить этого игрока (3)»), и только у
+    // действий, которые клавиша нажмёт: выключенный выстрел подсказку не
+    // получает. Клавиша — фактическая привязка фичи, а не настройка: занятую
+    // другой функцией не обещаем.
+    const kinds = enabledKinds(settings);
+    for (const { button, seat, kind } of listActionButtons(root)) {
+      if (!kinds.has(kind)) continue;
+      const code = seatKey(seat);
+      if (code) mark(button.querySelector<HTMLElement>(SITE.playerActionLabel) ?? button, code, code);
+    }
+    // ЛХ: клавиша места — на кнопках ТЕКУЩЕГО режима (её и нажмёт цифра).
+    if (bestMoveKeysActive()) {
+      const mode = currentGuessMode();
+      for (const { button, seat, kind } of listGuessButtons(root)) {
+        if (kind !== mode) continue;
+        const code = seatKey(seat);
+        if (code) mark(button.querySelector<HTMLElement>(SITE.playerActionLabel) ?? button, code, code);
+      }
+    }
   }
   for (const el of Array.from(root.querySelectorAll<HTMLElement>(`[${HINT_ATTR}]`))) {
     if (!marked.has(el)) el.removeAttribute(HINT_ATTR);

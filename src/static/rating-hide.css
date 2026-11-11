@@ -10,7 +10,10 @@
    - в карточке игрока комнаты — всё, кроме ника: место в рейтинге и ранг;
    - строку ± разбора матча: ячейки сайта `cell player mmr_diff` (класс —
      код строки), строка уходит целиком по ним, без ожидания content.js;
-   - наши метки [data-pn-rating]. */
+   - наши метки [data-pn-rating];
+   - страница лидеров /ratings (05.11.2026): блок «Место / MMR» своей
+     карточки и колонки «Место» и «MMR» таблицы — на вкладках по MMR.
+     Заглушку на всю страницу владелец отклонил (28.10.2026): только точечно. */
 html[data-pn-hide-rating] .mmrLabel,
 html[data-pn-hide-rating] img[src*="/images/user_mmr/"],
 html[data-pn-hide-rating] .profileGames__table-body-row-item-cont-mmr,
@@ -30,5 +33,30 @@ html[data-pn-hide-rating] .game-stats-table .row:has(> .cell.mmr_diff, > .cell.p
 html[data-pn-hide-rating] .game-stats-table .cell.mmr_diff,
 html[data-pn-hide-rating] .game-stats-table .cell.positive-mmr,
 html[data-pn-hide-rating] .game-stats-table .cell.negative-mmr {
+  visibility: hidden !important;
+}
+/* /ratings. Вкладку по MMR узнаём по самому значку: сайт рисует .mmrLabel в
+   карточке и в строках только там (поле mmr у ratingInfo, showMmrColumn). У
+   «Зрителей» место — по мафпоинтам, это баллы Полемики: остаётся.
+   Таблица — CSS-сетка: ячейки гасим visibility, иначе колонки съедут.
+   Заголовок своих классов не имеет — по порядку колонок сайта (Место,
+   Игрок, MMR, Игры; сторожит проба контракта ratingPage). Пустой поиск:
+   строк нет — заголовки «Место»/«MMR» видны, но значений под ними нет. */
+html[data-pn-hide-rating] .p-rating-person:has(.mmrLabel) .p-rating-person__statistic,
+html[data-pn-hide-rating] .p-rating-main:has(> .p-rating__tablecont .p-rating-table__row > .p-rating-table__amount > .mmrLabel) .p-rating-person__statistic {
+  display: none !important;
+}
+html[data-pn-hide-rating] .p-rating-table__row:has(> .p-rating-table__amount > .mmrLabel) > .p-rating-table__place,
+html[data-pn-hide-rating] .p-rating-table__inner:has(> .p-rating-table__row > .p-rating-table__amount > .mmrLabel) > .p-rating-table__head > .p-rating-table__cell:nth-child(1),
+html[data-pn-hide-rating] .p-rating-table__inner:has(> .p-rating-table__row > .p-rating-table__amount > .mmrLabel) > .p-rating-table__head > .p-rating-table__cell:nth-child(3) {
+  visibility: hidden !important;
+}
+/* Смена вкладки: колонки и карточка пересчитываются сразу, а строки — по
+   ответу сервера. Первый заход на «Зрители» показал бы места по MMR (строки
+   ещё прежние, значка в них уже нет). Пока идёт загрузка, сайт блокирует
+   кнопки вкладок и снимает блок в том же такте, что подменяет строки, —
+   на это время места гасим (ревью 05.11.2026). */
+html[data-pn-hide-rating] .p-rating:has(.p-rating__filterbtns-btn:disabled) .p-rating-person__statistic,
+html[data-pn-hide-rating] .p-rating:has(.p-rating__filterbtns-btn:disabled) .p-rating-table__row > .p-rating-table__place {
   visibility: hidden !important;
 }

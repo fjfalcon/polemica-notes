@@ -684,11 +684,18 @@ async function handleObsQuery(
     case "get_input_mute":
     case "set_input_mute": {
       if (!obs.getStatus().connected) throw new Error("OBS не подключён");
-      const inputName = String(data?.inputName ?? "").trim();
-      if (!inputName) throw new Error("не задан источник микрофона");
-      if (cmd === "get_input_mute") return { muted: await obs.getInputMute(inputName) };
-      await obs.setInputMute(inputName, data?.muted === true);
-      return { muted: data?.muted === true };
+      // Пусто — «авто»: главный микрофон OBS. В ответе — настоящее имя
+      // источника: по нему вкладка узнаёт свои события мьюта.
+      const requested = String(data?.inputName ?? "");
+      const muted = data?.muted === true;
+      const { inputName, result } = await obs.withMicInput(requested, (name) =>
+        cmd === "get_input_mute" ? obs.getInputMute(name) : obs.setInputMute(name, muted).then(() => muted),
+      );
+      return { muted: result, inputName };
+    }
+    case "get_mic_inputs": {
+      if (!obs.getStatus().connected) throw new Error("OBS не подключён");
+      return obs.listMicInputs();
     }
     // ── запись и клипы (стримерский пакет 26.08.2026). Свой конвейер
     // enqueueRecord: сериализует record/replay между собой (гонки stop/start

@@ -1,0 +1,3 @@
+vote_for_menu_stop:"ППК"
+yes:"Да"
+stop_voting_title:"Проголосовать за ППК?"

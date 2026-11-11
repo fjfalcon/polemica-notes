@@ -40,6 +40,16 @@
         .hdr-ver { font-size: 11px; color: var(--muted); text-decoration: none; }
         a.hdr-ver:hover { color: var(--text); text-decoration: underline; }
         .hdr .switch { margin-left: auto; align-self: center; }
+        /* Большая красная «Тильт»: сразу к упражнениям (вкладка «Тильт»). */
+        .hdr-tilt {
+            margin-left: auto; align-self: center; padding: 6px 14px;
+            border: none; border-radius: 8px; cursor: pointer;
+            font: 700 13px/1 system-ui, sans-serif; color: #fff; background: var(--danger);
+            box-shadow: 0 2px 8px rgba(239,68,68,.35);
+        }
+        .hdr-tilt:hover { filter: brightness(1.1); }
+        .hdr-tilt.active { box-shadow: 0 0 0 2px #fff, 0 2px 8px rgba(239,68,68,.35); }
+        .hdr .hdr-tilt + .switch { margin-left: 4px; }
 
         /* Мастер-выключатель: расширение выключено — всё, кроме шапки, притушено. */
         body.ext-off .hdr {
@@ -220,6 +230,7 @@
     <div class="hdr">
         <span class="hdr-title">Polemica Notes</span>
         <a class="hdr-ver" id="popup_version" href="https://github.com/fjfalcon/polemicagame_phil_extension/releases/latest" target="_blank" rel="noopener" title="Открыть страницу последнего релиза на GitHub"></a>
+        <button type="button" class="hdr-tilt" id="tilt_open" title="Упражнения для успокоения: дыхание, заземление, пауза">Тильт</button>
         <label class="switch" title="Выключить всё расширение разом (заметки не пропадут)">
             <input type="checkbox" id="extension_enabled" checked><span class="slider"></span>
         </label>
@@ -251,7 +262,7 @@
             <div class="row"><span>Предупреждать о вылете из очереди<span class="hint">свёрнутую вкладку сервер выкидывает из поиска примерно через 100 секунд — уведомление приходит заранее</span></span>
                 <label class="switch"><input type="checkbox" id="queue_background_warning_enabled" checked><span class="slider"></span></label>
             </div>
-            <div class="row"><span>Снова в поиск, если лобби развалилось<span class="hint">кто-то не подтвердил собранную игру — расширение само вернёт вас в поиск и нажмёт «Играть». Срабатывает только если вы УСПЕЛИ подтвердить</span></span>
+            <div class="row"><span>Снова в поиск, если лобби развалилось<span class="hint">кто-то не подтвердил собранную игру — расширение само вернёт вас в поиск и нажмёт «Играть». Срабатывает только если вы УСПЕЛИ подтвердить. Роспуск узнаётся по сигналу сервера, а в Chrome страница поиска загружается заранее — возврат за доли секунды (сигнал заработает со следующего захода в комнату после включения)</span></span>
                 <label class="switch"><input type="checkbox" id="requeue_after_lobby_fail_enabled"><span class="slider"></span></label>
             </div>
             <div class="row"><span>Кнопка «В поиск» после игры<span class="hint">после конца игры (и у зрителя/умершего) — одна кнопка: выйти из завершённой игры и снова нажать «Играть», без модалок сайта. Работает только по вашему клику</span></span>
@@ -287,6 +298,9 @@
             <div class="row"><span>Клавиша паузы</span>
                 <button id="pause_hotkey_capture" class="btn-key" title="Нажми, затем нужную клавишу">F8</button>
             </div>
+            <div class="row"><span>Спрашивать перед ППК<span class="hint">перед запуском ППК и голосом «Да» за ППК — короткое напоминание: после решённого исхода модерация банит за ППК, а мат и крик по правилам — технический фол. Работает с русским интерфейсом сайта</span></span>
+                <label class="switch"><input type="checkbox" id="ppk_confirm_enabled" checked><span class="slider"></span></label>
+            </div>
             <div class="row"><span>Блокировать клики по веб-камерам<span class="hint">⚠ глушит ВСЕ клики по плиткам с видео — в том числе выстрел, проверку и голосование кликом по игроку. Включайте, только если точно знаете, зачем</span></span>
                 <label class="switch"><input type="checkbox" id="disable_webcam_clicks"><span class="slider"></span></label>
             </div>
@@ -307,6 +321,44 @@
             </div>
             <div class="row"><span>— Клавиша выкрика</span>
                 <button id="outcry_hotkey_code" class="btn-key">C</button>
+            </div>
+            <div class="row"><span>«Завершите речь» с клавиши<span class="hint">нажал — твоя речь закончилась досрочно. Работает только в твою речь, когда кнопка есть. Можно поставить на ту же клавишу, что и выкрик: в свою речь она завершит речь, в чужую — выкрикнет. Выключено по умолчанию: речь не вернуть</span></span>
+                <label class="switch"><input type="checkbox" id="finish_speech_hotkey_enabled"><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>— Клавиша конца речи</span>
+                <button id="finish_speech_hotkey_code" class="btn-key">S</button>
+            </div>
+            <div class="row"><span>Действия по цифрам<span class="hint">клавиша места жмёт кнопку действия на плитке игрока — как клик мышью. Работает только в игре и только когда кнопка есть. Лучший ход — отдельной галочкой «ЛХ по клавишам» ниже. Выключено по умолчанию: выстрел и голос не отменить</span></span>
+                <label class="switch"><input type="checkbox" id="player_action_keys_enabled"><span class="slider"></span></label>
+            </div>
+            <div class="row" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">— Что нажимать<span class="hint">выстрел и проверку включайте сами: промах клавишей на выстреле — несострел</span></span>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="player_action_nominate" checked> Выставление</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="player_action_vote" checked> Голосование</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="player_action_shot"> Выстрел</label>
+                <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="player_action_check"> Проверка</label>
+            </div>
+            <div class="row" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">— Клавиши игроков<span class="hint">нажми на клавишу места, затем новую. Клавиши сайта (V, M, L, G, D, K, R, F1–F10) не назначаются</span></span>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">1<button id="player_action_key_1" class="btn-key" title="Игрок 1: нажми, затем нужную клавишу">1</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">2<button id="player_action_key_2" class="btn-key" title="Игрок 2: нажми, затем нужную клавишу">2</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">3<button id="player_action_key_3" class="btn-key" title="Игрок 3: нажми, затем нужную клавишу">3</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">4<button id="player_action_key_4" class="btn-key" title="Игрок 4: нажми, затем нужную клавишу">4</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">5<button id="player_action_key_5" class="btn-key" title="Игрок 5: нажми, затем нужную клавишу">5</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">6<button id="player_action_key_6" class="btn-key" title="Игрок 6: нажми, затем нужную клавишу">6</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">7<button id="player_action_key_7" class="btn-key" title="Игрок 7: нажми, затем нужную клавишу">7</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">8<button id="player_action_key_8" class="btn-key" title="Игрок 8: нажми, затем нужную клавишу">8</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">9<button id="player_action_key_9" class="btn-key" title="Игрок 9: нажми, затем нужную клавишу">9</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">10<button id="player_action_key_10" class="btn-key" title="Игрок 10: нажми, затем нужную клавишу">0</button></label>
+            </div>
+            <div class="row"><span>— И цифры нумпада<span class="hint">Num 1…9 — игроки 1…9, Num 0 — игрок 10</span></span>
+                <label class="switch"><input type="checkbox" id="player_action_numpad" checked><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>— ЛХ по клавишам<span class="hint">во время твоего лучшего хода сверху панель режима: пистолет (мафия), сердце (мирный), корона (главный). Клавиша режима переключает, цифры отмечают игроков. «Оставить ЛХ» жмёшь сам. Включено вместе с «Действиями по цифрам» — не нужно, выключи</span></span>
+                <label class="switch"><input type="checkbox" id="player_action_guess" checked><span class="slider"></span></label>
+            </div>
+            <div class="row" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">— Клавиши режимов ЛХ</span>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">🔫 Мафия<button id="guess_key_maf" class="btn-key">Q</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">❤️ Мирный<button id="guess_key_civ" class="btn-key">W</button></label>
+                <label style="display:flex;align-items:center;gap:3px;font-size:11px">👑 Главный<button id="guess_key_vice" class="btn-key">A</button></label>
             </div>
             <div class="row"><span>Писать клавиши на кнопках<span class="hint">«Выкрикнуть (C)», «Пауза (F8)» — подпись появляется там, где клавиша сейчас сработает</span></span>
                 <label class="switch"><input type="checkbox" id="hotkey_hints_enabled" checked><span class="slider"></span></label>
@@ -367,11 +419,17 @@
             <div class="row"><span>Кнопка мьюта игрока<span class="hint">глушит его звук только у тебя; помнит выбор в следующих играх</span></span>
                 <label class="switch"><input type="checkbox" id="player_mute_enabled" checked><span class="slider"></span></label>
             </div>
+            <div class="row"><span>Запоминать громкость игрока<span class="hint">сайт сбрасывает «Громкость игрока» с каждой игрой — расширение помнит, как ты выставил ползунок, и возвращает в следующих играх</span></span>
+                <label class="switch"><input type="checkbox" id="player_volume_memory_enabled" checked><span class="slider"></span></label>
+            </div>
             <div class="row"><span>Точка «есть заметка»<span class="hint">жёлтая точка на кнопке заметки у игроков, про которых вы что-то записали</span></span>
                 <label class="switch"><input type="checkbox" id="note_indicator_enabled" checked><span class="slider"></span></label>
             </div>
             <div class="row"><span>Метки ролей у игроков<span class="hint">квадратик «мой read», сохраняется на игру (переживает F5)</span></span>
                 <label class="switch"><input type="checkbox" id="role_marker_enabled"><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>Панель вероятностей ролей<span class="hint">P(чёрный) по составу стола и раскрытым ролям; пересчитывается по ходу игры</span></span>
+                <label class="switch"><input type="checkbox" id="roles_predictor_enabled"><span class="slider"></span></label>
             </div>
             <div class="row" id="role_marker_icons_row" style="display:none"><span>— Использовать иконки<span class="hint">в метке — иконка роли с сайта; выключено — подписи «Мир/Шер/Дон»</span></span>
                 <label class="switch"><input type="checkbox" id="role_marker_icons_enabled" checked><span class="slider"></span></label>
@@ -568,8 +626,8 @@
                     <label class="switch"><input type="checkbox" id="mic_sync_enabled"><span class="slider"></span></label>
                 </div>
                 <div class="field">
-                    <label>Источник микрофона в OBS (имя в микшере)</label>
-                    <input type="text" id="mic_sync_input" class="inp" placeholder="Mic/Aux" autocomplete="off" spellcheck="false">
+                    <label>Источник микрофона в OBS</label>
+                    <select id="mic_sync_input" class="inp"><option value="">Авто: главный микрофон OBS</option></select>
                 </div>
                 <div class="row"><span>Клавиша микрофона<span class="hint">пусто — только клик по плашке</span></span>
                     <span style="display:flex;gap:4px"><button id="mic_sync_hotkey_capture" class="btn-key" title="Нажми, затем нужную клавишу">—</button><button id="mic_sync_hotkey_clear" class="btn-key" title="Убрать клавишу">×</button></span>
@@ -644,8 +702,19 @@
             </div>
         </div>
 
+        <!-- ── Тильт: упражнения для успокоения (наполняет @core/calm-ui; открывает кнопка «Тильт» в шапке) ── -->
+        <div class="panel" data-panel="tilt">
+            <div class="row"><span>Кнопка «У меня тильт» на сайте<span class="hint">в карточке на странице поиска, в правом нижнем углу (под «Профилем»): открывает эти же упражнения поверх страницы</span></span>
+                <label class="switch"><input type="checkbox" id="tilt_button_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div id="calm_panel" style="margin-top:8px"></div>
+        </div>
+
         <!-- ── Ещё ── -->
         <div class="panel" data-panel="misc">
+            <div class="row"><span>Режим «Тильт»<span class="hint">упражнения для успокоения: красная кнопка «Тильт» сверху (открывает упражнения) и кнопка «У меня тильт» на сайте. Выключено — всё это пропадает</span></span>
+                <label class="switch"><input type="checkbox" id="tilt_mode_enabled" checked><span class="slider"></span></label>
+            </div>
             <div class="row" id="update_notify_row"><span>Уведомлять о новой версии<span class="hint">проверка релизов на GitHub раз в час</span></span>
                 <label class="switch"><input type="checkbox" id="update_check_enabled" checked><span class="slider"></span></label>
             </div>
