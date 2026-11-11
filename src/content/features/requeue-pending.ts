@@ -16,6 +16,8 @@ export interface PendingMark {
   issuedAt: number;
   /** Последнее подтверждение живого условия. */
   refreshedAt: number;
+  /** Время сигнала роспуска: только для сквозного замера, не разрешение действий. */
+  roomStoppedAt?: number;
 }
 
 export type MarkFailure = "corrupt" | "future" | "expired" | "capped";
@@ -32,7 +34,7 @@ export const PENDING_TTL_MS = 45_000;
 export const PENDING_HARD_CAP_MS = 10 * 60_000;
 
 export function serializeMark(mark: PendingMark): string {
-  return JSON.stringify({ issuedAt: mark.issuedAt, refreshedAt: mark.refreshedAt });
+  return JSON.stringify({ issuedAt: mark.issuedAt, refreshedAt: mark.refreshedAt, roomStoppedAt: mark.roomStoppedAt });
 }
 
 /**
@@ -58,7 +60,13 @@ export function parseMark(raw: string): PendingMark | null {
   const { issuedAt, refreshedAt } = value as Record<string, unknown>;
   if (typeof issuedAt !== "number" || !Number.isFinite(issuedAt)) return null;
   if (typeof refreshedAt !== "number" || !Number.isFinite(refreshedAt)) return null;
-  return { issuedAt, refreshedAt };
+  const { roomStoppedAt } = value as Record<string, unknown>;
+  // Необязательная диагностика из недоверенного хранилища. Битое поле
+  // отбрасываем, сохраняя прежнюю семантику самой метки.
+  const timing = typeof roomStoppedAt === "number" && Number.isFinite(roomStoppedAt) &&
+    roomStoppedAt > 0 && roomStoppedAt <= refreshedAt && refreshedAt - roomStoppedAt <= PENDING_HARD_CAP_MS
+    ? { roomStoppedAt } : {};
+  return { issuedAt, refreshedAt, ...timing };
 }
 
 /**
@@ -86,5 +94,5 @@ export function refreshMark(existing: PendingMark | null, now: number): PendingM
   if (!existing || !Number.isFinite(existing.issuedAt) || existing.issuedAt > now) {
     return { issuedAt: now, refreshedAt: now };
   }
-  return { issuedAt: existing.issuedAt, refreshedAt: now };
+  return { ...existing, issuedAt: existing.issuedAt, refreshedAt: now };
 }

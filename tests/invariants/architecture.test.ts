@@ -398,10 +398,12 @@ describe("AGENTS §4 source safety", () => {
     ]);
   });
 
-  test("§4.1: the shared observer watches childList + class/style only, without characterData", () => {
+  test("§4.1: the shared observer watches childList + class/style; characterData only for immediate subscribers", () => {
     // Набор опций — осознанное решение (комментарий у observe() в dom.ts):
     // characterData ловил бы каждый текстовый тик таймеров сайта и затопил бы
-    // очередь мутаций; атрибуты сужены до class/style, по которым сайт
+    // очередь мутаций — поэтому он доставляется ТОЛЬКО немедленным
+    // подписчикам (подпись этапа — Text-узел, аудит №4), обычная очередь его
+    // отфильтровывает; атрибуты сужены до class/style, по которым сайт
     // переключает фазы. Расширение набора — только через ревью.
     const source = read("src/core/dom.ts");
     const observed = source.match(/\.observe\(document\.documentElement,\s*\{([\s\S]*?)\}\s*\)/);
@@ -411,8 +413,9 @@ describe("AGENTS §4 source safety", () => {
     expect(options).toMatch(/subtree:\s*true/);
     expect(options).toMatch(/attributes:\s*true/);
     expect(options).toMatch(/attributeFilter:\s*\["class",\s*"style"\]/);
-    expect(options, "§4.1: characterData floods the queue with per-second text ticks").not.toMatch(
-      /characterData/,
+    expect(options).toMatch(/characterData:\s*true/);
+    expect(source, "§4.1: characterData floods the regular queue with per-second text ticks").toMatch(
+      /type === "characterData"\) continue;/,
     );
     expect(count(source, /\.observe\s*\(/g), "§4.1: a second observe() call widens the watched set").toBe(1);
   });
@@ -615,7 +618,14 @@ describe("settings, release and manifest consistency", () => {
           }
         }
         if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-          check(node, node.text);
+          // Module specifiers are syntax, not CSS. Keep checking every other
+          // literal (including selector arguments containing the same text).
+          const parent = node.parent;
+          const moduleName = parent && (
+            ((ts.isImportDeclaration(parent) || ts.isExportDeclaration(parent)) && parent.moduleSpecifier === node) ||
+            (ts.isModuleDeclaration(parent) && parent.name === node)
+          );
+          if (!moduleName) check(node, node.text);
         } else if (ts.isTemplateExpression(node)) {
           // Шаблон с подстановками: проверяем статические куски — именно в
           // них живут классы (`.player__role[data-x="${id}"]`).
@@ -637,6 +647,16 @@ describe("settings, release and manifest consistency", () => {
         "player__info",
         "player__botleftmenu",
         "player",
+        // Свой ник в игре (22.10.2026): узел ника и варианты плитки, по
+        // которым комната задаёт размер шрифта ника.
+        "info__name",
+        "desktop-version",
+        "mobile-version",
+        // «Участники» поиска: свой ник одной строкой (22.10.2026).
+        "participants-item",
+        "participants-name",
+        // «У меня тильт» (11.11.2026): угол карточки поиска, поверх её :after.
+        "p-play__profile-main",
         // НАША разметка с общими именами: внутри .player-stats / .pn-tooltip.
         "player-icons",
         "mmr",
@@ -644,6 +664,35 @@ describe("settings, release and manifest consistency", () => {
         "winrate",
         "kills",
         "tooltip-text",
+      ],
+      // Скрыть рейтинг (28.10.2026): значок MMR, ± истории игр профиля,
+      // карточка игрока комнаты, строка ± разбора матча.
+      "src/static/rating-hide.css": [
+        "mmrLabel",
+        "profileGames__table-body-row-item-cont-mmr",
+        "player-preview",
+        "profile-info",
+        "wrapper",
+        "username",
+        "game-stats-table",
+        "row",
+        "cell",
+        "mmr_diff",
+        "positive-mmr",
+        "negative-mmr",
+        // Страница лидеров /ratings (05.11.2026): карточка и таблица.
+        "p-rating-person",
+        "p-rating-person__statistic",
+        "p-rating-table__inner",
+        "p-rating-table__head",
+        "p-rating-table__row",
+        "p-rating-table__cell",
+        "p-rating-table__place",
+        "p-rating-table__amount",
+        "p-rating",
+        "p-rating__filterbtns-btn",
+        "p-rating-main",
+        "p-rating__tablecont",
       ],
     };
     for (const [file, known] of Object.entries(cssKnown)) {
@@ -906,6 +955,28 @@ describe("§4.7 lifecycle heuristic", () => {
         "+1 таймер (9.23.1) — шаги лесенки ставят setTimeout трижды при одном clearTimeout-поле verdictTimer, " +
         "каждый прежний таймер снимается перед новым и в disable()",
     },
+    "src/content/features/player-action-keys.ts": {
+      listeners: 1,
+      timers: 0,
+      reason:
+        "click-обработчик живёт на панели ЛХ #pn-best-move-panel и умирает вместе с её узлом: " +
+        "renderPanel() убирает панель, как только кнопок ЛХ нет, и в disable() (10.11.2026)",
+    },
+    "src/content/features/tilt-button.ts": {
+      listeners: 4,
+      timers: 0,
+      reason:
+        "клик по кнопке «У меня тильт», клик по крестику, mousedown/click фона окна живут на НАШИХ узлах и умирают " +
+        "вместе с ними (removeButton/closeModal в disable); keydown Esc снимается в closeModal (11.11.2026)",
+    },
+    "src/content/features/mic-sync.ts": {
+      listeners: 3,
+      timers: 1,
+      reason:
+        "pointerdown/move/up живут на плашке .pn-mic-pill и умирают вместе с её узлом в stop(); " +
+        "+1 таймер — await-слип 100 мс в цикле проверки кнопки игры: промис резолвится сам, " +
+        "после него гейт active (09.10.2026)",
+    },
     "src/content/features/contract-watch.ts": {
       listeners: 0,
       timers: 1,
@@ -925,6 +996,20 @@ describe("§4.7 lifecycle heuristic", () => {
       timers: 1,
       reason: "тот же await-слип 350 мс, что у profile-crossover (9.32.1)",
     },
+    "src/content/features/profile-photo.ts": {
+      listeners: 1,
+      timers: 0,
+      reason:
+        "error-обработчик висит на <img> внутри нашего .pn-profile-photo и умирает вместе с узлом " +
+        "(removePhoto в disable и при смене фото) (22.10.2026)",
+    },
+    "src/content/features/search-card-avatar.ts": {
+      listeners: 1,
+      timers: 0,
+      reason:
+        "error-обработчик висит на <img> внутри нашего .pn-search-avatar и умирает вместе с узлом " +
+        "(removeAvatar в disable и при смене картинки) (22.10.2026)",
+    },
     "src/content/features/connection-diag.ts": {
       listeners: 1,
       timers: 1,
@@ -942,12 +1027,16 @@ describe("§4.7 lifecycle heuristic", () => {
     // (keydown capture) снимается там же явно. Числа точные: новый
     // несимметричный слушатель здесь уронит инвариант.
     "src/content/features/player-notes/nick-color-manager.ts": {
-      listeners: 17,
+      // 17 → 21 (22.10.2026): кнопка «Ник» и редактор своего ника (поле,
+      // «Отмена», «Сохранить») — узлы окна, умирают вместе с overlay.
+      listeners: 21,
       timers: 0,
       reason: "modal handlers die with the overlay; the document keydown capture is removed in close()",
     },
     "src/content/features/player-notes/note-modal.ts": {
-      listeners: 7,
+      // 7 → 8 (22.10.2026): кнопка «показать» замаскированного на эфире
+      // своего ника — узел окна, умирает вместе с overlay.
+      listeners: 8,
       timers: 0,
       reason: "modal handlers die with the overlay; the document keydown capture is removed in close()",
     },

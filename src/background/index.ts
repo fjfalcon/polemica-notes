@@ -25,7 +25,6 @@ import {
   ObsClient,
 } from "./obs-client";
 import {
-  OWNER_TTL_MS,
   decideSceneOwnership,
   type OwnerTabState,
   type SceneOwnerRecord,
@@ -66,7 +65,11 @@ const OBS_AUTO_RECORD_KEY = "obs_auto_record_started";
  * Пустой пароль привязки не требует: уносить нечего.
  */
 const OBS_PASSWORD_HOST_KEY = "obs_password_host";
-/** Длина буфера повторов, которую последний раз выставляли МЫ (секунды). */
+/**
+ * Длина буфера повторов, которую последний раз выставляли МЫ (секунды). Для
+ * живого буфера — «применена» (пишется после перезапуска), для выключенного —
+ * «записана в профиль».
+ */
 const OBS_CLIP_RB_SET_KEY = "obs_clip_rb_set";
 /** Последняя попытка редкого режима (бюджет исчерпан). В storage: SW смертен. */
 const OBS_DEGRADED_ATTEMPT_KEY = "obs_degraded_attempt_at";
@@ -434,9 +437,11 @@ async function handleObsCommand(cmd: ObsCommandMsg["command"], data: ObsCommandM
  * (например, чужая игра, открытая посмотреть) перебивала сцену активной
  * трансляции (аудит lifecycle 01.08.2026, находка 6). Владение хранится в
  * storage.local, поэтому переживает выгрузку service worker; отдаётся
- * первой вкладке, попросившей сцену, и переходит к другой, если владелец
- * умолк дольше OWNER_TTL_MS (закрыл вкладку, ушёл со страницы) или его
- * вкладки больше не существует.
+ * первой вкладке, попросившей сцену, и переходит к другой, если вкладки
+ * владельца больше нет или она ответила «не веду». Молчащий владелец (пинг
+ * не успел) держит сцену, пока записи меньше OWNER_TTL_MS; ответ «веду»
+ * держит её дольше TTL, но не дольше OWNER_HARD_CAP_MS от записи
+ * (scene-owner.ts).
  */
 const OBS_SCENE_OWNER_KEY = "obs_scene_owner";
 
@@ -450,20 +455,24 @@ const OBS_SCENE_OWNER_KEY = "obs_scene_owner";
  * вкладки, и для вкладки, чей content-скрипт осиротел после обновления
  * расширения. Опрос самой вкладки закрывает всё это разом (§4.10).
  */
-/** Сколько ждём ответа владельца. Молчание = «владения нет». */
+/** Сколько ждём ответа владельца. */
 const OWNER_PING_TIMEOUT_MS = 1500;
+const OWNER_PING_TIMED_OUT = Symbol("owner-ping-timed-out");
 
-async function inspectOwnerTab(ownerTabId: number): Promise<OwnerTabState> {
-  // С таймаутом: sendToTab ловит отказ, но не ЗАВИСАНИЕ. Живая, но занятая
-  // вкладка иначе подвесила бы set_scene просящей вкладки навсегда — тихая
-  // заморозка автосмены (ревью 02.08.2026). «Нет ответа» здесь безопасно:
-  // настоящий владелец переспросит на следующей смене фазы.
+async function inspectOwnerTab(ownerTabId: number): Promise<OwnerTabState | null> {
+  // Таймаут — «не ответила вовремя» (null, решает TTL записи); отказ канала
+  // (sendToTab вернул undefined): «вкладки нет».
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const answer = await Promise.race([
-    sendToTab<{ owning?: boolean }>(ownerTabId, { type: "obs_scene_owner_ping" }),
-    new Promise<undefined>((resolve) => setTimeout(() => resolve(undefined), OWNER_PING_TIMEOUT_MS)),
+    sendToTab<{ owning?: unknown }>(ownerTabId, { type: "obs_scene_owner_ping" }),
+    new Promise<typeof OWNER_PING_TIMED_OUT>((resolve) => {
+      timer = setTimeout(() => resolve(OWNER_PING_TIMED_OUT), OWNER_PING_TIMEOUT_MS);
+    }),
   ]);
-  // Ответа нет — вкладки нет, она выгружена или её скрипт мёртв.
+  clearTimeout(timer);
+  if (answer === OWNER_PING_TIMED_OUT) return null;
   if (!answer) return { kind: "gone" };
+  if (typeof answer.owning !== "boolean") return null;
   return answer.owning ? { kind: "in-game" } : { kind: "left-game" };
 }
 
@@ -503,10 +512,8 @@ async function decideAndClaim(tabId: number, manual: boolean): Promise<boolean> 
     const cur = st[OBS_SCENE_OWNER_KEY] as SceneOwnerRecord | null;
     const now = Date.now();
     // Опрашиваем владельца ТОЛЬКО когда от его ответа что-то зависит: чужая
-    // живая запись и не ручной клик. Иначе передаём null — «не спрашивали».
-    const stale = !cur || typeof cur.ts !== "number" || now - cur.ts > OWNER_TTL_MS;
-    const needTab =
-      !manual && !stale && cur && typeof cur.tabId === "number" && cur.tabId !== tabId;
+    // запись, свежая или нет, и не ручной клик. Иначе передаём null: «не спрашивали».
+    const needTab = !manual && cur && typeof cur.tabId === "number" && cur.tabId !== tabId;
     const ownerTab: OwnerTabState | null = needTab
       ? await inspectOwnerTab(cur.tabId as number)
       : null;
@@ -526,7 +533,9 @@ async function decideAndClaim(tabId: number, manual: boolean): Promise<boolean> 
       log.info(
         "background",
         "владение автосценой перешло к этой вкладке:",
-        decision.reason === "owner-left-game" ? "прежний владелец ушёл с игры" : "прежний умолк",
+        decision.reason === "owner-left-game"
+          ? "прежний владелец ушёл с игры"
+          : "запись прежнего протухла",
         tabId,
       );
     }
@@ -571,11 +580,13 @@ async function handleObsQuery(
   // стояли бы за ним — «сцена переключилась через 15 секунд после фазы».
   switch (cmd) {
     case "get_status": {
-      const st = obs.getStatus();
       const s = await getSettings();
       // UI обязан объяснить молчание OBS (adversarial 27.08.2026, №5).
       const needsPassword = Boolean(s.obs_password) && !(await passwordFitsHost(s.obs_host));
-      return { ...st, needsPassword };
+      // Снимок — ПОСЛЕ ожиданий: снятый до них, он мог устареть на событие
+      // смены сцены (внешний аудит №2, B01).
+      const st = obs.getStatus();
+      return { ...st, needsPassword, streaming: await obs.getStreaming() };
     }
     case "set_scene": {
       // Только владелец автосцены; ручной клик проходит всегда.
@@ -588,6 +599,23 @@ async function handleObsQuery(
     }
     case "get_scenes":
       return obs.requestSceneList();
+    // «Микрофон: OBS и игра» — лёгкие операции, мимо очереди connect/probe.
+    case "get_input_mute":
+    case "set_input_mute": {
+      if (!obs.getStatus().connected) throw new Error("OBS не подключён");
+      // Пусто — «авто»: главный микрофон OBS. В ответе — настоящее имя
+      // источника: по нему вкладка узнаёт свои события мьюта.
+      const requested = String(data?.inputName ?? "");
+      const muted = data?.muted === true;
+      const { inputName, result } = await obs.withMicInput(requested, (name) =>
+        cmd === "get_input_mute" ? obs.getInputMute(name) : obs.setInputMute(name, muted).then(() => muted),
+      );
+      return { muted: result, inputName };
+    }
+    case "get_mic_inputs": {
+      if (!obs.getStatus().connected) throw new Error("OBS не подключён");
+      return obs.listMicInputs();
+    }
     // ── запись и клипы (стримерский пакет 26.08.2026). Свой конвейер
     // enqueueRecord: сериализует record/replay между собой (гонки stop/start
     // на смене маршрута), но не ждёт длинные connect/probe из enqueueObs.
@@ -657,14 +685,21 @@ async function handleObsQuery(
           const mode = await obs.getProfileParameter("Output", "Mode");
           const category = mode === "Advanced" ? "AdvOut" : "SimpleOutput";
           await obs.setProfileParameter(category, "RecRBTime", String(seconds));
-          await browser.storage.local.set({ [OBS_CLIP_RB_SET_KEY]: seconds });
         }
         const active = await obs.isReplayBufferActive();
         if (active && changed) {
-          // Новая длина применяется только перезапуском буфера.
+          // Новая длина применяется только перезапуском буфера. Метка — ПОСЛЕ
+          // перезапуска: для живого буфера она значит «длина применена».
+          // Записанная до него, она после сорванной остановки убеждала повтор,
+          // что всё сделано, и буфер жил со старой длиной (PR #14).
           await obs.stopReplayBuffer();
           await obs.startReplayBuffer();
+          await browser.storage.local.set({ [OBS_CLIP_RB_SET_KEY]: seconds });
         } else if (!active) {
+          // Выключенный буфер возьмёт длину при старте. Метка — ДО него: старт,
+          // отказанный из-за выключенного в OBS буфера, нашу запись всё равно
+          // помнит, и бут не перетрёт длину, выставленную потом руками (OBS-6).
+          if (changed) await browser.storage.local.set({ [OBS_CLIP_RB_SET_KEY]: seconds });
           // Буфер выключен в настройках OBS — StartReplayBuffer скажет об этом.
           await obs.startReplayBuffer();
         }

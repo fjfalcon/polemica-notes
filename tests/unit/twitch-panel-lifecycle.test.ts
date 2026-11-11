@@ -349,6 +349,9 @@ describe("TW-P7: жизненный цикл сокета Twitch", () => {
     ws.emitOpen();
 
     twitchPanelFeature.disable();
+    // jsdom ставит событие storage от flushHistoryNow в очередь задачей на 0 мс;
+    // сливаем её, чтобы ниже считались только таймеры самой фичи.
+    vi.advanceTimersByTime(0);
     expect(ws.closeCalls).toBeGreaterThan(0);
     expect(liveSockets()).toHaveLength(0);
     expect(vi.getTimerCount()).toBe(0);

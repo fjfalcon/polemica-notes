@@ -34,6 +34,7 @@ import {
 } from "@core/crossover";
 import { fetchFirstKilled } from "@core/match-brief";
 import { getOwnUserId, ownNameFromTable, rememberOwnUserId } from "@core/own-user";
+import { watchStreamState } from "@core/stream-state";
 import { buttonThemeColor } from "@shared/button-theme";
 import { lastGamesLimit } from "@shared/last-games";
 import { showToast } from "@core/toast";
@@ -45,6 +46,7 @@ import {
   ACTIVE_GAMES_TTL_MS,
   fetchActiveGames,
   findRatingPlayer,
+  parseProfileCard,
   resetActiveGamesCacheForTest,
   type RatingPlayer,
 } from "@core/polemica-api";
@@ -62,6 +64,15 @@ import {
 } from "./player-notes/tile-media-state";
 import type { ModalPort } from "./player-notes/modal-port";
 import { openNickColorManager } from "./player-notes/nick-color-manager";
+import {
+  AliasResolver,
+  applyMatchAliases,
+  applyTileAliases,
+  clearAllAliases,
+  setNickAlias,
+  sweepStaleAliases,
+  watchAliasSources,
+} from "./player-notes/nick-alias";
 import { showNoteModal } from "./player-notes/note-modal";
 import { NotesModel } from "./player-notes/notes-model";
 import { TAG_PRESETS } from "./player-notes/tag-palette";
@@ -70,8 +81,10 @@ import {
   PlayerStatsStore,
   STATS_TTL_MS,
   unavailablePlayerStats,
+  validPlayerId,
   type PlayerStatsEntry,
 } from "./player-notes/player-stats";
+import { pendingIdLookups } from "./player-notes/id-lookups";
 import {
   BUTTON_CIRCLE_CSS,
   BUTTON_PLAIN_CSS,
@@ -121,31 +134,7 @@ const HOVER_INTENT_MS = 350;
 
 /** sessionStorage: ники (lowercase) с перевёрнутой камерой в текущей игре. */
 
-/**
- * Кому из игроков за столом ещё нужен резолв id.
- *
- * Отдельной чистой функцией, потому что это ГЕЙТ ЧАСТОТЫ: проход по плиткам
- * идёт раз в две секунды, и без него резолв превратился бы в фоновый поток
- * запросов. Проверить это внутри класса на три тысячи строк нечем.
- */
-export function pendingIdLookups(
-  usernames: string[],
-  ctx: { attempted: Set<string>; isKnown: (username: string) => boolean },
-): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of usernames) {
-    const username = raw.trim();
-    if (!username) continue;
-    const lower = username.toLowerCase();
-    if (seen.has(lower)) continue;
-    seen.add(lower);
-    if (ctx.attempted.has(lower)) continue;
-    if (ctx.isKnown(username)) continue;
-    out.push(username);
-  }
-  return out;
-}
+export { pendingIdLookups } from "./player-notes/id-lookups";
 
 /**
  * Сеть и её кэши переехали в @core/polemica-api (арх-ревью 28.08.2026).
@@ -325,7 +314,8 @@ class PlayerNotesManager {
     onTooltipsChanged: () => this.active && this.updateAllTooltips(),
     onPlayerTooltips: (username) => this.active && this.updatePlayerTooltips(username),
     toast: (message, warn) => this.toast(message, warn),
-    lookupId: (lower) => this.stats.idOf(lower) ?? this.profileIdByNick.get(lower),
+    // Заглушка id недоступной статистики (не число) не должна заслонять id со страницы профиля.
+    lookupId: (lower) => validPlayerId(this.stats.idOf(lower)) ?? this.profileIdByNick.get(lower),
   });
 
   /** Палитра пользовательских цветов — только для чтения. */
@@ -339,10 +329,12 @@ class PlayerNotesManager {
    */
   private profileIdByNick = new Map<string, string>();
   /**
-   * Ники, для которых id уже пытались резолвить: без этого проход по плиткам
-   * (раз в 2 секунды) дёргал бы резолв заново на каждом тике.
+   * Ники, чей id уже определён: без этого проход по плиткам (раз в 2 секунды)
+   * дёргал бы резолв заново на каждом тике.
    */
   private idResolveAttempted = new Set<string>();
+  /** Ники, для которых оба источника id не знали, и когда: повтор после паузы. */
+  private idResolveMissAt = new Map<string, number>();
   private idResolveInFlight: Promise<void> | null = null;
   /** Когда резолв последний раз упал — чтобы не долбить сеть после отказа. */
   private idResolveFailedAt = 0;
@@ -414,6 +406,8 @@ class PlayerNotesManager {
     this.tileMedia.loadFlipped();
 
     this.syncMatchPageRoute(getMatchId() !== null);
+    const onStream = () => this.settings.statistics_enabled !== false && this.refreshNickColors();
+    this.unsubscribers.push(watchAliasSources(onStream, () => this.settings.obs_enabled === true));
 
     // Один общий наблюдатель за DOM вместо нескольких MutationObserver.
     // Полный проход — только на мутации, задевающие плитки/списки игроков:
@@ -612,6 +606,7 @@ class PlayerNotesManager {
     this.tileMedia.clearUnmutedHere();
     this.profileIdByNick.clear();
     this.idResolveAttempted.clear();
+    this.idResolveMissAt.clear();
     this.idResolveFailedAt = 0;
     this.model.keys.reset();
     this.colorIndexCache = null;
@@ -689,6 +684,8 @@ class PlayerNotesManager {
     refreshIndicators: () => this.active && this.refreshNoteIndicators(),
     refreshTags: () => this.active && this.refreshPlayerTags(),
     refreshPlayer: (username) => this.active && this.updatePlayerTooltips(username),
+    maskCondemned: () => this.aliases.maskCondemned(),
+    onStreamChange: (cb) => watchStreamState(cb, () => this.settings.obs_enabled === true),
   };
 
   /** Контекст тумблера «⋯» (модуль collapse-toggle; правда — в settings). */
@@ -856,6 +853,7 @@ class PlayerNotesManager {
 
     // Цвет ника (учитывает nick_colors_enabled и приоритет id-записи).
     paintNickEl(nickEl, this.colorForPlayer(id, nick), nick);
+    setNickAlias(nickEl, this.aliases.aliasFor(id, nick), nick, "suffix");
 
     // Рамка метки вокруг аватара.
     const avatar = document.querySelector<HTMLElement>(SITE.profileAvatarImg);
@@ -954,6 +952,7 @@ class PlayerNotesManager {
       const nick = el.textContent?.trim() || "";
       if (nick && owner !== nick) paintNickEl(el, "");
     });
+    sweepStaleAliases();
   }
 
   /**
@@ -971,6 +970,7 @@ class PlayerNotesManager {
 
   /** Кэш индекса цветов (byId/byNick), TTL 1с — см. комментарий idKeyByNick. */
   private colorIndexCache: { at: number; index: NickColorIndex } | null = null;
+  private aliases = AliasResolver.forSettings(() => this.model.notes, () => this.settings);
 
   private colorIndex(): NickColorIndex {
     const now = Date.now();
@@ -999,6 +999,7 @@ class PlayerNotesManager {
       const id = (item.getAttribute("href") || "").match(/\/profile\/(\d+)/)?.[1];
       const nick = el.textContent?.trim();
       paintNickEl(el, this.colorForPlayer(id, nick), nick || undefined);
+      if (nick) setNickAlias(el, this.aliases.aliasFor(id, nick), nick, "suffix");
     });
   }
 
@@ -1023,9 +1024,13 @@ class PlayerNotesManager {
   private ensurePlayerIdsResolved(usernames: string[]): void {
     if (this.idResolveInFlight) return;
     if (Date.now() - this.idResolveFailedAt < PlayerNotesManager.ID_RESOLVE_COOLDOWN_MS) return;
+    const now = Date.now();
     const pending = pendingIdLookups(usernames, {
       attempted: this.idResolveAttempted,
-      isKnown: (u) => this.noteUserId(u) !== undefined,
+      isKnown: (u) =>
+        this.noteUserId(u) !== undefined ||
+        now - (this.idResolveMissAt.get(u.toLowerCase()) ?? 0) <
+          PlayerNotesManager.ID_RESOLVE_COOLDOWN_MS,
     });
     if (!pending.length) return;
 
@@ -1043,31 +1048,36 @@ class PlayerNotesManager {
         }
         if (!this.active) return;
 
-        const idByNick = new Map<string, string>();
+        const seenInGames = new Map<string, { id: string; mmr: unknown }>();
         for (const game of games) {
           for (const p of game.players ?? []) {
             const nick = typeof p?.username === "string" ? p.username.toLowerCase() : "";
-            if (nick && p.id !== undefined && p.id !== null) idByNick.set(nick, String(p.id));
+            const pid = validPlayerId(p?.id);
+            if (nick && pid !== undefined) seenInGames.set(nick, { id: String(pid), mmr: p.mmr });
           }
         }
 
         let resolved = 0;
         for (const username of pending) {
           const lower = username.toLowerCase();
-          let id = idByNick.get(lower);
+          const seen = seenInGames.get(lower);
+          let id = seen?.id;
           if (id === undefined) {
             const player = await findRatingPlayer(username);
             if (!this.active) return;
-            const ratingId = player?.user_id;
-            if (ratingId !== undefined && ratingId !== null) id = String(ratingId);
+            const ratingId = validPlayerId(player?.user_id);
+            if (ratingId !== undefined) id = String(ratingId);
           }
-          // Помечаем ТОЛЬКО когда оба источника ответили: иначе один сетевой
-          // сбой навсегда лишал бы игрока оформления.
+          // Помечаем ТОЛЬКО успех: промах обоих источников повторяем после паузы.
+          if (id === undefined) {
+            this.idResolveMissAt.set(lower, Date.now());
+            continue;
+          }
           this.idResolveAttempted.add(lower);
-          if (id !== undefined) {
-            this.profileIdByNick.set(lower, id);
-            resolved++;
-          }
+          this.idResolveMissAt.delete(lower);
+          this.profileIdByNick.set(lower, id);
+          this.stats.rememberId(lower, id, seen?.mmr);
+          resolved++;
         }
 
         if (!this.active) return;
@@ -1095,6 +1105,8 @@ class PlayerNotesManager {
   }
 
   private refreshNickColors(): void {
+    this.aliases.reset(); // правка в диалоге видна сразу, а не через TTL индекса
+    applyTileAliases(this.aliases, this.model.keys);
     document
       .querySelectorAll<HTMLElement>(`.${OWN.playerIcons} > [data-username]`)
       .forEach((btn) => {
@@ -1103,6 +1115,8 @@ class PlayerNotesManager {
         if (u && container) this.applyNickColor(container, u);
       });
     this.applyParticipantColors();
+    this.ensureProfileNoteUI(); // свой ник профиля и разбора — тоже сразу (эфир, правка)
+    applyMatchAliases(this.aliases);
   }
 
   // ─────────── Статистика игрока ───────────
@@ -1186,7 +1200,7 @@ class PlayerNotesManager {
     html += `<div class="tooltip-text" style="font-size: 10px;">`;
 
     if (this.settings.show_mmr) {
-      html += `MMR: ${escapeHtml(String(stats.mmr))}<br>`;
+      html += `<span data-pn-rating>MMR: ${escapeHtml(String(stats.mmr))}${stats.mmrStale ? " (устар.)" : ""}<br></span>`;
     }
     if (this.settings.show_games) {
       html += `Игр: ${escapeHtml(String(stats.totalGames))}<br>`;
@@ -1809,28 +1823,11 @@ class PlayerNotesManager {
       try {
         const resp = await fetch(`https://polemicagame.com/profile/${raw}`);
         if (!resp.ok) return null;
-        const text = await resp.text();
-        // СТРОГО атрибут :profile-user. Первое попавшееся "username" на
-        // странице — это :current-user, то есть САМ пользователь (в браузере
-        // запрос идёт с куками): поиск по любому id находил «себя».
-        const m = text.match(/:profile-user='([^']+)'/);
-        if (!m) return null;
-        const decoded = m[1]
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'")
-          .replace(/&amp;/g, "&");
-        let user: { id?: number | string; username?: string } | null = null;
-        try {
-          user = JSON.parse(m[1]);
-        } catch {
-          try {
-            user = JSON.parse(decoded);
-          } catch {
-            return null;
-          }
-        }
+        // СТРОГО атрибут :profile-user (см. parseProfileCard): первое
+        // попавшееся "username" — это :current-user, поиск находил «себя».
+        const user = parseProfileCard(await resp.text());
         // id обязан совпасть с запрошенным — ник чужого объекта не берём.
-        if (!user || String(user.id) !== raw || !user.username) return null;
+        if (!user || user.id !== raw) return null;
         return { key: idKey(raw), nick: user.username, id: raw };
       } catch {
         return null;
@@ -2005,7 +2002,7 @@ class PlayerNotesManager {
           <span style="color: ${game.isWin ? "#4CAF50" : "#f44336"}">${
             game.isWin ? "Победа" : "Поражение"
           }</span>
-          <span style="color: ${game.mmrChange >= 0 ? "#4CAF50" : "#f44336"}">${
+          <span data-pn-rating style="color: ${game.mmrChange >= 0 ? "#4CAF50" : "#f44336"}">${
             game.mmrChange >= 0 ? "+" : ""
           }${escapeHtml(String(game.mmrChange))}</span>
           ${
@@ -2057,10 +2054,12 @@ class PlayerNotesManager {
       // Пересечения — тем же принципом «заранее», но ночью и по одному.
       this.history.pumpWarm(names);
       tiles.forEach((el) => this.processElement(el));
+      applyTileAliases(this.aliases, this.model.keys); // свой ник — на всех плитках
       // Сайтовый список «Участники» — не плитки, обходится отдельно.
       this.applyParticipantColors();
       // Страница профиля — тоже отдельно (плиток .player там нет).
       this.ensureProfileNoteUI();
+      applyMatchAliases(this.aliases);
       // Проход прошёл целиком: если до этого он падал — говорим, что
       // починилось. Иначе в файле остаётся только «сломалось».
       if (this.passFailed) {
@@ -2279,6 +2278,7 @@ class PlayerNotesManager {
     document
       .querySelectorAll<HTMLElement>("[data-pn-nick-color]")
       .forEach((el) => paintNickEl(el, ""));
+    clearAllAliases();
     document.querySelectorAll(`.${OWN.playerIcons}`).forEach((group) => {
       if (!group.children.length) group.remove();
     });

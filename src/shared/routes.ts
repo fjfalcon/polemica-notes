@@ -14,3 +14,13 @@ export function isGameRoomPath(pathname: string): boolean {
 export function isSearchPath(pathname: string): boolean {
   return pathname === "/game-search" || pathname.startsWith("/game-search/");
 }
+
+/**
+ * Опознавательный ключ игры в документе: путь и `game_id` из query (сайт
+ * бывает и на `/game?game_id=…`). Смена ключа — другая игра (внешний аудит
+ * №5, C05). Прочие параметры query игру не меняют.
+ */
+export function gameRouteKey(loc: { pathname: string; search: string }): string {
+  const id = new URLSearchParams(loc.search).get("game_id");
+  return id ? `${loc.pathname}?game_id=${id}` : loc.pathname;
+}

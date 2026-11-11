@@ -19,6 +19,8 @@
 export interface RatingPlayer {
   username?: string;
   user_id: number | string;
+  /** MMR из рейтинга (живой ответ: число). */
+  mmr?: number | string;
 }
 
 /**
@@ -130,4 +132,180 @@ export async function findRatingPlayer(username: string): Promise<RatingPlayer |
       player.user_id !== undefined &&
       player.user_id !== null,
   );
+}
+
+// ─────────────── разбивка статистики по ролям (get-statistic) ───────────────
+
+/** Сырой ответ get-statistic: объект с разбивкой по ролям. */
+export type RoleBreakdownRaw = Record<
+  string,
+  { wins_count?: unknown; games_count?: unknown } | undefined
+>;
+
+/** Тот же срок, что у кэша статистики игрока (STATS_TTL_MS). */
+const ROLE_BREAKDOWN_TTL_MS = 5 * 60 * 1000;
+/** Потолок ожидания профильного запроса. */
+const ROLE_BREAKDOWN_TIMEOUT_MS = 15_000;
+/** Ограничитель кэша: за вечер столы сменяются, память не должна расти. */
+const ROLE_BREAKDOWN_CACHE_LIMIT = 300;
+
+const roleBreakdownCache = new Map<string, { at: number; data: RoleBreakdownRaw }>();
+const roleBreakdownInFlight = new Map<string, Promise<RoleBreakdownRaw>>();
+
+/** Тестовый шов: кэш живёт 5 минут и переживал бы соседний тест. */
+export function resetRoleBreakdownCacheForTest(): void {
+  roleBreakdownCache.clear();
+  roleBreakdownInFlight.clear();
+}
+
+/**
+ * Разбивка лиговой статистики игрока по ролям (civilian/sheriff/mafia/
+ * godfather → wins_count/games_count). ОДИН общий кэш на всех потребителей:
+ * статистика на плитках и «Сводка стола» (09.10.2026) запрашивают одного и
+ * того же игрока — без общего слоя стол из 10 человек давал бы 20 запросов
+ * вместо 10. Дедуп параллельных вызовов, таймаут, ошибки не кэшируются.
+ */
+export function fetchRoleBreakdown(userId: number | string): Promise<RoleBreakdownRaw> {
+  const key = String(userId);
+  const cached = roleBreakdownCache.get(key);
+  if (cached && Date.now() - cached.at < ROLE_BREAKDOWN_TTL_MS) {
+    return Promise.resolve(cached.data);
+  }
+  const pending = roleBreakdownInFlight.get(key);
+  if (pending) return pending;
+  const request = fetch(
+    `https://polemicagame.com/profile/default/get-statistic?user_id=${encodeURIComponent(key)}&game_type=league&scoring_type=scoring_2%2Cscoring_3`,
+    { signal: AbortSignal.timeout(ROLE_BREAKDOWN_TIMEOUT_MS) },
+  )
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`stats API ${response.status}`);
+      const data: unknown = await response.json();
+      if (!data || typeof data !== "object" || Array.isArray(data)) {
+        throw new Error("stats API returned invalid data");
+      }
+      if (roleBreakdownCache.size >= ROLE_BREAKDOWN_CACHE_LIMIT) {
+        const oldest = roleBreakdownCache.keys().next().value;
+        if (oldest !== undefined) roleBreakdownCache.delete(oldest);
+      }
+      roleBreakdownCache.set(key, { at: Date.now(), data: data as RoleBreakdownRaw });
+      return data as RoleBreakdownRaw;
+    })
+    .finally(() => {
+      if (roleBreakdownInFlight.get(key) === request) roleBreakdownInFlight.delete(key);
+    });
+  roleBreakdownInFlight.set(key, request);
+  return request;
+}
+
+// ─────────────── аватары и карточка профиля (SSR /profile/<id>) ───────────────
+
+/**
+ * Адрес аватара — тот же, что строит сайт (`getUserAvatarUrl` в бандлах):
+ * `/image/user-avatar?file_name=<id>/<файл>&size=100x`. Без size сервер
+ * отдаёт оригинал (1024×1024). Без file_name — СЛУЧАЙНУЮ заглушку: так
+ * выглядит игрок без фото (и список «Участники» поиска целиком — 22.10.2026).
+ */
+export function userAvatarUrl(file: string, size?: string): string {
+  const q = new URLSearchParams({ file_name: file });
+  if (size) q.set("size", size);
+  return `https://polemicagame.com/image/user-avatar?${q.toString()}`;
+}
+
+/** Имя файла аватара из адреса картинки сайта; null — заглушка или чужой адрес. */
+export function avatarFileFromSrc(src: string | null | undefined): string | null {
+  if (!src) return null;
+  let url: URL;
+  try {
+    url = new URL(src, "https://polemicagame.com");
+  } catch {
+    return null;
+  }
+  if (url.pathname !== "/image/user-avatar") return null;
+  const file = url.searchParams.get("file_name")?.trim();
+  // «undefined»/«null» — так сайт склеивает пустое поле в строку.
+  if (!file || file === "undefined" || file === "null") return null;
+  return file;
+}
+
+/** То, что расширение берёт из карточки профиля. Остальное (телефон, ФИО) — НЕ читаем. */
+export interface ProfileCard {
+  id: string;
+  username: string;
+  /** Имя файла аватара; null — фото нет. */
+  avatar: string | null;
+}
+
+/**
+ * Карточка профиля из SSR-атрибута `:profile-user='…'`. СТРОГО он: первое
+ * попавшееся "username" на странице — это :current-user, то есть сам
+ * пользователь (запрос идёт с его куками). JSON parse-first, декод
+ * энтити — только фолбэком (тот же принцип, что у :game-data, §4.9).
+ */
+export function parseProfileCard(html: string): ProfileCard | null {
+  const m = html.match(/:profile-user='([^']+)'/);
+  if (!m) return null;
+  let user: { id?: unknown; username?: unknown; avatar?: unknown } | null = null;
+  try {
+    user = JSON.parse(m[1]);
+  } catch {
+    try {
+      user = JSON.parse(m[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&"));
+    } catch {
+      return null;
+    }
+  }
+  if (!user || typeof user !== "object") return null;
+  const id = typeof user.id === "number" || typeof user.id === "string" ? String(user.id) : "";
+  const username = typeof user.username === "string" ? user.username : "";
+  if (!/^\d+$/.test(id) || !username) return null;
+  const avatar = typeof user.avatar === "string" && user.avatar.trim() ? user.avatar.trim() : null;
+  return { id, username, avatar };
+}
+
+/** Аватар меняют редко; полчаса — чтобы новое фото подтянулось за вечер. */
+const PROFILE_CARD_TTL_MS = 30 * 60 * 1000;
+const PROFILE_CARD_TIMEOUT_MS = 10_000;
+const PROFILE_CARD_CACHE_LIMIT = 300;
+
+const profileCardCache = new Map<string, { at: number; card: ProfileCard }>();
+const profileCardInFlight = new Map<string, Promise<ProfileCard | null>>();
+
+/** Тестовый шов: кэш живёт полчаса и переживал бы соседний тест. */
+export function resetProfileCardCacheForTest(): void {
+  profileCardCache.clear();
+  profileCardInFlight.clear();
+}
+
+/**
+ * Карточка профиля по id: дедуп параллельных вызовов, таймаут, кэш.
+ * null — профиль не разобрался или id ответа не совпал с запрошенным;
+ * сетевая ошибка — reject. Ни то, ни другое не кэшируется: паузу перед
+ * повтором держит потребитель.
+ */
+export function fetchProfileCard(userId: number | string): Promise<ProfileCard | null> {
+  const key = String(userId);
+  if (!/^\d+$/.test(key)) return Promise.resolve(null);
+  const cached = profileCardCache.get(key);
+  if (cached && Date.now() - cached.at < PROFILE_CARD_TTL_MS) return Promise.resolve(cached.card);
+  const pending = profileCardInFlight.get(key);
+  if (pending) return pending;
+  const request = fetch(`https://polemicagame.com/profile/${key}`, {
+    signal: AbortSignal.timeout(PROFILE_CARD_TIMEOUT_MS),
+  })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`profile page ${response.status}`);
+      const card = parseProfileCard(await response.text());
+      if (!card || card.id !== key) return null;
+      if (profileCardCache.size >= PROFILE_CARD_CACHE_LIMIT) {
+        const oldest = profileCardCache.keys().next().value;
+        if (oldest !== undefined) profileCardCache.delete(oldest);
+      }
+      profileCardCache.set(key, { at: Date.now(), card });
+      return card;
+    })
+    .finally(() => {
+      if (profileCardInFlight.get(key) === request) profileCardInFlight.delete(key);
+    });
+  profileCardInFlight.set(key, request);
+  return request;
 }

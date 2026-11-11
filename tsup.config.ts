@@ -13,6 +13,9 @@ export default defineConfig({
     background: "src/background/index.ts",
     content: "src/content/index.ts",
     popup: "src/popup/index.ts",
+    // Страница «Моя картинка»: выбор файла — в отдельной вкладке (Firefox
+    // закрывает попап при открытии окна выбора файла).
+    avatar: "src/avatar/index.ts",
     // PAGE-скрипт диагностики подключения (MAIN world, инжект тегом).
     // Самодостаточен: без импортов core/* (см. шапку файла).
     "conn-diag-page": "src/content/page/conn-diag-page.ts",
@@ -22,11 +25,18 @@ export default defineConfig({
     "room-probe-page": "src/content/page/room-probe-page.ts",
     // Зонд медиа-комнаты: «F5 только для видео», ставится лениво по клику.
     "media-probe-page": "src/content/page/media-probe-page.ts",
+    "direct-requeue-page": "src/content/page/direct-requeue-page.ts",
+    // Громкость игроков: вызывает метод плитки сайта updateVolumeIcon, лениво.
+    "player-volume-page": "src/content/page/player-volume-page.ts",
     "room-probe-inject": "src/content/page/room-probe-inject.ts",
+    // Ранний флаг «Скрыть рейтинг» (content-скрипт на document_start): бандл
+    // сайта рисует MMR раньше, чем грузится content.js.
+    "rating-flag-early": "src/content/page/rating-flag-early.ts",
   },
   outDir: ".dist-js",
   format: ["iife"],
   target: "es2022",
+  platform: "browser",
   splitting: false,
   treeshake: true,
   sourcemap: false,

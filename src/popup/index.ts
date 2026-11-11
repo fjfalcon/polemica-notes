@@ -10,6 +10,15 @@
  *  • chrome.* → browser.*, console.* → log.*.
  */
 import { browser, isStoreInstall } from "@core/env";
+import { LEGACY_MIC_DEFAULT } from "@shared/mic-input";
+import {
+  DEFAULT_PLAYER_ACTION_KEYS,
+  NUMPAD_PLAYER_KEYS,
+  PLAYER_SLOTS,
+  SITE_ROOM_KEYS,
+  parsePlayerActionKeys,
+  serializePlayerActionKeys,
+} from "@shared/player-action-keys";
 import { log } from "@core/log";
 import * as wsLog from "@core/ws-log";
 import { installErrorCapture } from "@core/errors";
@@ -29,6 +38,9 @@ import {
 import { formatKeyCode, isModifierCode } from "@core/keyboard";
 // Список углов — общий с content-скриптом (см. shared/nick-plate).
 import { PLATE_POSITIONS } from "@shared/nick-plate";
+import { setupPlayerSearch } from "./player-search";
+import { setupOwnAvatarSection } from "./own-avatar-section";
+import { mountCalm } from "@core/calm-ui";
 import {
   DEFAULT_PROTOCOL_EMOJI,
   PROTOCOL_EMOJI_PALETTE,
@@ -50,6 +62,7 @@ import {
   MAX_IMPORT_ENTRIES,
 } from "@core/notes-store";
 import { classifyMergeResponse, runCoordinatorImport, runImportFallback } from "./import-fallback";
+import { collectBackup } from "./backup-export";
 import { sanitizeObsHost } from "@shared/safe-endpoint";
 
 /** Сколько игр с метками ролей принимаем из чужого файла (у фичи лимит 50). */
@@ -81,6 +94,13 @@ const OPERATIONAL_KEYS = [
   "twitch_chat_enabled",
   "enable_role_faker",
   "disable_webcam_clicks",
+  "player_action_keys_enabled",
+  // Досрочный конец своей речи необратим (10.11.2026).
+  "finish_speech_hotkey_enabled",
+  // Выключены по умолчанию и необратимы: при уже включённой фиче файл
+  // включал бы выстрел по клавише молча (ревью 04.11.2026, M1).
+  "player_action_shot",
+  "player_action_check",
   // SEC26-8/2 (26.08.2026): авто-действия и сетевые/OBS-операции, которые
   // чужой бэкап не должен включать без явного согласия.
   "skip_start_screen_enabled",
@@ -100,6 +120,10 @@ const OPERATIONAL_LABELS: Record<string, string> = {
   twitch_chat_enabled: "подключение к чату Twitch",
   enable_role_faker: "подмена роли",
   disable_webcam_clicks: "блокировка кликов по камерам",
+  player_action_keys_enabled: "действия по цифрам (выставление, голос, выстрел, проверка с клавиш)",
+  player_action_shot: "выстрел по клавише места",
+  player_action_check: "проверка по клавише места",
+  finish_speech_hotkey_enabled: "«Завершите речь» с клавиши",
   skip_start_screen_enabled: "автоклик стартового экрана игры",
   obs_auto_record_enabled: "автозапись игр в OBS",
   obs_clip_enabled: "клипы OBS (настройка и запуск Replay Buffer)",
@@ -131,6 +155,14 @@ const SCOPE = "popup";
 
 document.addEventListener("DOMContentLoaded", () => {
   installErrorCapture("popup");
+  setupPlayerSearch();
+  setupOwnAvatarSection();
+  // Вкладка «Тильт»: упражнения для успокоения; крутятся, только пока вкладка открыта.
+  {
+    const calm = $("calm_panel");
+    const tiltPanel = calm?.closest<HTMLElement>(".panel");
+    if (calm) mountCalm(calm, () => tiltPanel?.classList.contains("active") === true);
+  }
 
   // Онбординг: попап открыт — настройки найдены. Снимаем точку с иконки и
   // больше никогда не навязываем страницу-приветствие (см. background,
@@ -518,10 +550,19 @@ document.addEventListener("DOMContentLoaded", () => {
   const panels = Array.from(document.querySelectorAll<HTMLElement>(".panel"));
   const TAB_LS = "polemica:popupTab";
   const activateTab = (name: string) => {
-    const exists = tabs.some((t) => t.dataset.tab === name);
+    // По панелям, а не по кнопкам: у «Тильта» кнопки в ряду нет — его
+    // открывает красная кнопка в шапке (девятой вкладке нет места).
+    const exists = panels.some((p) => p.dataset.panel === name);
     const target = exists ? name : "game";
     tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === target));
     panels.forEach((p) => p.classList.toggle("active", p.dataset.panel === target));
+    // У «Тильта» вкладки нет — «нажатой» показывается кнопка в шапке.
+    const tiltBtn = $("tilt_open");
+    tiltBtn?.classList.toggle("active", target === "tilt");
+    tiltBtn?.setAttribute("aria-pressed", String(target === "tilt"));
+    // «Тильт» не запоминаем: попап — прежде всего настройки, упражнения
+    // открываются кнопкой в шапке, когда нужны.
+    if (target === "tilt") return;
     try {
       localStorage.setItem(TAB_LS, target);
     } catch {
@@ -531,6 +572,10 @@ document.addEventListener("DOMContentLoaded", () => {
   tabs.forEach((t) =>
     t.addEventListener("click", () => activateTab(t.dataset.tab || "game")),
   );
+  $("tilt_open")?.addEventListener("click", () => {
+    activateTab("tilt");
+    document.querySelector('.panel[data-panel="tilt"]')?.scrollIntoView({ block: "start" });
+  });
   try {
     const saved = localStorage.getItem(TAB_LS);
     if (saved) activateTab(saved);
@@ -700,45 +745,12 @@ document.addEventListener("DOMContentLoaded", () => {
   if (exportBtn) {
     exportBtn.addEventListener("click", async () => {
       try {
-        const { notes, loadFailed } = await loadNotes();
-        if (loadFailed) {
+        const backup = await collectBackup();
+        if (!backup) {
           showPopupToast("Не удалось прочитать заметки — попробуйте позже", "error");
           return;
         }
-        const count = Object.keys(notes).length;
-        // Настройки выгружаем ВСЕГДА, даже без заметок: у пользователей
-        // storage обнуляется при каждом переезде расширения (см. AGENTS.md
-        // §2б — ID распакованного Chrome-расширения зависит от пути папки, а
-        // временное дополнение Firefox стирается при закрытии браузера), и
-        // бэкап «только заметок» их от перенастройки не спасал.
-        const settings = await getSettings();
-        // Пароль OBS в файл НЕ кладём: бэкап уезжает в облака и мессенджеры.
-        const { obs_password: _pw, ...safeSettings } = settings;
-        // Палитра своих цветов и локальные мьюты — тоже устойчивые данные
-        // пользователя; без них обещание «импорт вернёт всё как было» врало
-        // (аудит безопасности 01.08.2026, находка 7).
-        const extra = (await browser.storage.local.get({
-          [TAGS_KEY]: [],
-          pn_muted_players: [],
-          pn_hidden_players: [],
-          // Метки ролей — тоже устойчивый ввод пользователя (история до 50
-          // игр); без них обещание «импорт вернёт всё как было» врало
-          // (аудит lifecycle 01.08.2026, находка 17).
-          roleMarks: {},
-        })) as Record<string, unknown>;
-        const payload = {
-          app: "polemica-notes",
-          type: "notes-backup",
-          version: browser.runtime.getManifest().version,
-          exportedAt: new Date().toISOString(),
-          settings: safeSettings,
-          notes,
-          customTags: Array.isArray(extra[TAGS_KEY]) ? extra[TAGS_KEY] : [],
-          mutedPlayers: Array.isArray(extra.pn_muted_players) ? extra.pn_muted_players : [],
-          hiddenPlayers: Array.isArray(extra.pn_hidden_players) ? extra.pn_hidden_players : [],
-          roleMarks:
-            extra.roleMarks && typeof extra.roleMarks === "object" ? extra.roleMarks : {},
-        };
+        const { payload, count } = backup;
         const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -820,14 +832,44 @@ document.addEventListener("DOMContentLoaded", () => {
               "hotkey_role_hide",
               "hotkey_role_peek",
               "outcry_hotkey_code",
+              "finish_speech_hotkey_code",
               "obs_clip_hotkey_code",
+              "mic_sync_hotkey",
+              "guess_key_maf",
+              "guess_key_civ",
+              "guess_key_vice",
             ];
             const seen = new Set<string>();
             for (const k of HOTKEYS) {
               const v = settingsPatch[k];
-              if (typeof v !== "string") continue;
+              // "" — «без клавиши» (микрофон), слота не занимает.
+              if (typeof v !== "string" || !v) continue;
+              // Выкрик и «Завершите речь» на одной клавише — законно: у них
+              // общий обработчик (controls-keys), кнопки не видны разом.
+              if (k === "finish_speech_hotkey_code" && v === settingsPatch.outcry_hotkey_code) continue;
               if (seen.has(v)) delete settingsPatch[k];
               else seen.add(v);
+            }
+            // Клавиши мест (одной строкой) действуют, только когда фича
+            // включена — тогда и сверяем с итогом «файл поверх текущего»
+            // (ревью 04.11.2026, m6): хоткей из файла на месте или нумпаде
+            // не импортируем; места из файла на оставшемся хоткее — тоже.
+            // Включат фичу позже тумблером — сверит сам попап.
+            const final = (k: string): unknown =>
+              k in settingsPatch ? settingsPatch[k] : (lastKnown as Record<string, unknown> | null)?.[k];
+            if (final("player_action_keys_enabled") === true) {
+              const seats = parsePlayerActionKeys(final("player_action_keys")).filter(Boolean);
+              if (final("player_action_numpad") !== false) seats.push(...NUMPAD_PLAYER_KEYS);
+              for (const k of HOTKEYS) {
+                const v = settingsPatch[k];
+                if (typeof v === "string" && v && seats.includes(v)) delete settingsPatch[k];
+              }
+              if (typeof settingsPatch.player_action_keys === "string") {
+                const others = HOTKEYS.map(final);
+                if (parsePlayerActionKeys(settingsPatch.player_action_keys).some((c) => c && others.includes(c))) {
+                  delete settingsPatch.player_action_keys;
+                }
+              }
             }
           }
           // Флаги, включающие ДЕЙСТВИЯ за игрока и сетевые подключения, не
@@ -1228,6 +1270,83 @@ document.addEventListener("DOMContentLoaded", () => {
   let knownDayScene = "";
   let knownNightScene = "";
 
+  // Источник микрофона (9.75.0): "" — «авто», главный микрофон OBS. Как и у
+  // сцен, правда — в переменной: список приходит из OBS только после
+  // подключения, а сохранение не должно читать недостроенный <select>.
+  let knownMicInput = "";
+  /** Источники из OBS; null — OBS не подключён или не ответил. */
+  let micInputs: { main: string | null; mics: string[]; others: string[] } | null = null;
+  /** Поколение запроса списка: ответ, пришедший после отключения или нового запроса, устарел. */
+  let micListSeq = 0;
+
+  /** Пересобрать список: «Авто», микрофоны, прочие источники и сохранённый выбор, даже если его нет в OBS. */
+  function renderMicInputs(): void {
+    const sel = $<HTMLSelectElement>("mic_sync_input");
+    if (!sel) return;
+    const auto = !micInputs
+      ? "Авто: главный микрофон OBS"
+      : micInputs.main
+        ? `Авто: главный микрофон OBS (${micInputs.main})`
+        : "Авто: главный микрофон OBS — в OBS не задан";
+    const groups: Array<[string | null, Array<[string, string]>]> = [[null, [["", auto]]]];
+    if (micInputs?.mics.length) groups.push(["Микрофоны", micInputs.mics.map((n) => [n, n])]);
+    if (micInputs?.others.length) groups.push(["Другие источники", micInputs.others.map((n) => [n, n])]);
+    const listed = groups.some(([, opts]) => opts.some(([v]) => v === knownMicInput));
+    if (knownMicInput && !listed) {
+      // Прежнее значение по умолчанию фон сам уводит на главный микрофон.
+      const missing =
+        knownMicInput === LEGACY_MIC_DEFAULT ? " — нет в OBS, работает как «Авто»" : " — нет в OBS";
+      groups[0][1].push([knownMicInput, micInputs ? knownMicInput + missing : knownMicInput]);
+    }
+    const sig = JSON.stringify(groups);
+    if (sel.dataset.pnSig !== sig) {
+      // Имена приходят из OBS — только textContent/value, без разметки.
+      const option = ([value, label]: [string, string]) => {
+        const o = document.createElement("option");
+        o.value = value;
+        o.textContent = label;
+        return o;
+      };
+      sel.replaceChildren(
+        ...groups.flatMap(([label, opts]) => {
+          if (label === null) return opts.map(option);
+          const g = document.createElement("optgroup");
+          g.label = label;
+          g.append(...opts.map(option));
+          return [g];
+        }),
+      );
+      sel.dataset.pnSig = sig;
+    }
+    sel.value = knownMicInput;
+  }
+
+  function dropMicInputs(): void {
+    micListSeq++;
+    if (micInputs === null) return;
+    micInputs = null;
+    renderMicInputs();
+  }
+
+  async function refreshMicInputs(): Promise<void> {
+    const my = ++micListSeq;
+    let next: typeof micInputs = null;
+    try {
+      const raw = (await sendOBSCommand("get_mic_inputs")) as {
+        main?: unknown;
+        mics?: unknown;
+        others?: unknown;
+      } | null;
+      const names = (v: unknown) => (Array.isArray(v) ? v.filter((n): n is string => typeof n === "string") : []);
+      next = { main: typeof raw?.main === "string" ? raw.main : null, mics: names(raw?.mics), others: names(raw?.others) };
+    } catch {
+      next = null;
+    }
+    if (my !== micListSeq) return;
+    micInputs = next;
+    renderMicInputs();
+  }
+
   // ───────────────────────── Захват клавиши паузы ─────────────────────────
   let pauseHotkeyCode = "F8";
   const pauseCaptureBtn = $<HTMLButtonElement>("pause_hotkey_capture");
@@ -1253,6 +1372,10 @@ document.addEventListener("DOMContentLoaded", () => {
     get: () => string,
     apply: (code: string) => void,
     render: () => void,
+    /** Почему клавишу этой кнопке не дать; null — можно. */
+    reject: (code: string) => string | null = () => null,
+    /** Коды, которые этой кнопке не конфликт (у места — его же нумпад). */
+    ownCodes: readonly string[] = [],
   ): void => {
     cancelKeyCapture?.();
     // Отложенный render прежнего отказа перетирал бы «Нажми клавишу…»
@@ -1266,9 +1389,14 @@ document.addEventListener("DOMContentLoaded", () => {
       e.preventDefault();
       e.stopPropagation();
       if (isModifierCode(e.code)) return; // ждём не-модификатор
-      if (e.code !== get() && hotkeyGetters.some((g) => g() === e.code)) {
+      const refusal =
+        reject(e.code) ??
+        (e.code !== get() && !ownCodes.includes(e.code) && hotkeyGetters.some((g) => g() === e.code)
+          ? "Занята другим действием"
+          : null);
+      if (refusal) {
         finish();
-        btn.textContent = "Занята другим действием";
+        btn.textContent = refusal;
         captureLabelTimer = setTimeout(() => {
           captureLabelTimer = null;
           render();
@@ -1304,26 +1432,62 @@ document.addEventListener("DOMContentLoaded", () => {
     );
   }
 
+  // ───────────────────────── Клавиша микрофона (mic-sync) ─────────────────────────
+  let micHotkeyCode = "";
+  const micCaptureBtn = $<HTMLButtonElement>("mic_sync_hotkey_capture");
+  function renderMicKey(): void {
+    if (micCaptureBtn) micCaptureBtn.textContent = formatKeyCode(micHotkeyCode);
+  }
+  if (micCaptureBtn) {
+    // Пустая клавиша не занимает слот: иначе «—» совпадало бы с другими пустыми.
+    hotkeyGetters.push(() => micHotkeyCode || "\u0000mic");
+    micCaptureBtn.addEventListener("click", () =>
+      beginKeyCapture(
+        micCaptureBtn,
+        () => micHotkeyCode,
+        (code) => (micHotkeyCode = code),
+        renderMicKey,
+      ),
+    );
+  }
+  $("mic_sync_hotkey_clear")?.addEventListener("click", () => {
+    micHotkeyCode = "";
+    renderMicKey();
+    saveSettings();
+  });
+
   // ───────────────────────── Захват клавиш ролей (F/E/D) ─────────────────────────
   let roleFakeCode = "KeyF";
   let roleResetCode = "KeyE";
   let roleHideCode = "KeyD";
   let rolePeekCode = "KeyV";
   let outcryCode = "KeyC";
+  let finishCode = "KeyS";
+  let guessMafCode = "KeyQ";
+  let guessCivCode = "KeyW";
+  let guessViceCode = "KeyA";
   let clipCode = "F9";
   // Свой цвет кнопок: живёт в замыкании, как хоткеи — <input type=color>
   // больше нет, а source of truth для сохранения нужен один.
   let currentButtonColor = "#ffd54f";
   let reflectButtonColor: (hex: string) => void = () => {};
   const roleKeyRenders: Array<() => void> = [];
-  const setupRoleKey = (id: string, get: () => string, set: (c: string) => void) => {
+  const setupRoleKey = (
+    id: string,
+    get: () => string,
+    set: (c: string) => void,
+    /** Чужие клавиши, которые этой кнопке не конфликт (выкрик ↔ конец речи). */
+    shared: () => string[] = () => [],
+    /** Почему клавишу этой кнопке не дать; null — можно. */
+    reject?: (code: string) => string | null,
+  ) => {
     const btn = $<HTMLButtonElement>(id);
     if (!btn) return;
     const render = () => (btn.textContent = formatKeyCode(get()));
     render();
     roleKeyRenders.push(render);
     hotkeyGetters.push(get);
-    btn.addEventListener("click", () => beginKeyCapture(btn, get, set, render));
+    btn.addEventListener("click", () => beginKeyCapture(btn, get, set, render, reject, shared()));
   };
   setupRoleKey("hotkey_role_fake", () => roleFakeCode, (c) => (roleFakeCode = c));
   setupRoleKey("hotkey_role_reset", () => roleResetCode, (c) => (roleResetCode = c));
@@ -1331,8 +1495,91 @@ document.addEventListener("DOMContentLoaded", () => {
   setupRoleKey("hotkey_role_peek", () => rolePeekCode, (c) => (rolePeekCode = c));
   // Тот же механизм захвата клавиши, что и у ролевых: живёт в замыкании, а не
   // в input.value, иначе чужое изменение откатывалось бы первым же тумблером.
-  setupRoleKey("outcry_hotkey_code", () => outcryCode, (c) => (outcryCode = c));
+  // Выкрик и «Завершите речь» можно поставить на одну клавишу (просьба
+  // игроков 10.11.2026): в свою речь сайт показывает конец речи, в чужую —
+  // выкрик, в одном месте контролов; общий обработчик — content/controls-keys.
+  setupRoleKey("outcry_hotkey_code", () => outcryCode, (c) => (outcryCode = c), () => [finishCode]);
+  setupRoleKey("finish_speech_hotkey_code", () => finishCode, (c) => (finishCode = c), () => [outcryCode]);
+  // Режим ЛХ на цифре/нумпаде или клавише места не встанет никогда: цифры
+  // сайта и места держат действия по цифрам (ревью 10.11.2026) — и при
+  // выключенной фиче, иначе её включение молча отняло бы клавишу у обоих.
+  const rejectGuessKey = (c: string): string | null =>
+    /^(?:Digit|Numpad)\d$/.test(c) || playerKeys.includes(c) ? "Это клавиша игрока" : null;
+  setupRoleKey("guess_key_maf", () => guessMafCode, (c) => (guessMafCode = c), undefined, rejectGuessKey);
+  setupRoleKey("guess_key_civ", () => guessCivCode, (c) => (guessCivCode = c), undefined, rejectGuessKey);
+  setupRoleKey("guess_key_vice", () => guessViceCode, (c) => (guessViceCode = c), undefined, rejectGuessKey);
   setupRoleKey("obs_clip_hotkey_code", () => clipCode, (c) => (clipCode = c));
+
+  // ───────────────────────── Клавиши мест (действия по цифрам) ─────────────────────────
+  let playerKeys = parsePlayerActionKeys(DEFAULT_PLAYER_ACTION_KEYS);
+  const playerKeyRenders: Array<() => void> = [];
+  // Места и нумпад занимают клавиши, только пока фича включена: кто ею не
+  // пользуется, волен ставить паузу или микрофон на цифры (ревью, m5).
+  // Конфликты при включении разбирает resolveSeatConflicts.
+  const seatsOn = () => $<HTMLInputElement>("player_action_keys_enabled")?.checked === true;
+  const numpadOn = () => seatsOn() && $<HTMLInputElement>("player_action_numpad")?.checked !== false;
+  const seatGetters = new Set<() => string>();
+  const pushSeatGetter = (g: () => string) => {
+    seatGetters.add(g);
+    hotkeyGetters.push(g);
+  };
+  for (let i = 0; i < PLAYER_SLOTS; i++) {
+    const btn = $<HTMLButtonElement>(`player_action_key_${i + 1}`);
+    if (!btn) continue;
+    const get = () => playerKeys[i] ?? "";
+    const render = () => (btn.textContent = formatKeyCode(get()));
+    playerKeyRenders.push(render);
+    // Пустое место не занимает слот: «—» совпадало бы с другими пустыми.
+    pushSeatGetter(() => (seatsOn() && get()) || `\u0000seat${i}`);
+    btn.addEventListener("click", () =>
+      beginKeyCapture(
+        btn,
+        get,
+        (c) => (playerKeys = playerKeys.map((old, j) => (j === i ? c : old))),
+        render,
+        // Клавишу места, пока на столе кнопки действий, сайт не получает —
+        // его камера/микрофон/роли на ней перестали бы работать.
+        // Место против места — всегда, и при выключенной фиче: дубль при
+        // разборе достался бы первому месту, второе молча осталось бы без
+        // клавиши (контрольный раунд ревью).
+        (c) => {
+          if (SITE_ROOM_KEYS.includes(c)) return "Это клавиша сайта";
+          const j = playerKeys.findIndex((k, idx) => idx !== i && k === c);
+          return j >= 0 ? `Занята игроком ${j + 1}` : null;
+        },
+        [NUMPAD_PLAYER_KEYS[i]],
+      ),
+    );
+  }
+  NUMPAD_PLAYER_KEYS.forEach((code, i) => pushSeatGetter(() => (numpadOn() ? code : `\u0000num${i}`)));
+
+  /**
+   * Включили фичу или нумпад — клавиши мест сверяются с уже назначенными
+   * хоткеями. Место на чужой клавише остаётся без неё (её держит та
+   * функция), нумпад на чужой — тоже; пользователю — что именно.
+   */
+  function resolveSeatConflicts(): void {
+    if (!seatsOn()) return;
+    const others = hotkeyGetters.filter((g) => !seatGetters.has(g)).map((g) => g());
+    const lost: string[] = [];
+    playerKeys = playerKeys.map((code, i) => {
+      if (!code || !others.includes(code)) return code;
+      lost.push(`игрок ${i + 1} — ${formatKeyCode(code)}`);
+      return "";
+    });
+    if (numpadOn()) {
+      NUMPAD_PLAYER_KEYS.forEach((code, i) => {
+        if (others.includes(code)) lost.push(`игрок ${i + 1} — ${formatKeyCode(code)}`);
+      });
+    }
+    if (!lost.length) return;
+    playerKeyRenders.forEach((r) => r());
+    showPopupToast(`Клавиши заняты другими функциями, у мест их нет: ${lost.join(", ")}. Назначьте другие.`, "error", 12000);
+  }
+  // Раньше общего сохранения (simpleChangeIds ниже): очищенные места
+  // уходят в хранилище тем же сохранением.
+  $("player_action_keys_enabled")?.addEventListener("change", resolveSeatConflicts);
+  $("player_action_numpad")?.addEventListener("change", resolveSeatConflicts);
 
   // ───────────────────────── Загрузка настроек в контролы ─────────────────────────
   /**
@@ -1365,6 +1612,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // появиться/исчезнуть вместе с ней.
     if ("stats_button_theme" in patch) syncCustomColorRow();
     if ("role_marker_enabled" in patch) syncRoleMarkerIconsRow();
+    if ("tilt_mode_enabled" in patch) syncTiltMode();
     if (typeof patch.stats_button_color === "string") {
       reflectButtonColor(readButtonColor(patch.stats_button_color));
     }
@@ -1381,6 +1629,10 @@ document.addEventListener("DOMContentLoaded", () => {
       if (s) s.style.display = patch.twitch_chat_enabled ? "block" : "none";
     }
     if ("obs_day_scene" in patch) knownDayScene = patch.obs_day_scene || "";
+    if (typeof patch.mic_sync_input === "string") {
+      knownMicInput = patch.mic_sync_input.trim();
+      renderMicInputs();
+    }
     if ("obs_night_scene" in patch) knownNightScene = patch.obs_night_scene || "";
     // Хоткеи живут в замыканиях, а не в input.value — без этого чужое
     // изменение хоткея откатывалось следующим же кликом по любому тумблеру.
@@ -1388,18 +1640,34 @@ document.addEventListener("DOMContentLoaded", () => {
       pauseHotkeyCode = patch.pause_hotkey_code;
       renderPauseKey();
     }
+    if (typeof patch.mic_sync_hotkey === "string") {
+      micHotkeyCode = patch.mic_sync_hotkey;
+      renderMicKey();
+    }
     if (typeof patch.hotkey_role_fake === "string") roleFakeCode = patch.hotkey_role_fake;
     if (typeof patch.hotkey_role_reset === "string") roleResetCode = patch.hotkey_role_reset;
     if (typeof patch.hotkey_role_hide === "string") roleHideCode = patch.hotkey_role_hide;
     if (typeof patch.hotkey_role_peek === "string") rolePeekCode = patch.hotkey_role_peek;
     if (typeof patch.outcry_hotkey_code === "string") outcryCode = patch.outcry_hotkey_code;
+    if (typeof patch.finish_speech_hotkey_code === "string") finishCode = patch.finish_speech_hotkey_code;
+    if (typeof patch.guess_key_maf === "string") guessMafCode = patch.guess_key_maf;
+    if (typeof patch.guess_key_civ === "string") guessCivCode = patch.guess_key_civ;
+    if (typeof patch.guess_key_vice === "string") guessViceCode = patch.guess_key_vice;
     if (typeof patch.obs_clip_hotkey_code === "string") clipCode = patch.obs_clip_hotkey_code;
+    if (typeof patch.player_action_keys === "string") {
+      playerKeys = parsePlayerActionKeys(patch.player_action_keys);
+      playerKeyRenders.forEach((r) => r());
+    }
     if (
       patch.hotkey_role_fake ||
       patch.hotkey_role_reset ||
       patch.hotkey_role_hide ||
       patch.hotkey_role_peek ||
       patch.outcry_hotkey_code ||
+      patch.finish_speech_hotkey_code ||
+      patch.guess_key_maf ||
+      patch.guess_key_civ ||
+      patch.guess_key_vice ||
       patch.obs_clip_hotkey_code
     ) {
       roleKeyRenders.forEach((r) => r());
@@ -1428,8 +1696,14 @@ document.addEventListener("DOMContentLoaded", () => {
     roleHideCode = items.hotkey_role_hide || "KeyD";
     rolePeekCode = items.hotkey_role_peek || "KeyV";
     outcryCode = items.outcry_hotkey_code || "KeyC";
+    finishCode = items.finish_speech_hotkey_code || "KeyS";
+    guessMafCode = items.guess_key_maf || "KeyQ";
+    guessCivCode = items.guess_key_civ || "KeyW";
+    guessViceCode = items.guess_key_vice || "KeyA";
     clipCode = items.obs_clip_hotkey_code || "F9";
     roleKeyRenders.forEach((r) => r());
+    playerKeys = parsePlayerActionKeys(items.player_action_keys);
+    playerKeyRenders.forEach((r) => r());
     const set = (id: string, val: boolean) => {
       const el = $<HTMLInputElement>(id);
       // Строго === true — тем же правилом фичи включает FeatureManager.
@@ -1442,6 +1716,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     set("extension_enabled", items.extension_enabled);
     applyExtOff(items.extension_enabled);
+    set("hide_rating", items.hide_rating);
     set("show_mmr", items.show_mmr);
     set("show_games", items.show_games);
     set("show_id", items.show_id);
@@ -1462,6 +1737,13 @@ document.addEventListener("DOMContentLoaded", () => {
     set("pause_hotkey_enabled", items.pause_hotkey_enabled);
     set("statistics_enabled", items.statistics_enabled);
     set("session_stats_enabled", items.session_stats_enabled);
+    set("table_summary_enabled", items.table_summary_enabled);
+    set("mic_sync_enabled", items.mic_sync_enabled);
+    set("ppk_confirm_enabled", items.ppk_confirm_enabled);
+    knownMicInput = typeof items.mic_sync_input === "string" ? items.mic_sync_input.trim() : "";
+    renderMicInputs();
+    micHotkeyCode = typeof items.mic_sync_hotkey === "string" ? items.mic_sync_hotkey : "";
+    renderMicKey();
     set("match_page_stats_enabled", items.match_page_stats_enabled);
 
     const sbt = $<HTMLSelectElement>("stats_button_theme");
@@ -1472,6 +1754,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (msv) msv.value = items.match_stats_view || "hints";
 
     set("auto_hide_roles_enabled", items.auto_hide_roles_enabled);
+    set("roles_reveal_on_game_end", items.roles_reveal_on_game_end);
+    set("obs_day_scene_when_out", items.obs_day_scene_when_out);
     const rpase = $<HTMLInputElement>("role_phase_auto_switch_enabled");
     if (rpase) {
       rpase.checked = items.auto_hide_roles_enabled ? items.role_phase_auto_switch_enabled : false;
@@ -1484,7 +1768,11 @@ document.addEventListener("DOMContentLoaded", () => {
     set("camera_reload_enabled", items.camera_reload_enabled);
     set("stream_lost_icon_enabled", items.stream_lost_icon_enabled);
     set("player_mute_enabled", items.player_mute_enabled);
+    set("player_volume_memory_enabled", items.player_volume_memory_enabled);
     set("nick_colors_enabled", items.nick_colors_enabled);
+    set("nick_aliases_enabled", items.nick_aliases_enabled);
+    set("nick_aliases_on_stream", items.nick_aliases_on_stream);
+    set("nick_aliases_hide_condemned_on_stream", items.nick_aliases_hide_condemned_on_stream);
     const nfw = $<HTMLSelectElement>("note_frame_width");
     if (nfw) {
       // Нормализация: импорт бэкапа проверяет только typeof, и мусорная
@@ -1504,6 +1792,7 @@ document.addEventListener("DOMContentLoaded", () => {
     set("last_games_first_killed", items.last_games_first_killed);
     set("note_indicator_enabled", items.note_indicator_enabled);
     set("role_marker_enabled", items.role_marker_enabled);
+    set("roles_predictor_enabled", items.roles_predictor_enabled);
     set("role_marker_icons_enabled", items.role_marker_icons_enabled);
     syncRoleMarkerIconsRow();
     set("unicorn_hearts_enabled", items.unicorn_hearts_enabled);
@@ -1530,9 +1819,25 @@ document.addEventListener("DOMContentLoaded", () => {
       if (sel) sel.value = readControlPosition(kind, (items as unknown as Record<string, unknown>)[`ctl_pos_${kind}`]);
     }
     set("outcry_hotkey_enabled", items.outcry_hotkey_enabled);
+    set("finish_speech_hotkey_enabled", items.finish_speech_hotkey_enabled);
+    set("player_action_guess", items.player_action_guess);
+    set("player_action_keys_enabled", items.player_action_keys_enabled);
+    set("player_action_nominate", items.player_action_nominate);
+    set("player_action_vote", items.player_action_vote);
+    set("player_action_shot", items.player_action_shot);
+    set("player_action_check", items.player_action_check);
+    set("player_action_numpad", items.player_action_numpad);
     set("obs_auto_record_enabled", items.obs_auto_record_enabled);
     set("obs_clip_enabled", items.obs_clip_enabled);
     set("profile_mmr_chart_enabled", items.profile_mmr_chart_enabled);
+    set("profile_photo_enabled", items.profile_photo_enabled);
+    set("search_avatars_enabled", items.search_avatars_enabled);
+    set("search_card_avatar_enabled", items.search_card_avatar_enabled);
+    set("tilt_button_enabled", items.tilt_button_enabled);
+    set("tilt_mode_enabled", items.tilt_mode_enabled);
+    syncTiltMode();
+    const avatarSource = $<HTMLSelectElement>("own_avatar_source");
+    if (avatarSource) avatarSource.value = items.own_avatar_source === "custom" ? "custom" : "site";
     const clipMin = $<HTMLSelectElement>("obs_clip_minutes");
     if (clipMin) clipMin.value = String(items.obs_clip_minutes || 1);
     set("hotkey_hints_enabled", items.hotkey_hints_enabled);
@@ -1617,6 +1922,8 @@ document.addEventListener("DOMContentLoaded", () => {
     const autoHideRolesEnabled = cb("auto_hide_roles_enabled", false);
     const settings: Settings = {
       extension_enabled: cb("extension_enabled", true),
+      hide_rating: cb("hide_rating", false),
+      ppk_confirm_enabled: cb("ppk_confirm_enabled", true),
       show_mmr: cb("show_mmr"),
       show_games: cb("show_games"),
       show_id: cb("show_id"),
@@ -1631,7 +1938,11 @@ document.addEventListener("DOMContentLoaded", () => {
       camera_reload_enabled: cb("camera_reload_enabled", true),
       stream_lost_icon_enabled: cb("stream_lost_icon_enabled", true),
       player_mute_enabled: cb("player_mute_enabled", true),
+      player_volume_memory_enabled: cb("player_volume_memory_enabled", true),
       nick_colors_enabled: cb("nick_colors_enabled", true),
+      nick_aliases_enabled: cb("nick_aliases_enabled", true),
+      nick_aliases_on_stream: cb("nick_aliases_on_stream", true),
+      nick_aliases_hide_condemned_on_stream: cb("nick_aliases_hide_condemned_on_stream", true),
       note_frame_width: noteFrameWidthValue(),
       btn_stats_enabled: cb("btn_stats_enabled", true),
       btn_note_enabled: cb("btn_note_enabled", true),
@@ -1643,6 +1954,7 @@ document.addEventListener("DOMContentLoaded", () => {
       last_games_first_killed: cb("last_games_first_killed", true),
       note_indicator_enabled: cb("note_indicator_enabled", true),
       role_marker_enabled: cb("role_marker_enabled", false),
+      roles_predictor_enabled: cb("roles_predictor_enabled", false),
       role_marker_icons_enabled: cb("role_marker_icons_enabled", true),
       unicorn_hearts_enabled: cb("unicorn_hearts_enabled", false),
       protocol_emoji_civ: readProtocolEmoji("civ"),
@@ -1678,6 +1990,19 @@ document.addEventListener("DOMContentLoaded", () => {
       hotkey_role_peek: rolePeekCode,
       outcry_hotkey_enabled: cb("outcry_hotkey_enabled", false),
       outcry_hotkey_code: outcryCode,
+      finish_speech_hotkey_enabled: cb("finish_speech_hotkey_enabled", false),
+      finish_speech_hotkey_code: finishCode,
+      player_action_guess: cb("player_action_guess", true),
+      guess_key_maf: guessMafCode,
+      guess_key_civ: guessCivCode,
+      guess_key_vice: guessViceCode,
+      player_action_keys_enabled: cb("player_action_keys_enabled", false),
+      player_action_nominate: cb("player_action_nominate", true),
+      player_action_vote: cb("player_action_vote", true),
+      player_action_shot: cb("player_action_shot", false),
+      player_action_check: cb("player_action_check", false),
+      player_action_keys: serializePlayerActionKeys(playerKeys),
+      player_action_numpad: cb("player_action_numpad", true),
       obs_auto_record_enabled: cb("obs_auto_record_enabled", false),
       obs_clip_enabled: cb("obs_clip_enabled", false),
       obs_clip_hotkey_code: clipCode,
@@ -1685,7 +2010,18 @@ document.addEventListener("DOMContentLoaded", () => {
       hotkey_hints_enabled: cb("hotkey_hints_enabled", true),
       statistics_enabled: cb("statistics_enabled", true),
       session_stats_enabled: cb("session_stats_enabled", false),
+      table_summary_enabled: cb("table_summary_enabled", false),
+      mic_sync_enabled: cb("mic_sync_enabled", false),
+      mic_sync_input: knownMicInput,
+      mic_sync_hotkey: micHotkeyCode,
       profile_mmr_chart_enabled: cb("profile_mmr_chart_enabled", true),
+      profile_photo_enabled: cb("profile_photo_enabled", true),
+      search_avatars_enabled: cb("search_avatars_enabled", true),
+      search_card_avatar_enabled: cb("search_card_avatar_enabled", true),
+      tilt_button_enabled: cb("tilt_button_enabled", true),
+      tilt_mode_enabled: cb("tilt_mode_enabled", true),
+      own_avatar_source:
+        $<HTMLSelectElement>("own_avatar_source")?.value === "custom" ? "custom" : "site",
       match_page_stats_enabled: cb("match_page_stats_enabled", true),
       match_stats_view: $<HTMLSelectElement>("match_stats_view")?.value || "hints",
       stats_button_theme: ($<HTMLSelectElement>("stats_button_theme")?.value || "default"),
@@ -1693,6 +2029,7 @@ document.addEventListener("DOMContentLoaded", () => {
       auto_hide_roles_enabled: autoHideRolesEnabled,
       role_phase_auto_switch_enabled:
         autoHideRolesEnabled && cb("role_phase_auto_switch_enabled", false),
+      roles_reveal_on_game_end: cb("roles_reveal_on_game_end", true),
       // OBS
       obs_enabled: cb("obs_enabled", false),
       // Санитайзер SEC26-1: userinfo/query отрезаются при сохранении —
@@ -1711,6 +2048,7 @@ document.addEventListener("DOMContentLoaded", () => {
       obs_auto_mode_enabled: cb("obs_auto_mode_enabled", false),
       obs_day_scene: sceneVal("obs_day_scene", knownDayScene),
       obs_night_scene: sceneVal("obs_night_scene", knownNightScene),
+      obs_day_scene_when_out: cb("obs_day_scene_when_out", true),
       // Twitch
       twitch_chat_enabled: cb("twitch_chat_enabled", false),
       twitch_channel_name: val("twitch_channel_name", ""),
@@ -1790,6 +2128,8 @@ document.addEventListener("DOMContentLoaded", () => {
   // ───────────────────────── Подписка контролов на change ─────────────────────────
   const simpleChangeIds = [
     "extension_enabled",
+    "hide_rating",
+    "ppk_confirm_enabled",
     "show_mmr",
     "show_games",
     "show_id",
@@ -1810,7 +2150,15 @@ document.addEventListener("DOMContentLoaded", () => {
     "pause_hotkey_enabled",
     "statistics_enabled",
     "session_stats_enabled",
+    "table_summary_enabled",
+    "mic_sync_enabled",
     "profile_mmr_chart_enabled",
+    "profile_photo_enabled",
+    "search_avatars_enabled",
+    "search_card_avatar_enabled",
+    "tilt_button_enabled",
+    "tilt_mode_enabled",
+    "own_avatar_source",
     "obs_auto_record_enabled",
     "obs_clip_enabled",
     "obs_clip_minutes",
@@ -1819,6 +2167,8 @@ document.addEventListener("DOMContentLoaded", () => {
     "match_stats_view",
     "auto_hide_roles_enabled",
     "role_phase_auto_switch_enabled",
+    "roles_reveal_on_game_end",
+    "obs_day_scene_when_out",
     "disable_webcam_clicks",
     "auto_accept_enabled",
     "auto_ready_enabled",
@@ -1826,7 +2176,11 @@ document.addEventListener("DOMContentLoaded", () => {
     "camera_reload_enabled",
     "stream_lost_icon_enabled",
     "player_mute_enabled",
+    "player_volume_memory_enabled",
     "nick_colors_enabled",
+    "nick_aliases_enabled",
+    "nick_aliases_on_stream",
+    "nick_aliases_hide_condemned_on_stream",
     "note_frame_width",
     "btn_stats_enabled",
     "btn_note_enabled",
@@ -1838,6 +2192,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "last_games_first_killed",
     "note_indicator_enabled",
     "role_marker_enabled",
+    "roles_predictor_enabled",
     "role_marker_icons_enabled",
     "unicorn_hearts_enabled",
     "protocol_emoji_civ",
@@ -1853,6 +2208,14 @@ document.addEventListener("DOMContentLoaded", () => {
     "ctl_pos_guess",
     "outcry_hotkey_enabled",
     "outcry_hotkey_code",
+    "finish_speech_hotkey_enabled",
+    "player_action_guess",
+    "player_action_keys_enabled",
+    "player_action_nominate",
+    "player_action_vote",
+    "player_action_shot",
+    "player_action_check",
+    "player_action_numpad",
     "hotkey_hints_enabled",
     "f5_refresh_fix_enabled",
     "update_check_enabled",
@@ -1884,6 +2247,28 @@ document.addEventListener("DOMContentLoaded", () => {
     row.style.display = $<HTMLInputElement>("role_marker_enabled")?.checked ? "" : "none";
   }
   $("role_marker_enabled")?.addEventListener("change", syncRoleMarkerIconsRow);
+
+  /**
+   * Режим «Тильт» выключен — нет красной кнопки в шапке (а вкладку «Тильт»
+   * открывает только она); открытый «Тильт» уходит на прежнюю вкладку.
+   * Переключатель — во «Ещё».
+   */
+  function syncTiltMode(): void {
+    const on = $<HTMLInputElement>("tilt_mode_enabled")?.checked !== false;
+    const head = $("tilt_open");
+    if (head) head.style.display = on ? "" : "none";
+    if (!on && document.querySelector('.panel.active[data-panel="tilt"]')) {
+      // Вернуть туда, где был, а не затереть запомненную вкладку «Игрой».
+      let saved: string | null = null;
+      try {
+        saved = localStorage.getItem(TAB_LS);
+      } catch {
+        /* ignore */
+      }
+      activateTab(saved || "game");
+    }
+  }
+  $("tilt_mode_enabled")?.addEventListener("change", syncTiltMode);
 
   /** Значение поля эмодзи метки протокола (нормализованное; "" = не подменять). */
   function readProtocolEmoji(mark: (typeof PROTOCOL_MARKS)[number]): string {
@@ -2061,6 +2446,10 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       case "obs_scene_changed":
         updateCurrentSceneHighlight(data as string);
+        break;
+      // Источник добавили, удалили или переименовали — список микрофонов устарел.
+      case "obs_inputs_changed":
+        if (micInputs !== null) void refreshMicInputs();
         break;
       case "obs_disconnected":
         updateOBSStatus("Отключено", false);
@@ -2352,6 +2741,13 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
+    const micInputSel = $<HTMLSelectElement>("mic_sync_input");
+    if (micInputSel)
+      micInputSel.addEventListener("change", () => {
+        knownMicInput = micInputSel.value;
+        saveSettings();
+      });
+
     const obsDayScene = $<HTMLSelectElement>("obs_day_scene");
     const obsNightScene = $<HTMLSelectElement>("obs_night_scene");
     if (obsDayScene)
@@ -2414,7 +2810,14 @@ document.addEventListener("DOMContentLoaded", () => {
    * Команда OBS в background. Разворачивает ответ { success, data, error }.
    */
   async function sendOBSCommand(
-    command: "connect" | "disconnect" | "get_status" | "set_scene" | "get_scenes" | "replay_save",
+    command:
+      | "connect"
+      | "disconnect"
+      | "get_status"
+      | "set_scene"
+      | "get_scenes"
+      | "replay_save"
+      | "get_mic_inputs",
     data: { url?: string; password?: string; sceneName?: string } = {},
   ): Promise<unknown> {
     const response = await sendRuntime<{ success: boolean; data?: unknown; error?: string }>({
@@ -2453,6 +2856,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const obsDayScene = $<HTMLSelectElement>("obs_day_scene");
     const obsNightScene = $<HTMLSelectElement>("obs_night_scene");
     if (!scenesList) return;
+
+    // Список микрофонов живёт вместе со сценами: есть сцены — OBS на связи.
+    if (scenes && scenes.length > 0) void refreshMicInputs();
+    else dropMicInputs();
 
     if (!scenes || scenes.length === 0) {
       scenesList.innerHTML = '<div class="scenes-empty">Нет доступных сцен</div>';

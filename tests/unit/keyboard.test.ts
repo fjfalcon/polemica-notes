@@ -128,6 +128,120 @@ describe("клавиша-«зажатие» (подсмотреть роли)", 
     expect(on).toHaveBeenCalledTimes(1);
   });
 
+  test("клавиша-«зажатие» не доходит до сайта — ни нажатие, ни повтор, ни отпускание", () => {
+    // 21.10.2026: hotkeys-js сайта видел V зажатой, и наш синтетический D
+    // становился для него «V+D» — возврат скрытия после «подсмотреть»
+    // молчал; плюс сайтовый `v` переключал камеру игрока.
+    const site = vi.fn();
+    document.addEventListener("keydown", site);
+    document.addEventListener("keyup", site);
+    const unsub = keyboard.registerHold("KeyV", vi.fn(), vi.fn());
+    const send = (type: string, init: KeyboardEventInit = {}) =>
+      document.dispatchEvent(new KeyboardEvent(type, { code: "KeyV", bubbles: true, ...init }));
+    send("keydown");
+    send("keydown", { repeat: true });
+    send("keyup");
+    expect(site, "сайт не видел ни одного события V").not.toHaveBeenCalled();
+    // Обычный хоткей (не «зажатие», не D сайта) сайту по-прежнему отдаётся.
+    const offF = keyboard.register("KeyF", vi.fn());
+    document.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyF", bubbles: true }));
+    expect(site).toHaveBeenCalledTimes(1);
+    offF();
+    unsub();
+    document.removeEventListener("keydown", site);
+    document.removeEventListener("keyup", site);
+  });
+
+  test("«зажатие», которому нечего делать (down → false), целиком отдаётся сайту", () => {
+    // Лобби: подсматривать нечего — сайтовый `v` (тумблер камеры) работает.
+    const site = vi.fn();
+    document.addEventListener("keydown", site);
+    document.addEventListener("keyup", site);
+    const off = vi.fn();
+    const unsub = keyboard.registerHold("KeyV", () => false, off);
+    const send = (type: string, init: KeyboardEventInit = {}) =>
+      document.dispatchEvent(new KeyboardEvent(type, { code: "KeyV", bubbles: true, ...init }));
+    send("keydown");
+    send("keydown", { repeat: true });
+    send("keyup");
+    expect(site).toHaveBeenCalledTimes(3);
+    unsub();
+    document.removeEventListener("keydown", site);
+    document.removeEventListener("keyup", site);
+  });
+
+  test("автоповтор хоткея со swallowRepeat сайту не отдаётся; наблюдатель видит только то, что хоткей не забрал", () => {
+    // Зажатый D: hotkeys-js сайта переключал флаг ролей на каждом повторе.
+    const site = vi.fn();
+    document.addEventListener("keydown", site);
+    const handler = vi.fn();
+    const watcher = vi.fn();
+    const offD = keyboard.register("KeyH", handler, { swallowRepeat: true });
+    const offW = keyboard.observe("KeyH", watcher);
+    const send = (init: KeyboardEventInit = {}) =>
+      document.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyH", bubbles: true, ...init }));
+    send();
+    send({ repeat: true });
+    send({ repeat: true });
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(site, "первое нажатие — по решению обработчика, повторы — нет").toHaveBeenCalledTimes(1);
+    expect(watcher, "простой D забрал хоткей — наблюдателю не положено").not.toHaveBeenCalled();
+    send({ ctrlKey: true });
+    send({ metaKey: true, repeat: true });
+    expect(watcher, "Ctrl/Cmd+D — наблюдателю, включая повтор").toHaveBeenCalledTimes(2);
+    expect(handler, "сочетание не зовёт обычный обработчик").toHaveBeenCalledTimes(1);
+    offD();
+    // Без привязки (клавиша скрытия переназначена) — простой D тоже наблюдателю.
+    send();
+    expect(watcher).toHaveBeenCalledTimes(3);
+    offW();
+    document.removeEventListener("keydown", site);
+  });
+
+  test("Ctrl/Alt-повтор включившегося «зажатия» сайту не отдаётся (внешний аудит №2, B02)", () => {
+    // Повтор удерживаемой V с Ctrl/Alt доходил до сайта — hotkeys-js считал
+    // V зажатой навсегда.
+    const site = vi.fn();
+    document.addEventListener("keydown", site);
+    const unsub = keyboard.registerHold("KeyV", () => true, vi.fn());
+    const send = (init: KeyboardEventInit = {}) =>
+      document.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyV", bubbles: true, ...init }));
+    send();
+    send({ ctrlKey: true, repeat: true });
+    send({ altKey: true, repeat: true });
+    expect(site).not.toHaveBeenCalled();
+    document.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyV", bubbles: true }));
+    unsub();
+    document.removeEventListener("keydown", site);
+  });
+
+  test("любая наша привязка на D забирает клавишу у сайта (внешний аудит №2, B03)", () => {
+    // Сброс подмены или выкрик на D переключали флаг ролей сайта.
+    const site = vi.fn();
+    document.addEventListener("keydown", site);
+    document.addEventListener("keyup", site);
+    const off = keyboard.register("KeyD", vi.fn());
+    document.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyD", bubbles: true }));
+    document.dispatchEvent(new KeyboardEvent("keyup", { code: "KeyD", bubbles: true }));
+    expect(site).not.toHaveBeenCalled();
+    off();
+    document.removeEventListener("keydown", site);
+    document.removeEventListener("keyup", site);
+  });
+
+  test("Enter и другие клавиши правки текста в поле ввода хоткеем не срабатывают (аудит №2, B04)", () => {
+    const handler = vi.fn();
+    const off = keyboard.register("Enter", handler);
+    const ta = document.createElement("textarea");
+    document.body.appendChild(ta);
+    ta.dispatchEvent(new KeyboardEvent("keydown", { code: "Enter", bubbles: true }));
+    expect(handler).not.toHaveBeenCalled();
+    document.body.dispatchEvent(new KeyboardEvent("keydown", { code: "Enter", bubbles: true }));
+    expect(handler, "вне поля ввода — работает").toHaveBeenCalledTimes(1);
+    ta.remove();
+    off();
+  });
+
   test("в поле ввода клавиша не срабатывает (KeyV — это «м» в русской раскладке)", () => {
     const on = vi.fn();
     const off = vi.fn();

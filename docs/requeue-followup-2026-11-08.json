@@ -1,0 +1,84 @@
+{
+  "date": "2026-11-08",
+  "version": "9.76.2",
+  "sources": {
+    "search": {
+      "url": "https://polemicagame.com/bundle/game-search.js",
+      "sha256": "0c567ff21de3c93d9d09ae8aab66071d24087ef24c4148f2cc079e7df40e027b"
+    },
+    "room": {
+      "url": "https://polemicagame.com/room/bundle/main.js",
+      "sha256": "b70cf743e9cf9dc6c02fe485f1c605bc5e24817cf999f9da4287c316104b536d",
+      "lastModified": "2026-11-06T10:58:34Z"
+    }
+  },
+  "confirmed": {
+    "endGame": "on_end_game reveals roles and marks stage end_game; game_statistics_saved retrieves stats and breakConnection; no explicit games/quit or exit_game in these handlers",
+    "autoRedirect": "on_stop_game reason.code=gameOver AND matching gameId -> breakConnection and /game-search after 2000ms",
+    "searchQuit": {
+      "method": "POST",
+      "endpoint": "newGameService.httpUrl + /api/games/quit",
+      "observedBase": "https://game.polemicagame.com",
+      "headers": {
+        "Content-Type": "application/json;charset=utf-8"
+      },
+      "body": [
+        "userId",
+        "authKey"
+      ],
+      "gameIdInBody": false,
+      "csrfInBody": false,
+      "successCriterion": "Response.ok only; JSON body is not read",
+      "clientAfterSuccess": "showQuitAskModal=false; isQuitingFromGame=false; storeChangeUserInGame(null)"
+    },
+    "roomExit": "room UI confirmation -> room socket exit_game, breakConnection and finishGame link; viewer only disconnect+finishGame",
+    "additionalExit": "search in_game handler may wire game-in-progress callback -> search socket quit_game; no server ACK contract shown for that exit"
+  },
+  "notEstablished": [
+    "that on_end_game or game_statistics_saved itself clears the server game affiliation",
+    "whether /api/games/quit has an is_alive/isWarning response property; the current client never parses its response JSON",
+    "a separate read-only API proving that quitting will not count as leaving a live match",
+    "authenticated preconnect acceptance while still in a finished room",
+    "actual server latency or priority advantage"
+  ],
+  "safeScopeForFastPath": "positive completed-game state in current game identity, explicit user click, preserved skip-confirm preference and cross-tab live-match check; preconnect alone sends no start/quit; await successful quit before start; handle in_game/unknown response and navigation races",
+  "implemented": {
+    "direct": [
+      "Preserve successful queue acknowledgement in the handoff; an unconfirmed in_game reply does not navigate back to the old room.",
+      "Record first send, latest send and retry number separately.",
+      "Read authenticated queue availability before preparing the socket, matching the normal site selection rules without starting a search."
+    ],
+    "postgame": [
+      "Revalidate room eligibility at the actual button click.",
+      "Ignore results of obsolete cross-tab live-match probes.",
+      "Stop for unrelated modals even while the expected confirmation is visible.",
+      "Refresh the live-match check before final confirmation after a long user wait."
+    ]
+  },
+  "optimizationDecision": "The fast HTTP-quit then prepared-socket start path for a positively finished match is recommended but not implemented in this patch. Existing viewer/eliminated/manual-confirm behavior remains distinct. Removing the 8-second settle without a confirmed exit would restore the known in_game/loader race.",
+  "validation": {
+    "productionTypecheck": "passed",
+    "testTypecheck": "passed",
+    "offline": {
+      "files": 172,
+      "passed": 3036,
+      "rolesModel": "passed",
+      "maxWorkers": 4
+    },
+    "builds": {
+      "chrome": "passed",
+      "firefox": "passed",
+      "browserBundleSmoke": "passed",
+      "firefoxLint": {
+        "errors": 0,
+        "warnings": 42
+      }
+    },
+    "independentReview": {
+      "verdict": "К РЕЛИЗУ ГОТОВО",
+      "targetedPassed": 259
+    },
+    "liveQueuePriority": "not measured",
+    "liveLatency": "not measured"
+  }
+}

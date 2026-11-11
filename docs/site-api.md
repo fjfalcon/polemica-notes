@@ -103,7 +103,16 @@ GET https://game.polemicagame.com/api/search
 `censorshipModesUpdate` умеет читать `players` и числом, и массивом
 (`Array.isArray(r) ? (count=r.length, participants=r) : count=r`), а
 `playersInSearch` разворачивает состояние в
-`{id, username, avatar_url, mmr, stream{link}, subscription}`. Наполняет
+`{id, username, avatar_url, mmr, stream{link}, subscription}` — но это
+МЁРТВЫЙ computed: список «Участники» очереди (внутри
+`label.p-play__profile-modes-item`) рисуется прямо из сырого
+`queues[mode].players` (`censorshipModesUpdate`: `participants = r`) и читает
+`n.avatar_url`, которого в сырых объектах нет (там, судя по маппингу,
+`avatar`). Отсюда у всех строк одна случайная заглушка; 22.10.2026 это чинит
+фича search-avatars, см. «Аватары» ниже. Без Pro `players` — число, и
+список не рисуется вовсе. Тот же компонент ParticipantsList стоит в
+скрытых поповерах витрины «Открытые лобби» — там `avatar_url` настоящий.
+Наполняет
 его событие `on_game_search_state`, которое приходит ПОСЛЕ
 `start_game_search` — то есть список видно, только пока сам стоишь в этой
 очереди. Анонимный `/api/search` отдаёт голые числа.
@@ -116,6 +125,21 @@ GET https://game.polemicagame.com/api/search
 `redirect_to_game`, `connection_refused`.
 Ещё REST того же сервиса: `POST /api/search/me` (`{userId, authKey}` —
 своё состояние поиска), `/api/games`, `/api/games/join`, `/api/games/quit`.
+
+## Аватары и карточка профиля (22.10.2026)
+
+- Картинка аватара: `/image/user-avatar?file_name=<id>/<файл>&size=100x`
+  (`getUserAvatarUrl` во всех бандлах). Без `size` — оригинал 1024×1024.
+  Без `file_name` — СЛУЧАЙНАЯ заглушка (каждый запрос свою), поэтому
+  одинаковый адрес у многих строк даёт одну картинку из кэша браузера.
+- Имя файла игрока — поле `avatar` в SSR-атрибуте `:profile-user='…'`
+  страницы `/profile/<id>` (рядом лежит `:current-user` — это сам
+  пользователь, не путать). Там же — телефон, ФИО и пр.: расширение берёт
+  ТОЛЬКО id, username и avatar (`parseProfileCard`).
+- 3D-аватары Ready Player Me (`rpm_avatar_id`, `rpm_preview_avatar` в той же
+  карточке) мертвы: `models.readyplayer.me` не отвечает, сайт убрал блок
+  `.avatarlvl__avatar` из шаблона профиля (CSS остался). Превью
+  `/images/avatar/3d-avatar-preview/<hash>.webp` сайт ещё отдаёт.
 
 ## Прочие маршруты из бандла (не проверялись, для справки)
 

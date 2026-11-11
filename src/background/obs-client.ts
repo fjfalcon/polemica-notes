@@ -8,6 +8,7 @@
 import { browser } from "@core/env";
 import { log } from "@core/log";
 import { broadcastToGameTabs, sendRuntime } from "@core/messaging";
+import { listMicInputs, withMicInput, type MicInputList } from "./obs-mic";
 import type { ObsConnectionState, ObsScene, ObsSceneData } from "@shared/types";
 
 interface ConnSettings {
@@ -78,6 +79,9 @@ async function sha256b64(text: string): Promise<string> {
   return btoa(bin);
 }
 
+/** storage.session: идёт ли эфир — переживает выгрузку SW, не переживает браузер. */
+export const OBS_STREAMING_KEY = "obs_streaming";
+
 export class ObsClient {
   private socket: WebSocket | null = null;
   private sessionId: string | null = null;
@@ -86,6 +90,16 @@ export class ObsClient {
   private pending = new Map<number, Pending>();
   private scenes: ObsScene[] = [];
   private currentScene: string | null = null;
+  /**
+   * Идёт ли трансляция в OBS (22.10.2026, «осуждёнка»: свои ники с пометкой
+   * прячутся на эфире). null — неизвестно. Обрыв связи посреди эфира
+   * оставляет true до нового ответа OBS: обрыв на трансляции не должен
+   * показать то, что на ней прятали (fail-closed). Значение дублируется в
+   * storage.session: модульная переменная умирает вместе с SW (§4.10), а
+   * новый SW без связи иначе сказал бы «неизвестно» посреди эфира.
+   */
+  private streaming: boolean | null = null;
+  private streamingLoaded: Promise<void> | null = null;
   private settings: ConnSettings | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /**
@@ -295,6 +309,15 @@ export class ObsClient {
   private teardownSocket(): void {
     this.isConnected = false;
     this.sessionId = null;
+    // Связи нет: «эфира нет» — уже не знание, а устаревшее значение (OBS
+    // перезапустили и вышли в эфир раньше переподключения — ревью, Б5).
+    // «Эфир идёт» остаётся: обрыв на трансляции ничего не открывает.
+    if (this.streaming === false) this.setStreaming(null);
+    // Сцена прошлой сессии — не правда новой: пока связи нет, Program могли
+    // сменить руками. Новая сессия узнаёт сцену только из своего
+    // GetSceneList/события — иначе свежий статус до ответа списка
+    // подтверждал старую NIGHT (внешний аудит №4, B03).
+    this.currentScene = null;
     this.socket = null;
     this.stopHeartbeat();
   }
@@ -403,6 +426,49 @@ export class ObsClient {
     this.attemptReconnect();
   }
 
+  /** Состояние эфира новой сессии: ответ старой сессии не перетирает свежее. */
+  private async refreshStreamStatus(): Promise<void> {
+    const session = this.sessionId;
+    try {
+      const res = await this.request<{ outputActive?: boolean }>("GetStreamStatus");
+      if (session !== this.sessionId) return;
+      this.setStreaming(res?.outputActive === true);
+    } catch (e) {
+      log.debug("obs", "stream status failed", e);
+    }
+  }
+
+  private setStreaming(value: boolean | null): void {
+    if (value === this.streaming) return;
+    this.streaming = value;
+    this.notifyAll("obs_stream_state", { streaming: value });
+    try {
+      void browser.storage.session?.set({ [OBS_STREAMING_KEY]: value });
+    } catch {
+      /* нет storage.session — живём памятью SW */
+    }
+  }
+
+  /** Эфир с учётом того, что помнит storage.session от прошлого SW. */
+  async getStreaming(): Promise<boolean | null> {
+    if (!this.streamingLoaded) {
+      this.streamingLoaded = (async () => {
+        try {
+          const got = (await browser.storage.session?.get(OBS_STREAMING_KEY)) as Record<string, unknown> | undefined;
+          const saved = got?.[OBS_STREAMING_KEY];
+          // Свежее знание текущего SW важнее сохранённого. Берём только «эфир
+          // идёт»: у нового SW связи с OBS нет, и «эфира нет» от прошлого SW
+          // знанием уже не является (ревью, Н8).
+          if (this.streaming === null && saved === true) this.streaming = true;
+        } catch {
+          /* нет storage.session */
+        }
+      })();
+    }
+    await this.streamingLoaded;
+    return this.streaming;
+  }
+
   disconnect(): void {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -413,6 +479,8 @@ export class ObsClient {
     this.currentScene = null;
     this.settings = null;
     this.reconnectAttempts = 0;
+    // Явное отключение (настройки, кнопка) — правды об эфире больше нет.
+    this.setStreaming(null);
     this.notifyAll("obs_disconnected");
     void this.saveConnectionState(false);
   }
@@ -462,7 +530,10 @@ export class ObsClient {
   private handleMessage(message: any): void {
     switch (message.op) {
       case 2: // Identified
-        void this.requestSceneList();
+        // Отказ запроса при отключении (disconnect посреди ожидания) — не
+        // ошибка: без catch он всплывал необработанным отклонением.
+        this.requestSceneList().catch((e) => log.debug("obs", "scene list failed", e));
+        void this.refreshStreamStatus();
         break;
       case 5: // Event
         this.handleEvent(message.d);
@@ -478,6 +549,7 @@ export class ObsClient {
   private handleEvent(eventData: any): void {
     switch (eventData.eventType) {
       case "CurrentProgramSceneChanged": {
+        this.sceneEventSeq++;
         const name = eventData.eventData.sceneName;
         // Эхо нашего же setCurrentScene: state уже применён и разослан —
         // второй notifyAll давал 2×tabs.query и 2N сообщений вкладкам на
@@ -487,6 +559,41 @@ export class ObsClient {
         this.currentScene = name;
         this.notifyAll("obs_scene_changed", this.currentScene);
         void this.saveConnectionState(true);
+        break;
+      }
+      case "InputMuteStateChanged": {
+        // «Микрофон: OBS и игра» (09.10.2026): мьют в OBS (его горячая
+        // клавиша, микшер) должен догнать микрофон игры — рассылаем вкладкам.
+        const d = eventData.eventData ?? {};
+        if (typeof d.inputName === "string" && typeof d.inputMuted === "boolean") {
+          this.notifyAll("obs_input_mute_changed", { inputName: d.inputName, inputMuted: d.inputMuted });
+        }
+        break;
+      }
+      case "InputNameChanged": {
+        // Переименовали источник, которым управляет «авто»: без этого вкладка
+        // узнавала события мьюта по старому имени и пропускала их до
+        // следующего переключения (ревью 02.11.2026, M3).
+        const d = eventData.eventData ?? {};
+        if (typeof d.oldInputName === "string" && typeof d.inputName === "string") {
+          this.notifyAll("obs_input_renamed", { oldInputName: d.oldInputName, inputName: d.inputName });
+        }
+        void sendRuntime({ type: "obs_event", eventType: "obs_inputs_changed", data: null });
+        break;
+      }
+      // Список источников нужен только попапу: вкладкам не рассылаем — смена
+      // коллекции сцен даёт пачку таких событий (контрольное ревью 02.11.2026).
+      case "InputCreated":
+      case "InputRemoved":
+        void sendRuntime({ type: "obs_event", eventType: "obs_inputs_changed", data: null });
+        break;
+      case "StreamStateChanged": {
+        // Эфир — всё, кроме «остановлен»: при RECONNECTING obs-websocket шлёт
+        // outputActive:false, а кадры с задержкой трансляции всё равно уйдут
+        // зрителям (ревью 22.10.2026, В1). STARTING — уже эфир.
+        const state = eventData.eventData?.outputState;
+        if (typeof state === "string") this.setStreaming(state !== "OBS_WEBSOCKET_OUTPUT_STOPPED");
+        else if (typeof eventData.eventData?.outputActive === "boolean") this.setStreaming(eventData.eventData.outputActive);
         break;
       }
       case "SceneListChanged":
@@ -506,7 +613,13 @@ export class ObsClient {
     this.pending.delete(data.requestId);
     clearTimeout(p.timer);
     if (data.requestStatus?.result) p.resolve(data.responseData);
-    else p.reject(new Error(data.requestStatus?.comment || "OBS request failed"));
+    else {
+      // Код статуса — в ошибке: «нет такого источника» (600) отличается от
+      // остальных отказов (obs-mic: фолбэк прежнего «Mic/Aux»).
+      const err = new Error(data.requestStatus?.comment || "OBS request failed") as Error & { code?: unknown };
+      err.code = data.requestStatus?.code;
+      p.reject(err);
+    }
   }
 
   private request<T = any>(requestType: string, requestData: object = {}): Promise<T> {
@@ -531,18 +644,33 @@ export class ObsClient {
   }
 
   async requestSceneList(): Promise<ObsScene[]> {
+    const seq = this.sceneEventSeq;
+    const session = this.sessionId;
     const res = await this.request<{ scenes: ObsScene[]; currentProgramSceneName: string }>(
       "GetSceneList",
     );
     this.scenes = res.scenes || [];
-    this.currentScene = res.currentProgramSceneName;
+    // Снимок списка старше пришедшего за время запроса события смены сцены
+    // (или другой сессии) — его текущая сцена устарела: старый список
+    // возвращал NIGHT поверх уже DAY (внешний аудит №4, C01).
+    if (seq === this.sceneEventSeq && session === this.sessionId) {
+      this.currentScene = res.currentProgramSceneName;
+    }
     this.notifyAll("obs_scenes_updated", this.sceneData());
     void this.saveConnectionState(true);
     return this.scenes;
   }
 
+  /** Счётчик событий смены сцены: ACK запроса не перетирает более новое (аудит №2). */
+  private sceneEventSeq = 0;
+
   async setCurrentScene(sceneName: string): Promise<boolean> {
+    const seq = this.sceneEventSeq;
     await this.request("SetCurrentProgramScene", { sceneName });
+    // За время запроса пришло событие смены сцены (эхо нашей или более новая
+    // ручная) — правду уже установило оно. Иначе запоздалый ACK возвращал
+    // ночь поверх уже дневной сцены (внешний аудит №2, условный п.1).
+    if (seq !== this.sceneEventSeq) return true;
     // Событие CurrentProgramSceneChanged обычно ОБГОНЯЕТ ответ запроса и уже
     // разослало смену — второй notifyAll давал 2×tabs.query на каждую фазу
     // (PERF26-17; adversarial №9: гард только в событии не дедупил типичный
@@ -553,6 +681,29 @@ export class ObsClient {
       void this.saveConnectionState(true);
     }
     return true;
+  }
+
+  // ── микрофон (09.10.2026) ──
+
+  /** Заглушён ли источник звука OBS. Нет такого источника — OBS отвечает ошибкой. */
+  async getInputMute(inputName: string): Promise<boolean> {
+    const res = await this.request<{ inputMuted?: boolean }>("GetInputMute", { inputName });
+    return res?.inputMuted === true;
+  }
+
+  /** Заглушить/включить источник звука OBS. Громкость не трогаем. */
+  async setInputMute(inputName: string, inputMuted: boolean): Promise<void> {
+    await this.request("SetInputMute", { inputName, inputMuted });
+  }
+
+  /** Микрофоны OBS для выбора в попапе (см. obs-mic.ts). */
+  listMicInputs(): Promise<MicInputList> {
+    return listMicInputs((t, d) => this.request(t, d));
+  }
+
+  /** Операция над источником микрофона: «авто» и прежний «Mic/Aux» — см. obs-mic.ts. */
+  withMicInput<T>(requested: string, op: (inputName: string) => Promise<T>): Promise<{ inputName: string; result: T }> {
+    return withMicInput((t, d) => this.request(t, d), requested, op);
   }
 
   // ── запись и буфер повторов (стримерский пакет 26.08.2026) ──
@@ -617,6 +768,7 @@ export class ObsClient {
       scenes: this.scenes,
       currentScene: this.currentScene,
       sessionId: this.sessionId,
+      streaming: this.streaming,
     };
   }
 

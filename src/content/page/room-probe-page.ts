@@ -12,9 +12,17 @@
  *
  * ПРИВАТНОСТЬ. Через комнатный сокет идёт всё: роли, ночные действия, чат.
  * Поэтому зонд ставится ТОЛЬКО при включённой настройке «Полный лог общения
- * с сервером» (по умолчанию выключена, гейт в room-probe-inject), пересылку
- * кадров отдельно разрешает content-скрипт командой, а отбор, вырезание
- * секретов и потолки — на стороне расширения (core/ws-log).
+ * с сервером» или «автовозврат в поиск» (обе по умолчанию выключены, гейт в
+ * room-probe-inject), пересылку кадров отдельно разрешает content-скрипт
+ * командой, а отбор, вырезание секретов и потолки — на стороне расширения
+ * (core/ws-log).
+ *
+ * Второй, узкий канал — СИГНАЛЫ ЖИЗНЕННОГО ЦИКЛА комнаты для автовозврата
+ * (9.78.0): только ИМЯ события из короткого белого списка, без тела кадра.
+ * Зачем: о роспуске сервер говорит `on_stop_game` мгновенно, а экран сайта
+ * появляется через 2 с, и до него автовозврату приходилось ждать (а без
+ * экрана — 12 с грейс-паузы). Ради этих секунд жалоба и писалась: игроки,
+ * которые в роспуске виноваты, вставали в поиск руками быстрее нас.
  *
  * НЕ ЛОМАТЬ САЙТ — второе ограничение, и оно диктует форму перехвата:
  *  - хукаем сеттер `onmessage`, а не `addEventListener`: последний
@@ -51,18 +59,44 @@ export const PROBE_MARK_ATTR = "data-pn-room-probe-ready";
    */
   let frameLogOn = false;
   const LOG_CMD = "pn-ws-log-cmd";
+  /** Сигналы жизненного цикла — тоже только по прямой просьбе расширения. */
+  let lifecycleOn = false;
+  const LIFECYCLE_CMD = "pn-room-events-cmd";
 
   window.addEventListener("message", (e: MessageEvent) => {
     if (e.source !== window) return;
     const d = e.data as { source?: string; on?: unknown };
-    if (d?.source !== LOG_CMD) return;
-    frameLogOn = d.on === true;
+    if (d?.source === LOG_CMD) frameLogOn = d.on === true;
+    else if (d?.source === LIFECYCLE_CMD) lifecycleOn = d.on === true;
   });
 
   const sendFrame = (dir: "in" | "out", raw: unknown): void => {
     if (!frameLogOn || typeof raw !== "string") return;
     try {
       window.postMessage({ source: "pn-room-probe", frame: { dir, raw } }, location.origin);
+    } catch {
+      /* страница уходит — сказать уже некому */
+    }
+  };
+
+  /**
+   * Белый список: роспуск (начало отсчёта и смерть комнаты) и старт стадии
+   * (матч пошёл — уводить нельзя). Ничего, что несёт роли или чат.
+   */
+  const LIFECYCLE_EVENTS = ["on_game_disbandment", "on_stop_game", "on_start_stage"];
+  /**
+   * Имя события socket.io: `42["имя",…]`, возможно с неймспейсом
+   * (`42/room,[…]`) и id подтверждения (`421[…]`). Смотрим только голову
+   * кадра: кадр состояния комнаты весит десятки килобайт.
+   */
+  const EVENT_NAME_RE = /^42(?:\/[^,[]*,)?\d*\["([a-z_]+)"/;
+
+  const sendLifecycle = (raw: unknown): void => {
+    if (!lifecycleOn || typeof raw !== "string") return;
+    const m = EVENT_NAME_RE.exec(raw.slice(0, 96));
+    if (!m || !LIFECYCLE_EVENTS.includes(m[1])) return;
+    try {
+      window.postMessage({ source: "pn-room-event", name: m[1] }, location.origin);
     } catch {
       /* страница уходит — сказать уже некому */
     }
@@ -95,6 +129,7 @@ export const PROBE_MARK_ATTR = "data-pn-room-probe-ready";
               const result = (fn as (ev: Event) => unknown).call(this, e);
               try {
                 sendFrame("in", (e as MessageEvent).data);
+                sendLifecycle((e as MessageEvent).data);
               } catch {
                 /* копия кадра не удалась — игре это безразлично */
               }

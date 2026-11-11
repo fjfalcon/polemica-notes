@@ -22,6 +22,13 @@
 
 /** Зеркало настройки `ws_full_log_enabled` (пишет content.js). */
 export const WS_LOG_FLAG_KEY = "pn_ws_log";
+/**
+ * Зеркало настройки `requeue_after_lobby_fail_enabled` (пишет content.js).
+ * Автовозврату зонд нужен ради сигнала `on_stop_game`: сервер объявляет
+ * роспуск мгновенно, а экран сайта — через 2 секунды (9.78.0). Тела кадров
+ * по этому флагу наружу не уходят — только имена событий из белого списка.
+ */
+export const REQUEUE_FLAG_KEY = "pn_requeue_fast";
 
 /**
  * Ключ прежнего зеркала — фичи «кто поставил паузу». Её убрали (сервер
@@ -32,11 +39,11 @@ export const LEGACY_PROBE_FLAG_KEY = "pn_room_probe";
 
 /**
  * Читать флаг без падений: приватный режим запрещает localStorage целиком.
- * Ключа нет — настройка выключена (её дефолт), зонд не ставим.
+ * Ключей нет — обе настройки выключены (их дефолт), зонд не ставим.
  */
 export function probeAllowed(store: Pick<Storage, "getItem"> | null): boolean {
   try {
-    return store?.getItem(WS_LOG_FLAG_KEY) === "1";
+    return store?.getItem(WS_LOG_FLAG_KEY) === "1" || store?.getItem(REQUEUE_FLAG_KEY) === "1";
   } catch {
     return false;
   }

@@ -28,6 +28,10 @@
     "roomCss": {
       "url": "https://polemicagame.com/room/bundle/style.css",
       "note": "sha не пригвождаем: стили меняются чаще кода, следим за смыслом правил"
+    },
+    "ratingPage": {
+      "url": "https://polemicagame.com/bundle/rating.js",
+      "note": "sha не пригвождаем: семантику страницы лидеров (скрыть рейтинг) сторожат пробы ratingPageProbes"
     }
   }
 }

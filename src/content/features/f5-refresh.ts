@@ -8,6 +8,7 @@
  * чтобы не ломать нативное поведение браузера.
  */
 import { log } from "@core/log";
+import { keyboard } from "@core/keyboard";
 import type { Feature } from "@core/feature";
 
 let handler: ((e: KeyboardEvent) => void) | null = null;
@@ -19,6 +20,12 @@ export const f5RefreshFeature: Feature = {
     handler = (e: KeyboardEvent) => {
       if (e.code !== "F5" && e.key !== "F5") return;
       if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return; // жёсткая перезагрузка — не мешаем
+      // F5 назначен нашим хоткеем (например «подсмотреть роли»): клавиша
+      // его. stopPropagation роутера соседний listener на том же window не
+      // останавливает, а порядок регистрации не гарантирован — без этой
+      // проверки удержание F5 перезагружало страницу, и отпускание уже
+      // некому было возвращать скрытие (внешний аудит №4, B02).
+      if (e.defaultPrevented || keyboard.isBound(e.code || "F5")) return;
       // Блокируем обработчик сайта и делаем обычное обновление.
       e.preventDefault();
       e.stopImmediatePropagation();

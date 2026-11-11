@@ -8,6 +8,12 @@ export type NoteFrameWidth = "thin" | "medium" | "thick";
 export interface Settings {
   /** Мастер-выключатель: false гасит ВСЕ функции расширения разом. */
   extension_enabled: boolean;
+  /**
+   * Режим «Скрыть рейтинг» (28.10.2026): ничей MMR, его ± и места в
+   * рейтингах не видны нигде — ни у сайта, ни в наших окнах. Победы,
+   * поражения и баллы матча остаются.
+   */
+  hide_rating: boolean;
   // Статистика игроков
   show_mmr: boolean;
   show_games: boolean;
@@ -20,6 +26,25 @@ export interface Settings {
   session_stats_enabled: boolean;
   /** График «Путь MMR» на своём профиле. */
   profile_mmr_chart_enabled: boolean;
+  /** Большое фото игрока в левой карточке профиля (на месте 3D-аватара). */
+  profile_photo_enabled: boolean;
+  /** Настоящие аватарки в списке «Участники» страницы поиска. */
+  search_avatars_enabled: boolean;
+  /** Картинка в карточке профиля на странице поиска (на месте 3D-аватара). */
+  search_card_avatar_enabled: boolean;
+  /**
+   * Режим «Тильт» целиком: красная кнопка в шапке попапа, вкладка «Тильт» с
+   * упражнениями и кнопка «У меня тильт» на сайте. Выключено — ничего из этого.
+   */
+  tilt_mode_enabled: boolean;
+  /** Кнопка «У меня тильт» в карточке на странице поиска (внутри режима «Тильт»). */
+  tilt_button_enabled: boolean;
+  /**
+   * Чья картинка «моя»: "site" — фото с сайта, "custom" — своя картинка
+   * (pn_own_avatar в storage.local). Действует в карточке поиска и большим
+   * фото СВОЕГО профиля.
+   */
+  own_avatar_source: string;
   /** Автозапись игр в OBS: вход в комнату — StartRecord, выход — StopRecord. */
   obs_auto_record_enabled: boolean;
   /** «Клип момента»: SaveReplayBuffer по клавише/кнопке. */
@@ -42,13 +67,28 @@ export interface Settings {
   disable_webcam_clicks: boolean;
   enable_role_faker: boolean;
   auto_hide_roles_enabled: boolean;
+  /** Конец матча (победа мафии/мирных) открывает стол: роли шерифа и чёрных видны. */
+  roles_reveal_on_game_end: boolean;
   role_phase_auto_switch_enabled: boolean;
   /** Режим поворота камер: клик по игроку переворачивает его видео на 180°. */
   camera_rotate_enabled: boolean;
   /** Кнопка локального мьюта игрока (глушит его звук только у меня). */
   player_mute_enabled: boolean;
+  /** Громкость игрока с ползунка сайта запоминается и возвращается в следующих играх. */
+  player_volume_memory_enabled: boolean;
   /** Цветные ники игроков (цвет задаётся в заметке; палитра — как у рамок). */
   nick_colors_enabled: boolean;
+  /**
+   * Свои ники (из заметки) на страницах сайта: в игре — вместо ника сайта,
+   * в «Участниках», профиле, разборе, «Кто в очереди» и «Сводке стола» —
+   * «Ник (свой)». Выключатель — для эфира: прозвища пропадают со страниц
+   * (в окне заметки, «Заметках и цветах» и попапе остаются).
+   */
+  nick_aliases_enabled: boolean;
+  /** Свои ники во время эфира OBS (выключено — на трансляции не видно ни одного). */
+  nick_aliases_on_stream: boolean;
+  /** На эфире прятать свои ники с пометкой «Осуждёнка» (остальные видны). */
+  nick_aliases_hide_condemned_on_stream: boolean;
   /** Толщина цветной рамки-метки вокруг камеры игрока. */
   note_frame_width: NoteFrameWidth;
   /** Кнопки на плитке игрока — можно убрать любую из ряда. */
@@ -68,6 +108,11 @@ export interface Settings {
   note_indicator_enabled: boolean;
   /** Квадратик-метка роли у игрока (мой read, сбрасывается за игру). */
   role_marker_enabled: boolean;
+  /**
+   * Панель вероятностей ролей: точный пересчёт P(место чёрное) по составу
+   * стола и уже раскрытой информации + проверенные поправки из research.
+   */
+  roles_predictor_enabled: boolean;
   /** В метке — иконка роли из спрайта сайта; false — прежние «Мир/Шер/Дон». */
   role_marker_icons_enabled: boolean;
   /** Управлять раскладкой кнопок действий в игре. */
@@ -76,6 +121,19 @@ export interface Settings {
   ctl_pos_finish: string;
   ctl_pos_outcry: string;
   ctl_pos_guess: string;
+  /**
+   * Подтверждение ППК (04.11.2026): перед запуском ППК и голосом «Да» за ППК
+   * — короткое напоминание по правилам и практике модерации.
+   */
+  ppk_confirm_enabled: boolean;
+  /** Микрофон: один клик/клавиша переключает OBS-источник и микрофон игры. */
+  mic_sync_enabled: boolean;
+  /** Имя источника микрофона в микшере OBS; "" — главный микрофон OBS (авто). */
+  mic_sync_input: string;
+  /** Клавиша переключения (KeyboardEvent.code); "" — только клик по плашке. */
+  mic_sync_hotkey: string;
+  /** Окно «Сводка стола» в игровой комнате (статистика игроков за столом). */
+  table_summary_enabled: boolean;
   /** Автоматически нажимать «Готов» после захода в лобби. */
   auto_ready_enabled: boolean;
   /** Возвращать F5 нормальное обновление страницы (сайт перехватывает его под настройки). */
@@ -90,8 +148,31 @@ export interface Settings {
   hotkey_role_peek: string;
   /** Выкрикнуть с клавиши. Выключено по умолчанию: действие расходуемое. */
   outcry_hotkey_enabled: boolean;
+  /** «Завершите речь» с клавиши (своя речь заканчивается досрочно). */
+  finish_speech_hotkey_enabled: boolean;
+  finish_speech_hotkey_code: string;
+  /** ЛХ по клавишам: панель режима во время лучшего хода, цифры — игроки. */
+  player_action_guess: boolean;
+  /** Клавиши режимов ЛХ: пистолет (мафия), сердце (мирный), корона (главный). */
+  guess_key_maf: string;
+  guess_key_civ: string;
+  guess_key_vice: string;
   /** Клавиша выкрика (дефолт KeyC). */
   outcry_hotkey_code: string;
+  /**
+   * Действия по цифрам (04.11.2026): клавиша места жмёт кнопку действия сайта
+   * на плитке игрока. Выключено по умолчанию: выстрел и голос не отменить.
+   */
+  player_action_keys_enabled: boolean;
+  /** Какие действия клавиша нажимает: выставление, голос, выстрел, проверка. */
+  player_action_nominate: boolean;
+  player_action_vote: boolean;
+  player_action_shot: boolean;
+  player_action_check: boolean;
+  /** Клавиши игроков 1…10 через запятую (KeyboardEvent.code); "" — места без клавиши. */
+  player_action_keys: string;
+  /** Нумпад тоже: NumpadN — игрок N, Numpad0 — игрок 10. */
+  player_action_numpad: boolean;
   /** Писать клавишу прямо на кнопке: «Выкрикнуть (C)», «Пауза (F8)». */
   hotkey_hints_enabled: boolean;
   /** Кнопка «Перезагрузить камеры» в игре (видео пересоздаётся без F5). */
@@ -148,6 +229,8 @@ export interface Settings {
   obs_auto_mode_enabled: boolean;
   obs_day_scene: string;
   obs_night_scene: string;
+  /** Выбыл из матча — ночью эфир остаётся на дневной сцене (роли спрятаны). */
+  obs_day_scene_when_out: boolean;
   // Twitch
   twitch_chat_enabled: boolean;
   twitch_channel_name: string;
@@ -192,7 +275,10 @@ export interface ObsCommandMsg {
     | "record_stop"
     | "replay_save"
     | "replay_setup"
-    | "room_entered";
+    | "room_entered"
+    | "get_input_mute"
+    | "set_input_mute"
+    | "get_mic_inputs";
   data?: {
     url?: string;
     password?: string;
@@ -202,6 +288,10 @@ export interface ObsCommandMsg {
     /** true — сцену переключает САМ пользователь (клик в панели): такая
      *  команда всегда проходит и забирает владение автосценой этой вкладке. */
     manual?: boolean;
+    /** get/set_input_mute: имя источника звука в микшере OBS; пусто — главный микрофон. */
+    inputName?: string;
+    /** set_input_mute: заглушить (true) или включить (false). */
+    muted?: boolean;
   };
 }
 
@@ -212,7 +302,15 @@ export interface ObsEventMsg {
     | "obs_scenes_updated"
     | "obs_scene_changed"
     | "obs_disconnected"
-    | "obs_connected";
+    | "obs_connected"
+    /** Трансляция в OBS началась/закончилась: data = { streaming: boolean | null }. */
+    | "obs_stream_state"
+    /** Мьют источника звука: data = { inputName, inputMuted }. */
+    | "obs_input_mute_changed"
+    /** Источник переименован: data = { oldInputName, inputName }. */
+    | "obs_input_renamed"
+    /** Источник добавлен или удалён — список микрофонов в попапе устарел. */
+    | "obs_inputs_changed";
   data?: unknown;
 }
 
@@ -344,8 +442,10 @@ export interface GetContentVersionMsg {
  *
  * Спрашиваем саму вкладку, а не браузер: `tabs.get` успешен и для выгруженной
  * вкладки, и для той, чей content-скрипт осиротел после обновления расширения,
- * а `tab.url` без разрешения `tabs` приходит только для страниц сайта. Молчание
- * в ответ = владение свободно (ревью 02.08.2026).
+ * а `tab.url` без разрешения `tabs` приходит только для страниц сайта (ревью
+ * 02.08.2026). Отказ канала = вкладки нет, владение свободно; молчание до таймаута или
+ * ответ без булева `owning` = ответа нет, решает TTL записи владения
+ * (scene-owner.ts).
  */
 export interface ObsSceneOwnerPingMsg {
   type: "obs_scene_owner_ping";

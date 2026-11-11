@@ -228,6 +228,18 @@ describe("запись через координатора", () => {
     expect("u:42" in h.saved).toBe(false);
   });
 
+  test("свой ник — содержимое: стёртый текст и снятый цвет запись не удаляют", async () => {
+    const start = { "u:42": { text: "было", timestamp: 1, nickColor: "#ff0000", alias: "Анечка" } };
+    h.loadResult = { notes: start, customTags: [], loadFailed: false };
+    h.saved = { ...start };
+    const m = make({ аня: 42 });
+    await m.load();
+    expect(await m.setNoteText("u:42", "")).toBe(true);
+    expect(await m.setNickColor("u:42", "")).toBe(true);
+    expect((h.saved["u:42"] as { alias?: string }).alias).toBe("Анечка");
+    expect(m.playerEntries().map((e) => e.alias), "запись видна в «Заметках и цветах»").toEqual(["Анечка"]);
+  });
+
   test("успех БЕЗ счётчиков помечается в журнале: полнота не подтверждена", async () => {
     h.coordinator = () => ({ ok: true, notes: {} });
     const m = make();

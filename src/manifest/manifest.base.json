@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Polemica Notes",
-  "version": "9.65.2",
-  "description": "Заметки об игроках, статистика, цветные ники и удобные мелочи для Polemica Game: пауза, мьют, разбор матчей.",
+  "version": "9.81.0",
+  "description": "Неофициальное расширение для polemicagame.com: заметки об игроках, статистика, цветные ники, пауза, мьют и разбор матчей.",
   "permissions": [
     "storage",
     "alarms",
@@ -12,7 +12,7 @@
     "https://*.polemicagame.com/*"
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://api.github.com ws://localhost:* wss://localhost:*"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://api.github.com https://polemicagame.com https://game.polemicagame.com ws://localhost:* wss://localhost:*"
   },
   "icons": {
     "16": "icon16.png",
@@ -24,7 +24,9 @@
       "resources": [
         "conn-diag-page.js",
         "room-probe-page.js",
-        "media-probe-page.js"
+        "media-probe-page.js",
+        "direct-requeue-page.js",
+        "player-volume-page.js"
       ],
       "matches": [
         "https://*.polemicagame.com/*"
@@ -38,6 +40,18 @@
       ],
       "js": [
         "room-probe-inject.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://*.polemicagame.com/*"
+      ],
+      "js": [
+        "rating-flag-early.js"
+      ],
+      "css": [
+        "rating-hide.css"
       ],
       "run_at": "document_start"
     },

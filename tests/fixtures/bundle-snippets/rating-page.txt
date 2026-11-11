@@ -1,0 +1,14 @@
+// bundle/rating.js (05.11.2026): колонки, таблица, ячейка MMR, карточка, класс значка
+ey:"place",title:"Место"},{key:"name",title:"Игрок"},{key:"points",title:"Мафпоинты"},{key:"total_games",title:"Игры"}]:[{key:"position",title:"Место"},{key:"name",title:"Игрок"},{key:"mmr",title:"MMR"},{key:"total_games",title:"Игры"}]
+e("div",{staticClass:"p-rating-table__inner"},[e("div",{staticClass:"p-rating-table__head"},t._l(t.columns,(function(n,r){return e("span",{key:"rating-table-header-"+n.key+r,staticClass:"p-rating-table__cell"},[t._v("\n                "+t._s(n.title)+"\n              ")])})),0),t._v(" "),t._l(t.readyList,(function(n,r){return e("div",{key:"rating-table-row-"+n.user_id,staticClass:"p-rating-table__row"},[n.position?e("span",{staticClass:"p-rating-table__cell p-rating-table__place"},[t._v(t._s(n.position))]):n.place?e("span",{staticClass:"p-rating-table__cell p-rating-table__place"},[t._v(t._s(t.getPlace(r)))]):t._e(),t.
+t.showMmrColumn?e("span",{staticClass:"p-rating-table__cell p-rating-table__amount"},[e("UserMmrLabel",{attrs:{containerClass:"p-rating-table__mmr-block",iconCLass:"p-rating-table__mmr-block-icon",textClass:"p-rating-table__mmr-block-text",value:Number(n.mmr?n.mmr:0),"is-gradient":!0}})],1):t._e(),t._
+t.ratingInfo.mmr?e("UserMmrLabel",{attrs:{containerClass:"p-rating-person__info-stat-mmr",iconCLass:"p-rating-person__info-stat-mmr-icon",textClass:"p-ra
+e("div",{staticClass:"p-rating-person__statistic"},t._l(t.ratingInfo,(function(n){return e("div",{staticClass:"p-rating-person__statistic-item"},[e("span",{staticClass:"p-rating-person__statistic-name"},[t._v(t._s(n.label))]),t._v(" "),e("span",{staticClass:"p-rating-
+contClassname:function(){return"mmrLabel ".concat(this.containerClass)}
+var t=this,e=t._self._c;return e("div",{directives:[{name:"show",rawName:"v-show",value:t.show,expression:"show"}],class:t.contClassname}
+"Мафпоинты",value:this.processPoints(this.rows[e].points)}}:{place:{label:"Место",value:e+1},mmr:{label:"MMR",value:this.toLocaleNumber(n.mmr)}}
+staticClass:"p-rating-main"},[t.userRatingInfo?e("UserBlock",{attrs:{user:t.user,ratingInfo:t.userRatingInfo}}):t._e(),t._v(" "),e("div",{staticClass:"p-rating__tablecont"},[e("div",{staticClass:"p-rating__table"},[e("div",{staticClass:"p-ratingList__container
+e("button",{staticClass:"p-rating__filterbtns-btn",class:{"p-rating__filterbtns-btn-active":t.isFilterAsPlayer},attrs:{disabled:t.tabsDisabled}
+on:{ratingLoading:t.changeTabsDisabled}
+t.loadRating();case 16:n=e.sent;case 17:t.rows=n,t.$emit("ratingLoading",!1)
+columns:function(){return this.tab===Op?[{key:"place",title:"Место"},{key:"name",title:"Игрок"},{key:"points",title:"Мафпоинты"},{key:"total_games",title:"Игры"}]

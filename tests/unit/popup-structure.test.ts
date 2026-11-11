@@ -53,9 +53,12 @@ const NO_CONTROL = new Set([
   "obs_night_scene",
   "twitch_channel",
   "pause_hotkey_code",
+  "mic_sync_hotkey",
   "hotkey_role_fake",
   "hotkey_role_reset",
   "hotkey_role_hide",
+  // Десять кнопок захвата player_action_key_1…10, значение — одной строкой.
+  "player_action_keys",
   "note_frame_width",
   "match_stats_view",
   "stats_button_theme",
@@ -69,7 +72,8 @@ describe("вкладки и панели согласованы", () => {
     const panels = Array.from(d.querySelectorAll(".panel")).map((el) =>
       el.getAttribute("data-panel"),
     );
-    expect(tabs.filter(Boolean).sort()).toEqual(panels.filter(Boolean).sort());
+    // «Тильт» — панель без вкладки: её открывает красная кнопка в шапке.
+    expect(tabs.filter(Boolean).sort()).toEqual(panels.filter((p) => p && p !== "tilt").sort());
     expect(tabs, "вкладка «Иконки» появилась после перекройки меню").toContain("icons");
   });
 
@@ -153,6 +157,9 @@ describe("ни одна настройка не потерялась при пе
       // сцен означает «OBS не подключён», и сохранённый выбор надо беречь.
       obs_day_scene: /obsDayScene\.addEventListener\("change"/,
       obs_night_scene: /obsNightScene\.addEventListener\("change"/,
+      // Источник микрофона (9.75.0): список приходит из OBS, правда — в
+      // knownMicInput, как у сцен.
+      mic_sync_input: /micInputSel\.addEventListener\("change"/,
     };
     const missing = controls.filter((id) => {
       if (subscribed.has(id)) return false;
@@ -176,6 +183,24 @@ describe("ни одна настройка не потерялась при пе
   });
 });
 
+describe("режим «Тильт» отключается целиком", () => {
+  test("выключатель режима — во «Ещё» (вкладка «Тильт» при выключенном режиме скрыта)", () => {
+    const d = doc();
+    expect(d.querySelector('.panel[data-panel="misc"] #tilt_mode_enabled')).not.toBeNull();
+    // Девятой вкладке в 360px нет места: «Тильт» открывает только кнопка шапки.
+    expect(d.querySelector('.tab[data-tab="tilt"]')).toBeNull();
+    expect(d.querySelector('.panel[data-panel="tilt"]')).not.toBeNull();
+    expect(d.querySelector('.panel[data-panel="tilt"] #tilt_button_enabled')).not.toBeNull();
+    expect(d.querySelector(".hdr #tilt_open")).not.toBeNull();
+  });
+
+  test("попап прячет кнопку и вкладку по режиму и уводит с открытой вкладки", () => {
+    expect(popupSource).toContain("function syncTiltMode()");
+    expect(popupSource).toMatch(/if \("tilt_mode_enabled" in patch\) syncTiltMode\(\)/);
+    expect(popupSource).toContain('$("tilt_mode_enabled")?.addEventListener("change", syncTiltMode)');
+  });
+});
+
 describe("вкладка «Иконки» собрала всё про плитку игрока", () => {
   test("настройки плитки живут в одной вкладке, а не разбросаны", () => {
     const d = doc();
@@ -190,6 +215,7 @@ describe("вкладка «Иконки» собрала всё про плит�
       "btn_hide_video_enabled",
       "camera_rotate_enabled",
       "player_mute_enabled",
+      "player_volume_memory_enabled",
       "role_marker_enabled",
       "nick_colors_enabled",
       "note_frame_width",
