@@ -31,6 +31,7 @@ import {
   hotkeyHintsFeature,
   keyHintLabel,
 } from "@content/features/hotkey-hints";
+import { playerActionKeysFeature } from "@content/features/player-action-keys";
 import type { Settings } from "@shared/types";
 
 const ctx = (over: Record<string, unknown> = {}) =>
@@ -180,4 +181,64 @@ test("меню закрыто — по документу не ходим", () =
   expect(scanned, "внутрь пунктов меню лезем только когда меню открыто").toHaveLength(0);
   onElement.mockRestore();
   onDocument.mockRestore();
+});
+
+describe("действия по цифрам (04.11.2026)", () => {
+  // Подпись — по фактической привязке фичи: фича включается тем же контекстом.
+  const enableBoth = (c: never) => {
+    playerActionKeysFeature.enable(c);
+    hotkeyHintsFeature.enable(c);
+  };
+  afterEach(() => playerActionKeysFeature.disable());
+
+  /** Плитка с кнопкой действия, как в бандле комнаты. */
+  function actionTile(seat: number, label: string): void {
+    document.body.insertAdjacentHTML(
+      "beforeend",
+      `<div class="player desktop-version"><div class="player-number player-${seat - 1}">${seat}</div>` +
+        `<div class="player__actions"><div class="player-action"><div class="player-action__content">` +
+        `<img src="x.svg"><span id="a${seat}">${label}</span></div></div></div></div>`,
+    );
+  }
+  const keysOn = (over: Record<string, unknown> = {}) =>
+    ctx({
+      player_action_keys_enabled: true,
+      player_action_vote: true,
+      player_action_shot: false,
+      player_action_keys: "Digit1,Digit2,Digit3,Digit4,Digit5,Digit6,Digit7,Digit8,Digit9,Digit0",
+      player_action_numpad: true,
+      ...over,
+    });
+
+  test("подпись кнопки получает клавишу своего места; десятый — 0", () => {
+    actionTile(3, "Проголосовать за этого игрока");
+    actionTile(10, "Проголосовать за этого игрока");
+    enableBoth(keysOn());
+    expect(hintOf("#a3")).toBe("3");
+    expect(hintOf("#a10")).toBe("0");
+  });
+
+  test("переназначил — подпись новой клавишей; место без клавиши — нумпадом", () => {
+    actionTile(1, "Проголосовать за этого игрока");
+    actionTile(2, "Проголосовать за этого игрока");
+    enableBoth(keysOn({ player_action_keys: "KeyQ,,Digit3" }));
+    expect(hintOf("#a1")).toBe("Q");
+    expect(hintOf("#a2")).toBe("Num 2");
+  });
+
+  test("действие выключено галочкой или фича выключена — клавиша не обещается", () => {
+    actionTile(2, "Сделать выстрел");
+    actionTile(4, "Проголосовать за этого игрока");
+    enableBoth(keysOn());
+    expect(hintOf("#a2"), "выстрел выключен").toBeNull();
+    expect(hintOf("#a4")).toBe("4");
+    hotkeyHintsFeature.update?.(keysOn({ player_action_keys_enabled: false }));
+    expect(hintOf("#a4")).toBeNull();
+  });
+
+  test("лучший ход не подписываем", () => {
+    actionTile(5, "Мафия");
+    enableBoth(keysOn({ player_action_nominate: true, player_action_check: true }));
+    expect(hintOf("#a5")).toBeNull();
+  });
 });

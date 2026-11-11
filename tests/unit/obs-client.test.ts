@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const store = vi.hoisted(() => ({ data: {} as Record<string, unknown> }));
+const store = vi.hoisted(() => ({ data: {} as Record<string, unknown>, session: {} as Record<string, unknown> }));
 
 vi.mock("@core/env", () => ({
   browser: {
@@ -15,6 +15,12 @@ vi.mock("@core/env", () => ({
         }),
         set: vi.fn(async (patch: Record<string, unknown>) => {
           Object.assign(store.data, patch);
+        }),
+      },
+      session: {
+        get: vi.fn(async (key: string) => (key in store.session ? { [key]: store.session[key] } : {})),
+        set: vi.fn(async (patch: Record<string, unknown>) => {
+          Object.assign(store.session, patch);
         }),
       },
     },
@@ -107,6 +113,7 @@ function infoLines(): string {
 
 beforeEach(() => {
   store.data = {};
+  store.session = {};
   FakeSocket.last = null;
   FakeSocket.created = 0;
   FakeSocket.autoRespondAll = false;
@@ -293,5 +300,158 @@ describe("бюджет проб и записей в connected-состояни�
     FakeSocket.last!.autoRespond = false;
     await vi.advanceTimersByTimeAsync(41_000);
     expect(client.hasFreshHeartbeat()).toBe(false);
+  });
+});
+
+describe("состояние эфира (осуждёнка, 22.10.2026)", () => {
+  const reply = (requestType: string, responseData: unknown) => {
+    const req = FakeSocket.last!.sent
+      .map((s) => JSON.parse(s) as { op: number; d?: { requestType?: string; requestId?: number } })
+      .filter((m) => m.op === 6 && m.d?.requestType === requestType)
+      .pop();
+    FakeSocket.last!.onmessage?.({
+      data: JSON.stringify({ op: 7, d: { requestId: req?.d?.requestId, requestStatus: { result: true }, responseData } }),
+    });
+  };
+  const event = (eventType: string, eventData: unknown) =>
+    FakeSocket.last!.onmessage?.({ data: JSON.stringify({ op: 5, d: { eventType, eventData } }) });
+  const streamEvents = async () => {
+    const { broadcastToGameTabs } = await import("@core/messaging");
+    return vi
+      .mocked(broadcastToGameTabs)
+      .mock.calls.map((c) => c[0] as { eventType?: string; data?: { streaming?: unknown } })
+      .filter((m) => m.eventType === "obs_stream_state")
+      .map((m) => m.data?.streaming);
+  };
+
+  test("после Identified спрашивает GetStreamStatus и сообщает вкладкам", async () => {
+    const { broadcastToGameTabs } = await import("@core/messaging");
+    vi.mocked(broadcastToGameTabs).mockClear();
+    const client = new ObsClient();
+    await connectOk(client);
+    reply("GetStreamStatus", { outputActive: true });
+    await Promise.resolve();
+    expect(client.getStatus().streaming).toBe(true);
+    expect(await streamEvents()).toEqual([true]);
+  });
+
+  test("событие StreamStateChanged переключает эфир", async () => {
+    const client = new ObsClient();
+    await connectOk(client);
+    reply("GetStreamStatus", { outputActive: false });
+    await Promise.resolve();
+    event("StreamStateChanged", { outputActive: true, outputState: "OBS_WEBSOCKET_OUTPUT_STARTED" });
+    expect(client.getStatus().streaming).toBe(true);
+    event("StreamStateChanged", { outputActive: false, outputState: "OBS_WEBSOCKET_OUTPUT_STOPPED" });
+    expect(client.getStatus().streaming).toBe(false);
+  });
+
+  test("обрыв связи посреди эфира НЕ сбрасывает эфир (fail-closed); явное отключение — сбрасывает", async () => {
+    const client = new ObsClient();
+    await connectOk(client);
+    reply("GetStreamStatus", { outputActive: true });
+    await Promise.resolve();
+    FakeSocket.last!.close(1006, "network");
+    expect(client.getStatus().streaming, "осуждёнка не всплывает на обрыве").toBe(true);
+    client.disconnect();
+    expect(client.getStatus().streaming).toBeNull();
+  });
+});
+
+describe("эфир: переподключение и выгрузка SW (ревью 22.10.2026)", () => {
+  const event = (eventType: string, eventData: unknown) =>
+    FakeSocket.last!.onmessage?.({ data: JSON.stringify({ op: 5, d: { eventType, eventData } }) });
+
+  test("RECONNECTING (outputActive:false) — всё ещё эфир; эфир кончается только на STOPPED", async () => {
+    const client = new ObsClient();
+    await connectOk(client);
+    event("StreamStateChanged", { outputActive: true, outputState: "OBS_WEBSOCKET_OUTPUT_STARTED" });
+    event("StreamStateChanged", { outputActive: false, outputState: "OBS_WEBSOCKET_OUTPUT_RECONNECTING" });
+    expect(client.getStatus().streaming, "задержка трансляции унесёт эти кадры").toBe(true);
+    event("StreamStateChanged", { outputActive: false, outputState: "OBS_WEBSOCKET_OUTPUT_STARTING" });
+    expect(client.getStatus().streaming).toBe(true);
+    event("StreamStateChanged", { outputActive: false, outputState: "OBS_WEBSOCKET_OUTPUT_STOPPED" });
+    expect(client.getStatus().streaming).toBe(false);
+  });
+
+  test("эфир сохраняется в storage.session, новый SW без связи его помнит", async () => {
+    const client = new ObsClient();
+    await connectOk(client);
+    event("StreamStateChanged", { outputActive: true, outputState: "OBS_WEBSOCKET_OUTPUT_STARTED" });
+    await Promise.resolve();
+    expect(store.session.obs_streaming).toBe(true);
+    const fresh = new ObsClient(); // SW выгрузился и поднялся заново
+    expect(await fresh.getStreaming()).toBe(true);
+  });
+});
+
+describe("эфир при обрыве связи (контрольный раунд, Б5)", () => {
+  const event = (eventType: string, eventData: unknown) =>
+    FakeSocket.last!.onmessage?.({ data: JSON.stringify({ op: 5, d: { eventType, eventData } }) });
+
+  test("обрыв при «эфира нет» — «неизвестно», и новый SW тоже не скажет «нет»", async () => {
+    const client = new ObsClient();
+    await connectOk(client);
+    event("StreamStateChanged", { outputActive: false, outputState: "OBS_WEBSOCKET_OUTPUT_STOPPED" });
+    expect(client.getStatus().streaming).toBe(false);
+    FakeSocket.last!.close(1006, "OBS закрыли");
+    expect(client.getStatus().streaming, "OBS могли перезапустить и выйти в эфир").toBeNull();
+    await Promise.resolve();
+    expect(store.session.obs_streaming).toBeNull();
+    expect(await new ObsClient().getStreaming()).toBeNull();
+  });
+});
+
+describe("новый SW и сохранённое «эфира нет» (Н8)", () => {
+  test("из storage.session берётся только «эфир идёт»", async () => {
+    store.session.obs_streaming = false;
+    expect(await new ObsClient().getStreaming(), "у нового SW связи нет — «нет» не знание").toBeNull();
+    store.session.obs_streaming = true;
+    expect(await new ObsClient().getStreaming()).toBe(true);
+  });
+});
+
+describe("микрофон из OBS (9.75.0)", () => {
+  const requests = () =>
+    FakeSocket.last!.sent
+      .map((s) => JSON.parse(s) as { op: number; d?: { requestType?: string; requestId?: number; requestData?: { inputName?: string } } })
+      .filter((m) => m.op === 6);
+  const answer = (requestType: string, status: { result: boolean; code?: number; comment?: string }, responseData: unknown = {}) => {
+    const req = requests().filter((m) => m.d?.requestType === requestType).pop();
+    FakeSocket.last!.onmessage?.({
+      data: JSON.stringify({ op: 7, d: { requestId: req?.d?.requestId, requestStatus: status, responseData } }),
+    });
+  };
+  const flush = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  test("код отказа OBS доходит до фолбэка: «Mic/Aux», которого нет, уходит на главный микрофон", async () => {
+    const client = new ObsClient();
+    await connectOk(client);
+    const done = client.withMicInput("Mic/Aux", (name) => client.getInputMute(name));
+    await flush();
+    answer("GetInputMute", { result: false, code: 600, comment: "No source was found by the name of `Mic/Aux`." });
+    await flush();
+    answer("GetSpecialInputs", { result: true }, { mic1: "Мик/Доп", mic2: null });
+    await flush();
+    expect(requests().filter((m) => m.d?.requestType === "GetInputMute").pop()?.d?.requestData?.inputName).toBe("Мик/Доп");
+    answer("GetInputMute", { result: true }, { inputMuted: true });
+    expect(await done).toEqual({ inputName: "Мик/Доп", result: true });
+  });
+
+  test("переименование источника в OBS уходит вкладкам и попапу", async () => {
+    const { broadcastToGameTabs } = await import("@core/messaging");
+    vi.mocked(broadcastToGameTabs).mockClear();
+    const client = new ObsClient();
+    await connectOk(client);
+    FakeSocket.last!.onmessage?.({
+      data: JSON.stringify({ op: 5, d: { eventType: "InputNameChanged", eventData: { oldInputName: "Mic/Aux", inputName: "Мой мик" } } }),
+    });
+    const sent = vi.mocked(broadcastToGameTabs).mock.calls.map((c) => c[0] as { eventType?: string; data?: unknown });
+    expect(sent).toContainEqual({ type: "obs_event", eventType: "obs_input_renamed", data: { oldInputName: "Mic/Aux", inputName: "Мой мик" } });
+    expect(sent.some((m) => m.eventType === "obs_inputs_changed"), "список источников — только попапу").toBe(false);
+    const { sendRuntime } = await import("@core/messaging");
+    expect(vi.mocked(sendRuntime).mock.calls.some((c) => (c[0] as { eventType?: string }).eventType === "obs_inputs_changed")).toBe(true);
   });
 });

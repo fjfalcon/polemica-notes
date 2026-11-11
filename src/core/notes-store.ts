@@ -11,6 +11,7 @@
  * Старые заметки из sync (включая ключ `notes` совсем древних версий)
  * переносятся один раз при первой загрузке и в sync больше не пишутся.
  */
+import { validPlayerId } from "@shared/player-id";
 import { browser } from "./env";
 import { log } from "./log";
 import { sendRuntime } from "./messaging";
@@ -32,7 +33,39 @@ export type NoteRecord = {
    * хвост, чтобы можно было сказать «раньше играл как …».
    */
   nicks?: string[];
+  /**
+   * Свой ник игрока (22.10.2026): как ты его называешь. В игре показывается
+   * вместо ника сайта, в списках, профиле и разборе — «Ник (свой)». Только
+   * отображение: ключом заметки и сверкой игроков никогда не служит.
+   */
+  alias?: string;
+  /**
+   * «Осуждёнка»: свой ник не для эфира (например, прозвище, которое не стоит
+   * показывать зрителям). На трансляции прячется, вне её — виден. Имеет
+   * смысл только вместе с alias.
+   */
+  aliasCondemned?: true;
 };
+
+/** Длина своего ника: плашка игрока узкая, а это подпись, а не заметка. */
+export const MAX_ALIAS = 32;
+
+/**
+ * Очистить свой ник: строка без управляющих символов и переключателей
+ * направления текста (U+202A–U+202E, U+2066–U+2069 — ими «переворачивают»
+ * соседний текст), пробелы схлопнуты, ≤ MAX_ALIAS. Пустой — undefined.
+ * Значение приходит и из чужого бэкапа, поэтому чистим на любом входе.
+ */
+export function normalizeAlias(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const clean = value
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2060-\u2069\ufeff\u061c\u180e]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Обрезка по кодовым точкам, а не UTF-16: эмодзи не рвётся пополам.
+  const cut = Array.from(clean).slice(0, MAX_ALIAS).join("").trim();
+  return cut || undefined;
+}
 
 /** Сколько прежних ников помним. Хвост нужен для узнавания, а не для архива. */
 export const MAX_NICK_HISTORY = 5;
@@ -51,6 +84,15 @@ export function idKey(userId: number | string): string {
 
 export function isIdKey(key: string): boolean {
   return key.startsWith(ID_KEY_PREFIX);
+}
+
+/**
+ * id для ключа `u:<id>` строкой, иначе undefined. Обёртка над validPlayerId: валидатор
+ * один у статистики, ключей заметок и координатора, иначе вкладка и фон расходятся на "007".
+ */
+export function canonicalUserId(userId: unknown): string | undefined {
+  const v = validPlayerId(userId);
+  return v === undefined ? undefined : String(v);
 }
 
 export const NOTES_KEY = "playerNotes";
@@ -157,6 +199,81 @@ export function buildNickColorIndex(notes: NotesMap): NickColorIndex {
   return { byId, byNick };
 }
 
+/**
+ * Индекс своих ников для списков, где игроки приходят с id или ником
+ * (очередь, «Участники», профиль, «Сводка стола», разбор).
+ *
+ * СТРОЖЕ индекса цветов (ревью 22.10.2026, блокер): неверный цвет — мелочь,
+ * а чужой свой ник — неверная ЛИЧНОСТЬ. Поэтому при известном id — только
+ * запись этого id (или точный легаси-ключ-ник, если u:-записи нет — тот же
+ * порядок, что у NoteKeys.keyFor). `rec.nick` чужих u:-записей — лишь
+ * фолбэк для строк БЕЗ id: он обновляется только при сохранении записи, и
+ * освободившийся ник другого человека совпадал бы с ним.
+ */
+export interface AliasIndex {
+  byId: Map<string, string>;
+  /** id всех u:-записей (с своим ником и без) — «запись есть, легаси не читаем». */
+  ids: Set<string>;
+  /** Легаси-ключи-ники, точное написание. */
+  byLegacyKey: Map<string, string>;
+  /** rec.nick u:-записей (lowercase) — только для строк без id. */
+  byRecNick: Map<string, string>;
+}
+
+/**
+ * @param hideCondemned идёт эфир с «не показывать осуждёнку»: такие свои ники
+ *   в индекс не попадают — для страниц их просто нет.
+ */
+export function buildAliasIndex(notes: NotesMap, hideCondemned = false): AliasIndex {
+  const index: AliasIndex = { byId: new Map(), ids: new Set(), byLegacyKey: new Map(), byRecNick: new Map() };
+  for (const [rawKey, rec] of Object.entries(notes)) {
+    if (!rec || typeof rec === "string") continue;
+    const key = canonicalNoteKey(rawKey);
+    const id = isIdKey(key) ? key.slice(ID_KEY_PREFIX.length) : null;
+    if (id) index.ids.add(id);
+    // Записи из старого хранилища могли обойти нормализацию — чистим на чтении.
+    const alias = normalizeAlias(rec.alias);
+    if (!alias || (hideCondemned && rec.aliasCondemned === true)) continue;
+    if (id) {
+      index.byId.set(id, alias);
+      if (typeof rec.nick === "string" && rec.nick) index.byRecNick.set(rec.nick.toLowerCase(), alias);
+    } else {
+      index.byLegacyKey.set(key, alias);
+    }
+  }
+  return index;
+}
+
+/**
+ * Свой ник игрока; пустая строка — не задан (или нет уверенности, чей он).
+ * strict — без фолбэка по rec.nick для строк без id (там, где ошибка видна
+ * как подмена личности: таблица разбора).
+ */
+export function aliasFrom(
+  index: AliasIndex,
+  id?: number | string | null,
+  nick?: string | null,
+  strict = false,
+): string {
+  if (id !== undefined && id !== null && id !== "") {
+    const sid = String(id);
+    const own = index.byId.get(sid);
+    if (own) return own;
+    if (index.ids.has(sid)) return ""; // у игрока своя запись, и в ней своего ника нет
+    return nick ? index.byLegacyKey.get(nick) ?? "" : "";
+  }
+  if (!nick) return "";
+  const legacy = index.byLegacyKey.get(nick);
+  if (legacy || strict) return legacy ?? "";
+  return index.byRecNick.get(nick.toLowerCase()) ?? "";
+}
+
+/** «Ник (свой)» для списков; свой не задан или совпал с ником — просто ник. */
+export function nickWithAlias(nick: string, alias: string | undefined): string {
+  if (!alias || alias.toLowerCase() === nick.toLowerCase()) return nick;
+  return `${nick} (${alias})`;
+}
+
 /** Цвет игрока по id (приоритет) или нику; пустая строка — цвета нет. */
 export function nickColorFrom(
   index: NickColorIndex,
@@ -229,6 +346,11 @@ export function normalizeNoteRecord(raw: unknown, maxText = MAX_NOTE_TEXT): Note
   if (isSafeTag(r.tag)) rec.tag = r.tag;
   if (isSafeTag(r.nickColor)) rec.nickColor = r.nickColor;
   if (typeof r.nick === "string" && r.nick) rec.nick = r.nick.slice(0, MAX_NOTE_KEY);
+  const alias = normalizeAlias(r.alias);
+  if (alias) {
+    rec.alias = alias;
+    if (r.aliasCondemned === true) rec.aliasCondemned = true;
+  }
   if (Array.isArray(r.nicks)) {
     const nicks = r.nicks
       .filter((n): n is string => typeof n === "string" && n.length > 0)
@@ -301,6 +423,84 @@ export function withNickHistory(
   return nicks.length > 0 ? { nick, nicks } : { nick };
 }
 
+/**
+ * Слияние ник-записей игрока в `u:<id>`: побеждает более свежая, ник сохраняется
+ * в записи. null — сливать нечего.
+ */
+export function mergeNickKeysIntoId(
+  notes: NotesMap,
+  username: string,
+  userId: number | string,
+): { key: string; nickKeys: string[]; record: NoteRecord } | null {
+  const key = idKey(userId);
+  const lower = username.toLowerCase();
+  const nickKeys = Object.keys(notes).filter((k) => !isIdKey(k) && k.toLowerCase() === lower);
+  if (nickKeys.length === 0) return null;
+
+  const ts = (n: NoteRecord | string | undefined) =>
+    n && typeof n !== "string" && typeof n.timestamp === "number" ? n.timestamp : 0;
+  const toRecord = (n: NoteRecord | string): NoteRecord =>
+    typeof n === "string" ? { text: n, timestamp: 0 } : n;
+
+  // Легаси-строка под u:-ключом — тоже запись, её текст нельзя терять.
+  let best: NoteRecord | undefined = notes[key] !== undefined ? toRecord(notes[key]) : undefined;
+  // Текст легаси-СТРОКИ под id-ключом: у неё ts=0, поэтому любая ник-запись
+  // с настоящим временем побеждает её по времени. Такой текст нельзя терять
+  // молча — ниже он дописывается в победителя наравне с ничьёй.
+  const idLegacyText = typeof notes[key] === "string" ? (notes[key] as string) : "";
+  const losers: NoteRecord[] = [];
+  for (const nk of nickKeys) {
+    const record = toRecord(notes[nk]);
+    if (!best) {
+      best = record;
+    } else if (ts(record) > ts(best)) {
+      losers.push(best);
+      best = record;
+    } else {
+      losers.push(record);
+    }
+  }
+  if (!best) return null;
+
+  // Ничья по времени (обе легаси, ts=0) с РАЗНЫМ текстом — не уничтожаем
+  // проигравший текст молча, а дописываем его в запись.
+  const winner: NoteRecord = { ...best };
+  // Победитель БЕЗ текста (u:-запись из «Заметок и цветов»: только цвет ника)
+  // берёт текст самого свежего проигравшего. Иначе старая заметка по нику
+  // исчезала навсегда: координатор удаляет ник-ключ после слияния
+  // (ревью PR #15, 22.10.2026) — как и в combineNotes, пустое поле
+  // победителя заполняется из проигравшего.
+  if (!winner.text) {
+    let source: NoteRecord | undefined;
+    for (const loser of losers) {
+      if (loser.text && (!source || ts(loser) > ts(source))) source = loser;
+    }
+    if (source) winner.text = source.text;
+  }
+  for (const loser of losers) {
+    if (
+      loser.text &&
+      loser.text !== winner.text &&
+      (ts(loser) === ts(winner) || loser.text === idLegacyText)
+    ) {
+      winner.text = winner.text ? `${winner.text}\n[слито: ${loser.text}]` : loser.text;
+    }
+    // Цвет и метка наследуются безусловно: непустое побеждает пустое.
+    if (!winner.tag && loser.tag) winner.tag = loser.tag;
+    if (!winner.nickColor && loser.nickColor) winner.nickColor = loser.nickColor;
+    // Свой ник наследуется вместе со своей пометкой «Осуждёнка» — пара.
+    if (!winner.alias && loser.alias) {
+      winner.alias = loser.alias;
+      if (loser.aliasCondemned) winner.aliasCondemned = true;
+      else delete winner.aliasCondemned;
+    } else if (winner.alias && winner.alias === loser.alias && loser.aliasCondemned) {
+      winner.aliasCondemned = true;
+    }
+  }
+
+  return { key, nickKeys, record: { ...winner, ...withNickHistory(winner, username) } };
+}
+
 function combineNotes(a: NoteRecord | string, b: NoteRecord | string): NoteRecord {
   const [winner, loser] = noteTimestamp(b) > noteTimestamp(a) ? [b, a] : [a, b];
   const w = fieldsOf(winner);
@@ -309,6 +509,14 @@ function combineNotes(a: NoteRecord | string, b: NoteRecord | string): NoteRecor
   if (!out.text && l.text) out.text = l.text;
   if (!out.tag && l.tag) out.tag = l.tag;
   if (!out.nickColor && l.nickColor) out.nickColor = l.nickColor;
+  if (!out.alias && l.alias) {
+    out.alias = l.alias;
+    if (l.aliasCondemned) out.aliasCondemned = true;
+    else delete out.aliasCondemned;
+  } else if (out.alias && out.alias === l.alias && l.aliasCondemned) {
+    // Тот же свой ник: пометка — как метка и цвет, непустое побеждает пустое.
+    out.aliasCondemned = true;
+  }
   if (!out.nick && l.nick) out.nick = l.nick;
   // Историю ников СЛИВАЕМ, а не выбираем: на двух устройствах игрок мог
   // застать разные переименования, и «победа свежего» теряла бы половину.
@@ -333,6 +541,8 @@ function sameNote(a: NoteRecord | string, b: NoteRecord | string): boolean {
     Object.is(x.timestamp, y.timestamp) &&
     Object.is(x.tag, y.tag) &&
     Object.is(x.nickColor, y.nickColor) &&
+    Object.is(x.alias, y.alias) &&
+    Object.is(x.aliasCondemned === true, y.aliasCondemned === true) &&
     Object.is(x.nick, y.nick) &&
     (x.nicks ?? []).join("\u0000") === (y.nicks ?? []).join("\u0000") &&
     Object.is(x.version, y.version)
@@ -579,6 +789,8 @@ export async function loadNotes(opts?: {
    * миграция мимо единственного писателя (SEC26-5, внешний аудит 28.08.2026).
    */
   migrated?: boolean;
+  /** true = до переноса облако не прочиталось: вид без заметок и палитры из sync, выгружать его как полный бэкап нельзя. */
+  syncUnread?: boolean;
 }> {
   try {
     const local = (await browser.storage.local.get({
@@ -612,7 +824,7 @@ export async function loadNotes(opts?: {
 async function migratedView(
   localNotes: NotesMap,
   localTags: string[],
-): Promise<{ notes: NotesMap; customTags: string[] }> {
+): Promise<{ notes: NotesMap; customTags: string[]; syncUnread?: boolean }> {
   try {
     const sync = (await browser.storage.sync.get({
       [NOTES_KEY]: {},
@@ -647,7 +859,7 @@ async function migratedView(
     }
     return { notes: merged, customTags: [...new Set([...localTags, ...syncTags])] };
   } catch {
-    return { notes: localNotes, customTags: localTags };
+    return { notes: localNotes, customTags: localTags, syncUnread: true };
   }
 }
 

@@ -25,7 +25,15 @@
  *    quitGame(true) → POST /api/games/quit → userInGame сброшен → рисуются
  *    очереди и «Играть».
  *
- * Наша механика — в два шага, соединённых одноразовым мостом sessionStorage
+ * Быстрый путь для достоверно завершённого матча: заранее подготавливаем
+ * соединение поиска без постановки в очередь. Явный клик при включённом
+ * пропуске подтверждения разрешает единственный HTTP quit; только его ACK
+ * разрешает прямой запрос поиска в этой вкладке. До quit сохраняется мост:
+ * неизвестный результат выхода требует ручного продолжения, подтверждённый
+ * выход позволяет восстановить очередь после штатного перехода сайта.
+ *
+ * Для выбытия/зрителя, ручного подтверждения и холодного соединения остаётся
+ * прежняя механика — два шага с одноразовым мостом sessionStorage
  * (формат и TTL — общий модуль requeue-pending):
  *  1. В комнате: плавающая кнопка «В поиск» — ТОЛЬКО когда матч завершён
  *     (победа одной из сторон), вкладка в режиме зрителя или игрок из матча
@@ -52,7 +60,7 @@
  */
 import { onDomChange, safeClick, isVisible } from "@core/dom";
 import { SITE, TEXT, hasPhaseMarker, matchFinishedVisible } from "@core/selectors";
-import { isGameRoomPath, isSearchPath } from "@shared/routes";
+import { gameRouteKey, isGameRoomPath, isSearchPath } from "@shared/routes";
 import { isRunningStageText } from "./queue-requeue";
 import { log } from "@core/log";
 import { fetchQueueState, formatQueues } from "@core/queue-state";
@@ -191,6 +199,9 @@ let unsubscribe: (() => void) | null = null;
 let visibilityListener: (() => void) | null = null;
 let trustedListener: ((e: Event) => void) | null = null;
 let messageUnsub: (() => void) | null = null;
+let pagehideListener: (() => void) | null = null;
+let pageshowListener: ((event: PageTransitionEvent) => void) | null = null;
+let pageHiding = false;
 
 // ── общий decision-таймер (паттерн queue-requeue, RQ-3) ──
 
@@ -273,8 +284,13 @@ const PROBE_FRESH_MS = 5000;
 const PROBE_TIMEOUT_MS = 3000;
 
 function startLiveProbe(): void {
-  liveProbe = { status: "pending", startedAt: Date.now() };
+  const pending = { status: "pending" as const, startedAt: Date.now() };
+  liveProbe = pending;
   void sendRuntime<{ live?: boolean }>({ type: "postgame_live_query" }).then((res) => {
+    // Only this still-pending probe may publish its answer. A reset, disable,
+    // timeout or newer episode invalidates the identity, including late false
+    // answers that would otherwise bypass the new episode's live-match guard.
+    if (!armed || !settings || settings.postgame_requeue_enabled === false || liveProbe !== pending) return;
     // undefined = канал отказал (нет фона/осиротели) — честное «не знаю»,
     // трактуемое как «не живой» (fail-open, см. комментарий выше).
     liveProbe = { status: "done", live: res?.live === true, at: Date.now() };
@@ -314,6 +330,8 @@ function liveMatchGate(now: number): "pass" | "wait" | "live" {
  */
 export function noteTrustedInput(): void {
   lastTrustedInputAt = Date.now();
+  trustedInputVersion++;
+  if (postgameDirectRun || postgameDirectResume) cancelPostgameDirect(true);
 }
 
 function norm(text: string | null | undefined): string {
@@ -353,6 +371,307 @@ function writePostgameMark(reloaded: boolean, issuedAt: number): void {
   sessionStorage.setItem(POSTGAME_PENDING_KEY, JSON.stringify({ ...base, reloaded }));
 }
 
+// ── finished-match fast path (transport owns the authenticated page client) ──
+
+export interface DirectPostgamePort {
+  prepare(): void;
+  cancel(): void;
+  start(signalAt: number): boolean;
+  resume(signalAt: number, queued: boolean): void;
+  enterGame(): boolean;
+  handoff?(): void;
+}
+
+type PostgameDirectStage = "pending" | "quitting" | "search" | "queued";
+interface PostgameDirectRun {
+  signalAt: number;
+  identity: string;
+  input: number;
+  stage: PostgameDirectStage;
+  found: boolean;
+  handoffAt: number;
+  cancelAuthorization: Set<() => void>;
+}
+interface PostgameDirectResume {
+  signalAt: number;
+  queued: boolean;
+  requested: boolean;
+}
+
+const DIRECT_WINDOW_MS = 20_000;
+const DIRECT_RESUME_TTL_MS = 45_000;
+let postgameDirectPort: DirectPostgamePort | null = null;
+let directWarmIdentity: string | null = null;
+let postgameDirectRun: PostgameDirectRun | null = null;
+let postgameDirectResume: PostgameDirectResume | null = null;
+let trustedInputVersion = 0;
+// A granted POST may have succeeded even when its reply was lost. Never
+// issue a second automatic quit for this game in the same document.
+let directUnsafeIdentity: string | null = null;
+
+export function setDirectPostgamePort(port: DirectPostgamePort | null): void {
+  if (postgameDirectPort === port) return;
+  cancelPostgameDirect(false);
+  postgameDirectPort = port;
+  if (settings) tick();
+}
+
+/**
+ * Require an actual game id, and reject disagreement during a room change.
+ * Зритель — не игрок этого матча: выходить ему не из чего, и готовить ему
+ * поисковое соединение на чужом экране итога незачем (ревью 09.11.2026,
+ * docs/postgame-direct: «Viewer… retain the existing page flow»).
+ */
+function finishedGameIdentity(): string | null {
+  if (!settings || settings.postgame_requeue_enabled === false ||
+      settings.postgame_skip_confirm_enabled === false || !canLeaveRoom() || !matchFinishedVisible() ||
+      isViewerMode()) return null;
+  const ids = [
+    new URLSearchParams(location.search).get("game_id"),
+    location.pathname.match(/^\/game\/(\d+)(?:\/|$)/)?.[1],
+    document.querySelector(SITE.gameIdBlock)?.textContent?.match(/\d+/)?.[0],
+    document.querySelector(SITE.gameIdAttr)?.getAttribute("data-game-id"),
+  ].filter((id): id is string => typeof id === "string" && id !== "");
+  if (!ids.length || ids.some(id => !/^[1-9]\d*$/.test(id) || id !== ids[0])) return null;
+  return `${gameRouteKey(location)}#${ids[0]}`;
+}
+
+function removeDirectMark(signalAt: number): void {
+  try {
+    const raw = sessionStorage.getItem(POSTGAME_PENDING_KEY);
+    if (raw && (JSON.parse(raw) as { issuedAt?: unknown }).issuedAt === signalAt) {
+      sessionStorage.removeItem(POSTGAME_PENDING_KEY);
+    }
+  } catch { /* unavailable storage cannot authorize another action */ }
+}
+
+function writeDirectPostgameMark(value: PostgameDirectRun): boolean {
+  try {
+    const base = refreshMark({ issuedAt: value.signalAt, refreshedAt: value.signalAt }, Date.now());
+    sessionStorage.setItem(POSTGAME_PENDING_KEY, JSON.stringify({
+      ...base, direct: true, stage: value.stage, signalAt: value.signalAt,
+    }));
+    return true;
+  } catch { return false; }
+}
+
+function cancelPostgameDirect(clearMark: boolean): void {
+  const value = postgameDirectRun;
+  const resume = postgameDirectResume;
+  if (value || resume) cancelDecision();
+  postgameDirectRun = null;
+  postgameDirectResume = null;
+  directWarmIdentity = null;
+  for (const abort of value?.cancelAuthorization ?? []) abort();
+  if (clearMark) {
+    if (value) removeDirectMark(value.signalAt);
+    if (resume) removeDirectMark(resume.signalAt);
+  }
+  postgameDirectPort?.cancel();
+}
+
+function directRoomMayAct(value: PostgameDirectRun): boolean {
+  return postgameDirectRun === value && Date.now() >= value.signalAt &&
+    Date.now() - value.signalAt < DIRECT_WINDOW_MS && !document.hidden &&
+    value.input === trustedInputVersion && finishedGameIdentity() === value.identity;
+}
+
+/** Same cross-tab live-match guard and timeout policy as the legacy quit gate. */
+function queryDirectLiveMatch(value: PostgameDirectRun): Promise<boolean> {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = (live: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      value.cancelAuthorization.delete(abort);
+      resolve(!live && directRoomMayAct(value));
+    };
+    const abort = () => finish(true);
+    const timer = setTimeout(() => finish(false), PROBE_TIMEOUT_MS);
+    value.cancelAuthorization.add(abort);
+    void sendRuntime<{ live?: boolean }>({ type: "postgame_live_query" })
+      .then(reply => finish(reply?.live === true), () => finish(false));
+  });
+}
+
+export function canPostgameDirectAct(
+  signalAt: number,
+  action: "quit" | "start" | "resume",
+): boolean | Promise<boolean> {
+  if (action === "resume") {
+    const value = postgameDirectResume;
+    return !!value && value.signalAt === signalAt && !!settings &&
+      settings.postgame_requeue_enabled !== false && settings.postgame_skip_confirm_enabled !== false &&
+      isSearchPath(location.pathname) && !document.hidden &&
+      Date.now() >= signalAt && Date.now() - signalAt < DIRECT_RESUME_TTL_MS &&
+      Date.now() - lastTrustedInputAt >= USER_BACKOFF_MS;
+  }
+  const value = postgameDirectRun;
+  const stage = action === "quit" ? "pending" : "search";
+  if (!value || value.signalAt !== signalAt || value.stage !== stage || !directRoomMayAct(value)) return false;
+  return queryDirectLiveMatch(value).then(pass => {
+    if (!pass || value.stage !== stage || !directRoomMayAct(value)) return false;
+    if (action === "quit") {
+      value.stage = "quitting";
+      // Write before granting the POST: the site's own 2-second redirect can
+      // destroy this document before either the HTTP or queue ACK arrives.
+      if (!writeDirectPostgameMark(value)) {
+        value.stage = "pending";
+        return false;
+      }
+      directUnsafeIdentity = value.identity;
+    }
+    return true;
+  });
+}
+
+function finishPostgameDirect(value: PostgameDirectRun): void {
+  if (!directRoomMayAct(value)) return;
+  if (value.handoffAt > Date.now()) {
+    scheduleDecision(value.handoffAt - Date.now());
+    return;
+  }
+  if (value.found && postgameDirectPort?.enterGame()) {
+    postgameDirectPort.handoff?.();
+    directWarmIdentity = null;
+    removeDirectMark(value.signalAt);
+    postgameDirectRun = null;
+    return;
+  }
+  // Передача ДО навигации: отмена в её окне не снимет подтверждённую очередь.
+  postgameDirectPort?.handoff?.();
+  directWarmIdentity = null;
+  postgameDirectRun = null;
+  location.assign("/game-search");
+}
+
+export function notePostgameDirectResult(
+  state: string, signalAt: number, sentAt: number, at: number,
+  firstSentAt = sentAt, attempt = 1,
+): void {
+  const value = postgameDirectRun;
+  if (!value || signalAt !== value.signalAt) return;
+  if (state === "deferred") { cancelPostgameDirect(true); syncButton(canLeaveRoom()); return; }
+  if (!directRoomMayAct(value)) { cancelPostgameDirect(true); return; }
+  if (state === "quit-confirmed" && value.stage === "quitting") {
+    value.stage = "search";
+    if (!writeDirectPostgameMark(value)) {
+      // The persisted quitting marker remains conservative on navigation.
+      cancelPostgameDirect(false);
+      showToast("Выход подтверждён. Продолжите поиск вручную", { key: "postgame-direct-storage" });
+    }
+    return;
+  }
+  if (state === "sent") {
+    log.info(SCOPE, "прямой запрос поиска после игры отправлен, мс:", sentAt - signalAt, "попытка", attempt);
+    return;
+  }
+  if (state === "queued" && (value.stage === "search" || value.stage === "queued")) {
+    value.stage = "queued";
+    writeDirectPostgameMark(value);
+    log.info(SCOPE, "сервер подтвердил поиск после игры, мс:", {
+      attempt, clickToFirstRequest: firstSentAt - signalAt, clickToRequest: sentAt - signalAt,
+      clickToAck: at - signalAt, requestToAck: at - sentAt,
+    });
+  } else if (state === "found" && (value.stage === "search" || value.stage === "queued")) {
+    value.found = true;
+  } else if (!["unavailable", "refused", "quit-unknown"].includes(state)) return;
+  // An unknown quit is deliberately left as stage=quitting. Landing in search
+  // must ask the user, rather than retrying either quit or startSearch.
+  if (state === "quit-unknown" && value.stage !== "quitting") {
+    cancelPostgameDirect(true);
+    return;
+  }
+  value.handoffAt = Date.now() + MIN_DECISION_DELAY_MS;
+  scheduleDecision(MIN_DECISION_DELAY_MS);
+}
+
+export function postgameDirectResumeFinished(state: string, signalAt: number): void {
+  const value = postgameDirectResume;
+  if (!value || value.signalAt !== signalAt) return;
+  value.requested = false;
+  if (state === "deferred") { scheduleDecision(FOREGROUND_GRACE_MS); return; }
+  cancelDecision();
+  removeDirectMark(value.signalAt);
+  postgameDirectResume = null;
+  if (state === "timeout" || state === "refused") {
+    showToast("Поиск не восстановился. Нажмите «Играть», чтобы продолжить", { key: "postgame-direct-resume-failed" });
+  }
+}
+
+function tryPostgameDirectResume(): void {
+  const value = postgameDirectResume;
+  if (!value) return;
+  if (Date.now() < value.signalAt || Date.now() - value.signalAt >= DIRECT_RESUME_TTL_MS) {
+    postgameDirectPort?.cancel();
+    postgameDirectResumeFinished("timeout", value.signalAt);
+    return;
+  }
+  if (!canPostgameDirectAct(value.signalAt, "resume")) {
+    scheduleDecision(document.hidden
+      ? value.signalAt + DIRECT_RESUME_TTL_MS - Date.now() + 50
+      : Math.max(FOREGROUND_GRACE_MS, lastTrustedInputAt + USER_BACKOFF_MS - Date.now() + 100));
+    return;
+  }
+  if (!value.requested && postgameDirectPort) {
+    value.requested = true;
+    postgameDirectPort.resume(value.signalAt, value.queued);
+  }
+  scheduleDecision(value.signalAt + DIRECT_RESUME_TTL_MS - Date.now() + 50);
+}
+
+/** Переподготовок после истечения — одна на матч: молчаливой потере ускорения — нет, бесконечным — тоже нет. */
+let rewarmedIdentity: string | null = null;
+/** Транспорт: подготовленное соединение истекло, клика не было. */
+export function notePostgameWarmExpired(): void {
+  if (!directWarmIdentity || directWarmIdentity === rewarmedIdentity) {
+    log.info(SCOPE, "подготовленное соединение истекло; клик пойдёт обычным путём");
+    return;
+  }
+  rewarmedIdentity = directWarmIdentity;
+  directWarmIdentity = null;
+  log.info(SCOPE, "подготовленное соединение истекло — готовим заново");
+  scheduleDecision(0);
+}
+
+function syncPostgameDirectRoom(): void {
+  const identity = document.hidden ? null : finishedGameIdentity();
+  const value = postgameDirectRun;
+  if (value) {
+    if (!directRoomMayAct(value)) {
+      const expired = Date.now() - value.signalAt >= DIRECT_WINDOW_MS;
+      cancelPostgameDirect(true);
+      if (expired) showToast("Не удалось подтвердить поиск. Продолжите вручную", { key: "postgame-direct-timeout" });
+      return;
+    }
+    if (value.handoffAt) finishPostgameDirect(value);
+    return;
+  }
+  if (directWarmIdentity === identity) return;
+  if (directWarmIdentity) postgameDirectPort?.cancel();
+  directWarmIdentity = identity;
+  if (identity && identity !== directUnsafeIdentity) postgameDirectPort?.prepare();
+}
+
+function startPostgameDirect(signalAt: number): boolean {
+  const identity = finishedGameIdentity();
+  if (!identity || identity !== directWarmIdentity || identity === directUnsafeIdentity || document.hidden || !postgameDirectPort) return false;
+  const value: PostgameDirectRun = {
+    signalAt, identity, input: trustedInputVersion, stage: "pending", found: false,
+    handoffAt: 0, cancelAuthorization: new Set(),
+  };
+  postgameDirectRun = value;
+  if (!postgameDirectPort.start(signalAt)) {
+    postgameDirectRun = null;
+    postgameDirectPort.cancel();
+    directWarmIdentity = null;
+    return false;
+  }
+  scheduleDecision(DIRECT_WINDOW_MS);
+  return true;
+}
+
 // ── комната: кнопка ──
 
 /**
@@ -387,16 +706,39 @@ function isEliminated(): boolean {
 /** Про недоступное хранилище при клике уже предупредили (один раз). */
 let clickStorageWarned = false;
 
+function canLeaveRoom(): boolean {
+  return !!settings && settings.postgame_requeue_enabled !== false &&
+    isGameRoomPath(location.pathname) && !isStreamCaptureWindow() &&
+    (matchFinishedVisible() || isViewerMode() || isEliminated());
+}
+
 function onButtonClick(): void {
-  // Мост — ДО навигации: страница сейчас умрёт. Отказ хранилища не блокирует
-  // сам переход: игрок окажется на поиске и продолжит руками.
+  if (postgameDirectRun) return;
+  // The observer is throttled: validate the current room at action time.
+  if (!canLeaveRoom()) { syncButton(false); return; }
+  const signalAt = Date.now();
+  const identity = finishedGameIdentity();
+  // A previous automatic quit for this game may still be in flight.
+  // An explicit second click only opens search for manual continuation.
+  if (identity && identity === directUnsafeIdentity) {
+    location.assign("/game-search");
+    return;
+  }
+  let saved = false;
   try {
-    writePostgameMark(false, Date.now());
+    writePostgameMark(false, signalAt);
+    saved = true;
   } catch {
     if (!clickStorageWarned) {
       clickStorageWarned = true;
       log.warn(SCOPE, "мост «В поиск» не сохранён: хранилище страницы недоступно");
     }
+  }
+  if (saved && startPostgameDirect(signalAt)) {
+    syncButton(true);
+    showToast("Выхожу из завершённой игры и встаю в поиск… 🔁", { key: "postgame-direct-start" });
+    log.info(SCOPE, "кнопка «В поиск» нажата — запускаем подготовленный поиск в этой вкладке");
+    return;
   }
   log.info(SCOPE, "кнопка «В поиск» нажата — уходим на страницу поиска");
   location.assign("/game-search");
@@ -483,7 +825,14 @@ function syncButton(show: boolean): void {
     if (bar && bar.childElementCount === 0) bar.remove();
     return;
   }
-  if (existing) return;
+  if (existing) {
+    const button = existing as HTMLButtonElement;
+    const busy = !!postgameDirectRun;
+    if (button.disabled !== busy) button.disabled = busy;
+    const label = busy ? "Встаю в поиск…" : "В поиск";
+    if (button.textContent !== label) button.textContent = label;
+    return;
+  }
   const btn = document.createElement("button");
   btn.id = BUTTON_ID;
   btn.type = "button";
@@ -528,6 +877,27 @@ function consumePending(): void {
     log.info(SCOPE, "мост «В поиск» пропущен:", MARK_FAILURE_TEXT[verdict.reason]);
     return;
   }
+  // Only a confirmed HTTP quit permits queue recovery. An interrupted quit
+  // has unknown side effects; neither quit nor startSearch may be retried.
+  let direct: Record<string, unknown> | null = null;
+  try {
+    const data = JSON.parse(raw as string) as Record<string, unknown>;
+    if (data.direct === true) direct = data;
+  } catch { /* legacy timestamp marks remain supported */ }
+  if (direct) {
+    const signalAt = direct.signalAt;
+    if ((direct.stage !== "search" && direct.stage !== "queued") ||
+        typeof signalAt !== "number" || signalAt !== verdict.mark.issuedAt || signalAt <= 0) {
+      showToast("Не удалось подтвердить выход из игры. Продолжите поиск вручную", { key: "postgame-direct-quit-unknown" });
+      log.warn(SCOPE, "результат выхода из игры неизвестен — автоматические действия не повторяем");
+      return;
+    }
+    if (settings?.postgame_skip_confirm_enabled === false) return;
+    postgameDirectResume = { signalAt, queued: direct.stage === "queued", requested: false };
+    try { sessionStorage.setItem(POSTGAME_PENDING_KEY, raw as string); } catch { /* bounded in-memory recovery */ }
+    tryPostgameDirectResume();
+    return;
+  }
   armed = true;
   armedAt = Date.now();
   markIssuedAt = verdict.mark.issuedAt;
@@ -557,11 +927,15 @@ function visibleEl(selector: string): HTMLElement | null {
  * она видна, родовые обёртки/оверлеи вокруг неё чужими не считаются.
  */
 function foreignModalOpen(): boolean {
-  if (visibleEl(SITE.confirmQuitModal)) return false;
-  // «Вы уже играете» — второй штатный путь выхода, не чужое окно.
-  if (visibleEl(SITE.inProgressModal)) return false;
+  const expected = [
+    ...document.querySelectorAll<HTMLElement>(SITE.confirmQuitModal),
+    ...document.querySelectorAll<HTMLElement>(SITE.inProgressModal),
+  ].filter(isVisible);
   return Array.from(document.querySelectorAll<HTMLElement>(SITE_MODAL_SELECTOR)).some(
-    (el) => el.offsetWidth > 0 && el.offsetHeight > 0,
+    (el) => el.offsetWidth > 0 && el.offsetHeight > 0 && isVisible(el) &&
+      // Ignore only the expected modal itself and its actual ancestor wrappers.
+      // An unrelated sibling/nested alert must still stop confirmation clicks.
+      !expected.some((allowed) => el === allowed || el.contains(allowed)),
   );
 }
 
@@ -683,16 +1057,6 @@ function searchTick(): void {
   if (inProgress) {
     confirmSeen = true;
     loaderSince = 0;
-    // Модалку открыл сайт в ответ на «Играть» — сторож живого матча мог ещё
-    // не бегать (наш quit-шаг не ходил). Тот же гейт, что и у confirmQuit.
-    if (quitAttempts === 0) {
-      const gate = liveMatchGate(now);
-      if (gate === "wait") return;
-      if (gate === "live") {
-        giveUp("похоже, в другой вкладке идёт ваш матч — из игры не выходим");
-        return;
-      }
-    }
     // Вариант модалки с угрозой блокировки (isWarning) автокликом НЕ трогаем:
     // цена ошибки — бан игрока, и такое решение принимает только человек.
     const warning = visibleEl(SITE.inProgressWarning);
@@ -723,6 +1087,14 @@ function searchTick(): void {
       giveUp("в модалке «Вы уже играете» не нашлась кнопка завершения игры");
       return;
     }
+    // Ручное подтверждение может занять дольше срока свежести пробы.
+    // Перед финальным выходом проверяем снова; быстрый переход использует кэш.
+    const gate = liveMatchGate(now);
+    if (gate === "wait") return;
+    if (gate === "live") {
+      giveUp("похоже, в другой вкладке идёт ваш матч — из игры не выходим");
+      return;
+    }
     clickStage(
       finishBtn,
       TEXT.finishLastGameButton,
@@ -741,18 +1113,6 @@ function searchTick(): void {
     // «висит подряд» обязан идти заново, иначе транзиентные лоадеры разных
     // фаз складываются и вызывают преждевременный reload (ревью, раунд 3).
     loaderSince = 0;
-    // Модалку мог открыть САМ игрок (наш quit-шаг не ходил, quitAttempts=0)
-    // — тогда сторож живого матча ещё не бегал, а это последний путь квита
-    // мимо пробы (контрольное ревью 07.08.2026). Гейт и здесь; заодно окно
-    // «передумать» у игрока становится шире голого бэкоффа.
-    if (quitAttempts === 0) {
-      const gate = liveMatchGate(now);
-      if (gate === "wait") return;
-      if (gate === "live") {
-        giveUp("похоже, в другой вкладке идёт ваш матч — из игры не выходим");
-        return;
-      }
-    }
     // Настройка (просьба владельца 07.08.2026): модалку можно НЕ пропускать —
     // машина ждёт подтверждения человеком и продолжает после него. Ожидание
     // не терминально: клик игрока даст мутацию и следующий тик; дедлайн
@@ -767,6 +1127,14 @@ function searchTick(): void {
         });
       }
       scheduleDecision(armedAt + EPISODE_WINDOW_MS + CONFIRM_WAIT_EXTRA_MS - now + 250);
+      return;
+    }
+    // Ручное подтверждение может занять дольше срока свежести пробы.
+    // Перед финальным выходом проверяем снова; быстрый переход использует кэш.
+    const gate = liveMatchGate(now);
+    if (gate === "wait") return;
+    if (gate === "live") {
+      giveUp("похоже, в другой вкладке идёт ваш матч — из игры не выходим");
       return;
     }
     clickStage(confirmBtn, TEXT.confirmQuitButton, confirmAttempts, () => confirmAttempts++, "Покинуть лобби");
@@ -904,11 +1272,13 @@ export const jamReload = {
 
 /** Смена маршрута внутри одного документа (страховка от SPA-переходов). */
 function syncRoute(): void {
-  if (location.pathname === lastPathname) return;
+  const route = isGameRoomPath(location.pathname) ? gameRouteKey(location) : location.pathname;
+  if (route === lastPathname) return;
   const firstRun = lastPathname === "";
-  lastPathname = location.pathname;
+  lastPathname = route;
   if (firstRun) return;
   if (armed) log.info(SCOPE, "эпизод «В поиск» сброшен: смена страницы");
+  cancelPostgameDirect(!isSearchPath(location.pathname));
   resetEpisode();
   clickStorageWarned = false;
   if (isSearchPath(location.pathname)) consumePending();
@@ -962,15 +1332,15 @@ function tick(): void {
   if (!settings || settings.postgame_requeue_enabled === false) return;
   syncRoute();
   if (isGameRoomPath(location.pathname)) {
-    syncButton(
-      !isStreamCaptureWindow() && (matchFinishedVisible() || isViewerMode() || isEliminated()),
-    );
+    syncPostgameDirectRoom();
+    syncButton(canLeaveRoom());
     return;
   }
   if (isSearchPath(location.pathname)) {
     // Кнопка комнаты не должна пережить гипотетический SPA-переход в поиск.
     syncButton(false);
-    searchTick();
+    if (postgameDirectResume) tryPostgameDirectResume();
+    else searchTick();
     return;
   }
   // Прочие страницы: кнопки нет, машина не работает; невостребованный мост
@@ -984,6 +1354,7 @@ export const postgameSearchFeature: Feature = {
 
   enable(ctx: FeatureContext) {
     settings = ctx.settings;
+    pageHiding = false;
     // Ответчик сторожа живого матча: фон спрашивает КАЖДУЮ игровую вкладку.
     messageUnsub = onMessage((msg) => {
       if ("type" in msg && msg.type === "postgame_live_probe") {
@@ -997,12 +1368,38 @@ export const postgameSearchFeature: Feature = {
     document.addEventListener("pointerdown", trustedListener, true);
     document.addEventListener("keydown", trustedListener, true);
     visibilityListener = () => {
-      if (document.hidden) return;
+      if (document.hidden) {
+        // Cancel synchronously, before a PAGE retry can run in the background.
+        if (postgameDirectRun) cancelPostgameDirect(true);
+        else if (postgameDirectResume) {
+          postgameDirectPort?.cancel();
+          postgameDirectResume.requested = false;
+        } else if (directWarmIdentity) {
+          postgameDirectPort?.cancel();
+          directWarmIdentity = null;
+        }
+        return;
+      }
       // Не решать синхронно: порядок pointerdown/visibilitychange не
       // определён, клик фокуса должен успеть лечь в бэкофф (паттерн RQ-6).
       scheduleDecision(FOREGROUND_GRACE_MS);
     };
     document.addEventListener("visibilitychange", visibilityListener);
+    pagehideListener = () => {
+      pageHiding = true;
+      cancelDecision();
+      cancelPostgameDirect(false);
+      resetEpisode();
+      lastPathname = "";
+    };
+    pageshowListener = (event) => {
+      if (!event.persisted) return;
+      pageHiding = false;
+      if (isSearchPath(location.pathname) && !postgameDirectResume && !armed) consumePending();
+      scheduleDecision(FOREGROUND_GRACE_MS);
+    };
+    window.addEventListener("pagehide", pagehideListener);
+    window.addEventListener("pageshow", pageshowListener);
     if (isSearchPath(location.pathname)) consumePending();
     unsubscribe = onDomChange(() => tick());
     tick();
@@ -1010,10 +1407,13 @@ export const postgameSearchFeature: Feature = {
 
   update(ctx: FeatureContext) {
     settings = ctx.settings;
+    if (settings.postgame_requeue_enabled === false || settings.postgame_skip_confirm_enabled === false) {
+      cancelPostgameDirect(true);
+    }
     // Настройку могли поменять, пока машина СТОИТ у модалки: страница в этот
     // момент статична, а собственное пробуждение стоит на дедлайне — там
     // машину ждёт уже сдача, а не клик (ревью 07.08.2026, раунд 3).
-    if (armed) scheduleDecision(FOREGROUND_GRACE_MS);
+    if (armed || postgameDirectRun || postgameDirectResume) scheduleDecision(FOREGROUND_GRACE_MS);
   },
 
   disable() {
@@ -1030,7 +1430,14 @@ export const postgameSearchFeature: Feature = {
       document.removeEventListener("visibilitychange", visibilityListener);
       visibilityListener = null;
     }
+    if (pagehideListener) window.removeEventListener("pagehide", pagehideListener);
+    if (pageshowListener) window.removeEventListener("pageshow", pageshowListener);
+    pagehideListener = null;
+    pageshowListener = null;
     cancelDecision();
+    // A settings-driven disable cancels intent. Teardown after pagehide keeps
+    // the persisted checkpoint for the next document or a BFCache restore.
+    cancelPostgameDirect(!pageHiding);
     resetEpisode();
     lastTrustedInputAt = 0;
     lastPathname = "";

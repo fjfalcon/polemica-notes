@@ -81,6 +81,14 @@ const MIN_FLUSH_INTERVAL_MS = 250;
 class SharedDomObserver {
   private observer: MutationObserver | null = null;
   private subscribers = new Set<DomSubscriber>();
+  /**
+   * Немедленные подписчики: зовутся прямо в колбэке MutationObserver — это
+   * микрозадача ПОСЛЕ патча Vue и ДО отрисовки кадра. Только для дешёвых
+   * проверок, от которых зависит видимость в эфире (видимость ролей,
+   * 21.10.2026): обычный проход дросселирован rAF/250 мс, и открытый кадр
+   * успевал бы уехать в эфир. Записи в DOM — только идемпотентные.
+   */
+  private immediate = new Set<(muts: MutationRecord[]) => void>();
   private pending: MutationRecord[] = [];
   private dropped = 0;
   private scheduled = false;
@@ -104,31 +112,57 @@ class SharedDomObserver {
     this.ensureStarted();
     return () => {
       this.subscribers.delete(fn);
-      if (this.subscribers.size === 0) this.stop();
+      if (this.subscribers.size === 0 && this.immediate.size === 0) this.stop();
+    };
+  }
+
+  subscribeImmediate(fn: (muts: MutationRecord[]) => void): () => void {
+    this.immediate.add(fn);
+    this.ensureStarted();
+    return () => {
+      this.immediate.delete(fn);
+      if (this.subscribers.size === 0 && this.immediate.size === 0) this.stop();
     };
   }
 
   private ensureStarted() {
     if (this.observer) return;
     this.observer = new MutationObserver((muts) => {
-      const room = MAX_PENDING - this.pending.length;
-      if (room > 0) {
-        // Без spread: `push(...muts)` на большой пачке даёт RangeError.
-        for (let i = 0; i < muts.length && i < room; i++) this.pending.push(muts[i]);
+      for (const fn of this.immediate) {
+        try {
+          fn(muts);
+        } catch (err) {
+          log.error("dom", "immediate subscriber threw", err);
+        }
       }
-      if (muts.length > room) this.dropped += muts.length - Math.max(room, 0);
-      this.schedule();
+      if (this.subscribers.size === 0) return;
+      // Текстовые тики (characterData) — только немедленным подписчикам:
+      // обычная очередь их не видит, как и прежде (см. observe() ниже).
+      let queued = 0;
+      for (let i = 0; i < muts.length; i++) {
+        if (muts[i].type === "characterData") continue;
+        // Без spread: `push(...muts)` на большой пачке даёт RangeError.
+        if (this.pending.length < MAX_PENDING) this.pending.push(muts[i]);
+        else this.dropped++;
+        queued++;
+      }
+      if (queued > 0) this.schedule();
     });
     // Набор опций — осознанный минимум (закреплён инвариантом в
     // tests/invariants/architecture.test.ts): childList + только атрибуты
-    // class/style. characterData НЕ включён намеренно — текстовые тики
-    // (таймеры, счётчики готовности) мутируют каждую секунду и затопили бы
-    // очередь; подписчики и так пересканируют DOM по батчу childList.
+    // class/style + characterData. Текстовые тики (таймеры, счётчики
+    // готовности) мутируют каждую секунду и затопили бы очередь — поэтому
+    // characterData получают ТОЛЬКО немедленные подписчики, в обычную
+    // очередь эти записи не попадают (фильтр выше). Немедленным он нужен:
+    // сайт меняет подпись этапа через Text-узел (Vue setText → nodeValue),
+    // без childList — смена дня иначе ждала секундного опроса (внешний
+    // аудит №4, §2.2).
     this.observer.observe(document.documentElement, {
       childList: true,
       subtree: true,
       attributes: true,
       attributeFilter: ["class", "style"],
+      characterData: true,
     });
     // Если вкладку свернули после того, как rAF уже был запланирован, он
     // никогда не вызовется — подхватываем проход таймером.
@@ -293,6 +327,11 @@ export const domObserver = new SharedDomObserver();
 /** Подписаться на изменения DOM через общий наблюдатель. */
 export function onDomChange(fn: DomSubscriber): () => void {
   return domObserver.subscribe(fn);
+}
+
+/** Немедленный подписчик (до кадра) — см. SharedDomObserver.immediate. */
+export function onDomChangeImmediate(fn: (muts: MutationRecord[]) => void): () => void {
+  return domObserver.subscribeImmediate(fn);
 }
 
 /**

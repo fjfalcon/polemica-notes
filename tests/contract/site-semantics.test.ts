@@ -8,6 +8,18 @@ import {
   roomProbes,
   ruLocaleProbes,
   roomCssProbes,
+  roomRatingProbes,
+  profileRatingProbes,
+  roomPpkProbes,
+  ruPpkProbes,
+  roomPlayerActionProbes,
+  roomPlayerVolumeProbes,
+  roomBestMoveProbes,
+  ruBestMoveProbes,
+  enBestMoveProbes,
+  searchCardProbes,
+  ruPlayerActionProbes,
+  ratingPageProbes,
   runProbes,
   siteCssProbes,
   siteRollerAnimationMs,
@@ -30,9 +42,9 @@ describe("живые семантические контракты бандло�
   test("состояния, ветки и матрицы кнопок означают то, что мы им приписываем", async ({
     skip,
   }) => {
-    let gs: string, room: string, ru: string, css: string, roomCss: string;
+    let gs: string, room: string, ru: string, css: string, roomCss: string, profile: string, ratingPage: string, en: string;
     try {
-      [gs, room, ru, css, roomCss] = (
+      [gs, room, ru, css, roomCss, profile, ratingPage, en] = (
         await Promise.all([
           download(siteFixture.bundles.gameSearch.url),
           download(siteFixture.bundles.roomMain.url),
@@ -42,6 +54,12 @@ describe("живые семантические контракты бандло�
           download(siteFixture.bundles.mainCss.url),
           // Стили комнаты: на них стоит перестановка плашки игрока по углам.
           download(siteFixture.bundles.roomCss.url),
+          // Профиль: рейтинг в карточке уровня и истории игр (скрыть рейтинг).
+          download(siteFixture.bundles.profile.url),
+          // Страница лидеров /ratings (скрыть рейтинг).
+          download(siteFixture.bundles.ratingPage.url),
+          // EN-локаль: подписи кнопок ЛХ и конца речи (точное совпадение).
+          download(siteFixture.bundles.localeEn.url),
         ])
       ).map((d) => d.text);
     } catch (error) {
@@ -51,10 +69,22 @@ describe("живые семантические контракты бандло�
 
     const failed = [
       ...runProbes(gameSearchProbes, gs).map((r) => ({ ...r, bundle: "game-search" })),
+      ...runProbes(searchCardProbes, gs).map((r) => ({ ...r, bundle: "game-search" })),
       ...runProbes(roomProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
       ...runProbes(ruLocaleProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
       ...runProbes(siteCssProbes, css).map((r) => ({ ...r, bundle: "main.css" })),
       ...runProbes(roomCssProbes, roomCss).map((r) => ({ ...r, bundle: "room/style.css" })),
+      ...runProbes(roomRatingProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
+      ...runProbes(profileRatingProbes, profile).map((r) => ({ ...r, bundle: "profile" })),
+      ...runProbes(roomPpkProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
+      ...runProbes(ruPpkProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
+      ...runProbes(roomPlayerActionProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
+      ...runProbes(ruPlayerActionProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
+      ...runProbes(roomPlayerVolumeProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
+      ...runProbes(roomBestMoveProbes, room).map((r) => ({ ...r, bundle: "room-main" })),
+      ...runProbes(ruBestMoveProbes, ru).map((r) => ({ ...r, bundle: "RU" })),
+      ...runProbes(enBestMoveProbes, en).map((r) => ({ ...r, bundle: "EN" })),
+      ...runProbes(ratingPageProbes, ratingPage).map((r) => ({ ...r, bundle: "rating" })),
     ].filter((r) => !r.ok);
     expect(
       failed,

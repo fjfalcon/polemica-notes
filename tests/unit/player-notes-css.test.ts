@@ -14,7 +14,7 @@ vi.mock("@core/env", () => ({
 vi.mock("@core/log", () => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
-vi.mock("@core/dom", () => ({ onDomChange: vi.fn(), paintNickEl: vi.fn() }));
+vi.mock("@core/dom", () => ({ onDomChangeImmediate: vi.fn(() => () => undefined), onDomChange: vi.fn(), paintNickEl: vi.fn() }));
 vi.mock("@core/messaging", () => ({ onMessage: vi.fn(), sendRuntime: vi.fn() }));
 vi.mock("../../src/content/camera-flip", () => ({
   toggleFlipForPlayer: vi.fn(),

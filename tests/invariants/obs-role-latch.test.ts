@@ -84,7 +84,7 @@ describe("симметрия автомода: таймер видимости �
 describe("латч против живого узла (аудит скрытия ролей 29.08.2026, №1/№2)", () => {
   test("№1: ранний выход schedule сверяет латч с живым пином, не с памятью", () => {
     expect(source).toMatch(
-      /lastAppliedRoleVisibility === targetVisibility && pinHolds\(targetVisibility\)/,
+      /lastAppliedRoleVisibility === targetVisibility && roleStateHolds\(targetVisibility\)/,
     );
   });
 
@@ -173,7 +173,7 @@ describe("смена сцены только по живому распозна�
     expect(gateIdx).toBeLessThan(equalIdx);
     expect(gateIdx).toBeLessThan(armIdx);
     // Второй гейт — в окне подтверждения, между повторным детектом и логом.
-    const confirmDetect = source.indexOf("const confirmedTimeOfDay = detectTimeOfDay();");
+    const confirmDetect = source.indexOf("const confirmedTimeOfDay = detectPhaseAfter(currentTimeOfDay);");
     const confirmLog = source.indexOf("фаза подтверждена", confirmDetect);
     expect(confirmDetect).toBeGreaterThan(-1);
     const confirmGate = source.indexOf("if (!lastDetectWasLive) return;", confirmDetect);
@@ -260,7 +260,10 @@ describe("жалоба 01.10.2026: ночной показ роли ждёт н�
     );
     expect(body).toMatch(/const shouldShowRoles = roleTargetFor\(timeOfDay\) === "visible";/);
     expect(body, "снимок цели в таймере — класс «отравленный снимок»").toMatch(
-      /applyRoleVisibility\(roleTargetFor\(timeOfDay\) === "visible"\)/,
+      /applyRoleVisibility\(roleTargetFor\(phaseNow\) === "visible"\)/,
+    );
+    expect(body, "ночной таймер после наступившего дня не открывает роль (аудит №4, H04)").toMatch(
+      /const phaseNow = timeOfDay === "night" && currentTimeOfDay !== "night" \? "day" : timeOfDay;/,
     );
   });
 
@@ -269,7 +272,7 @@ describe("жалоба 01.10.2026: ночной показ роли ждёт н�
       source.indexOf("async function restorePersistedAutoState"),
       source.indexOf("// ─────────────────────────── видимость своей роли"),
     );
-    expect(body).toMatch(/applyRoleVisibility\(roleTargetFor\(currentTimeOfDay\) === "visible"\)/);
+    expect(body).toMatch(/applyRoleVisibility\(roleTargetFor\(restored\) === "visible"\)/);
     expect(body).not.toMatch(/applyRoleVisibility\(currentTimeOfDay === "night"\)/);
   });
 
@@ -279,7 +282,7 @@ describe("жалоба 01.10.2026: ночной показ роли ждёт н�
       source.indexOf("function startDOMMonitoring"),
     );
     expect(body, "гейт закрыт при планировании — показ запускает сцена").toMatch(
-      /if \(timeOfDay === "night"\) scheduleRoleVisibility\(timeOfDay\);/,
+      /if \(timeOfDay === "night" && currentTimeOfDay === "night"\) scheduleRoleVisibility\(timeOfDay\);/,
     );
     expect(body, "молчаливый провал смены уже стоил роли в эфире").toMatch(/showToast\(/);
   });
@@ -316,3 +319,37 @@ describe("жалоба 01.10.2026: ночной показ роли ждёт н�
     );
   });
 });
+
+/**
+ * 21.10.2026: сайт прячет роли общим флагом roleDisplay через v-show —
+ * `style.display` на КАЖДОЙ роли принадлежит ему. Наша запись display
+ * рассинхронизировала свою роль с сокомандниками («Бош не показывается,
+ * моя только по V»), а у подмены — раскрывала состав при смене флага.
+ * Наши слои — только visibility/opacity/pointer-events; детектор скрытия
+ * сайта (isNativeRoleHidden) на этом инварианте и держится.
+ */
+describe("display на ролях — флаг сайта, наш код его не пишет", () => {
+  const files = [
+    "src/content/features/auto-start.ts",
+    "src/content/role-pin.ts",
+    "src/content/features/role-faker.ts",
+  ];
+  test.each(files)("%s: ни одной записи display", (rel) => {
+    const code = fs
+      .readFileSync(path.join(ROOT, rel), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/.*$/gm, "");
+    expect(code, "style.display = …").not.toMatch(/\.style\.display\s*=(?!=)/);
+    expect(code, "setProperty('display')").not.toMatch(/setProperty\(\s*["']display["']/);
+    expect(code, "removeProperty('display')").not.toMatch(/removeProperty\(\s*["']display["']/);
+  });
+
+  test("одна власть: auto-start не шлёт сайту D и не пишет display — нейтрализует правилом стилей", () => {
+    const code = fs.readFileSync(path.join(ROOT, "src/content/features/auto-start.ts"), "utf8");
+    expect(code, "синтетического D сайту больше нет").not.toMatch(/new KeyboardEvent\(/);
+    expect(code).not.toMatch(/dispatchEvent\(/);
+    expect(code, "нейтрализатор — таблица стилей").toMatch(/display: \$\{SITE\.roleDisplayValue\} !important/);
+    expect(code, "решение сайта принимается немедленным подписчиком").toMatch(/onDomChangeImmediate\(onRoleDomImmediate\)/);
+  });
+});
+

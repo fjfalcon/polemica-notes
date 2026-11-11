@@ -114,3 +114,20 @@ describe("refreshMark: эпизод и освежение", () => {
     expect(parseMark(serializeMark(mark))).toEqual(mark);
   });
 });
+
+describe("диагностика роспуска совместима с прежними метками", () => {
+  test("время сигнала сохраняется при сериализации и reload", () => {
+    const mark = {issuedAt: NOW - 5000, refreshedAt: NOW, roomStoppedAt: NOW - 1000};
+    expect(parseMark(serializeMark(mark))).toEqual(mark);
+    expect(refreshMark(mark, NOW + 1000)).toEqual({...mark, refreshedAt: NOW + 1000});
+  });
+  test.each(["bad", null, -1, NOW + 1, NOW - PENDING_HARD_CAP_MS - 1])("битое необязательное время %s отбрасывается", roomStoppedAt => {
+    expect(parseMark(JSON.stringify({issuedAt: NOW - 5000, refreshedAt: NOW, roomStoppedAt})))
+      .toEqual({issuedAt: NOW - 5000, refreshedAt: NOW});
+  });
+});
+
+test("сигнал может предшествовать первой записи эпизода", () => {
+  expect(parseMark(JSON.stringify({issuedAt: NOW, refreshedAt: NOW, roomStoppedAt: NOW - 20})))
+    .toEqual({issuedAt: NOW, refreshedAt: NOW, roomStoppedAt: NOW - 20});
+});

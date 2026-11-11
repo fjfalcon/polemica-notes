@@ -26,6 +26,19 @@ describe("rankPlayerMatches", () => {
     expect(hits.map((h) => h.id)).toEqual(["3", "4", "2", "1"]);
   });
 
+  test("скрыть рейтинг: внутри одного уровня совпадения — по нику, а не по MMR", () => {
+    const hits = rankPlayerMatches(
+      "ли",
+      [
+        c("Лиса", "1", "rating", { mmr: 1000 }),
+        c("Лимон", "2", "rating", { mmr: 3000 }),
+        c("Лира", "3", "rating", { mmr: 2000 }),
+      ],
+      false,
+    );
+    expect(hits.map((h) => h.nick)).toEqual(["Лимон", "Лира", "Лиса"]);
+  });
+
   test("один id из разных источников — одна строка, источники слиты", () => {
     const hits = rankPlayerMatches("bob", [
       c("Bob", "7", "rating", { mmr: 2100 }),

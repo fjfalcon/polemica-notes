@@ -17,6 +17,18 @@ import { SITE } from "@core/selectors";
 import { setSettings } from "@core/settings";
 import { fetchActiveGames, fetchRoleBreakdown, findRatingPlayer } from "@core/polemica-api";
 import { rememberSeenPlayers } from "@core/seen-players";
+import { browser } from "@core/env";
+import { isStreaming, watchStreamState } from "@core/stream-state";
+import { aliasPolicy } from "@shared/alias-policy";
+import type { Settings } from "@shared/types";
+import {
+  NOTES_KEY,
+  aliasFrom,
+  buildAliasIndex,
+  loadNotes,
+  nickWithAlias,
+  type AliasIndex,
+} from "@core/notes-store";
 import { isGameRoomPath } from "@shared/routes";
 import {
   SORT_MODES,
@@ -29,7 +41,7 @@ import {
   type SummaryRow,
 } from "@shared/table-summary";
 import { playerIdFromNumberEl } from "../features/nick-plate";
-import type { Feature } from "@core/feature";
+import type { Feature, FeatureContext } from "@core/feature";
 
 const SCOPE = "table-summary";
 /** Режим сортировки помнится между играми (вкус пользователя, не состояние). */
@@ -69,11 +81,14 @@ export function tableSignature(players: readonly TablePlayer[]): string {
   return players.map((p) => `${p.seat}:${p.nick.toLowerCase()}`).join("|");
 }
 
-const TIER_BG: Record<string, string> = {
-  top: "rgba(74,222,128,.20)",
-  bottom: "rgba(148,163,184,.16)",
-  mid: "transparent",
-};
+/**
+ * Цвет тройки — через атрибут и CSS, не inline: режим «Скрыть рейтинг»
+ * гасит его вместе с колонкой (цвет «тройка сверху» и есть рейтинг).
+ */
+const TIER_CSS =
+  '.pn-table-summary-panel .pn-ts-row[data-pn-tier="top"]{background:rgba(74,222,128,.20);}' +
+  '.pn-table-summary-panel .pn-ts-row[data-pn-tier="bottom"]{background:rgba(148,163,184,.16);}' +
+  "html[data-pn-hide-rating] .pn-table-summary-panel .pn-ts-row{grid-template-columns:22px 1fr 62px 62px;background:transparent;}";
 
 class TableSummaryPanel extends FloatingPanel {
   private listEl: HTMLElement | null = null;
@@ -104,7 +119,8 @@ class TableSummaryPanel extends FloatingPanel {
       ".pn-table-summary-panel .pn-ts-nick{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#fff;text-decoration:none;}" +
       ".pn-table-summary-panel a.pn-ts-nick:hover{text-decoration:underline;}" +
       ".pn-table-summary-panel .pn-ts-num{text-align:right;font-variant-numeric:tabular-nums;}" +
-      ".pn-table-summary-panel .pn-ts-dim{opacity:.55;}";
+      ".pn-table-summary-panel .pn-ts-dim{opacity:.55;}" +
+      TIER_CSS;
     body.appendChild(style);
     const list = document.createElement("div");
     Object.assign(list.style, { height: "100%", overflowY: "auto", padding: "6px" });
@@ -137,10 +153,10 @@ class TableSummaryPanel extends FloatingPanel {
     for (const r of sortRows(rows, sortMode)) {
       const row = document.createElement("div");
       row.className = "pn-ts-row";
-      row.style.background = TIER_BG[tiers.get(r.seat) ?? "mid"];
+      row.dataset.pnTier = tiers.get(r.seat) ?? "mid";
       row.appendChild(cell(String(r.seat), "pn-ts-num"));
       row.appendChild(nickCell(r));
-      row.appendChild(cell(r.mmr === null ? "—" : String(r.mmr), "pn-ts-num"));
+      row.appendChild(ratingCell(cell(r.mmr === null ? "—" : String(r.mmr), "pn-ts-num")));
       row.appendChild(sideCell(r, "civ"));
       row.appendChild(sideCell(r, "maf"));
       list.appendChild(row);
@@ -155,18 +171,32 @@ function cell(text: string, cls = ""): HTMLElement {
   return el;
 }
 
+/** Колонка MMR: режим «Скрыть рейтинг» прячет её CSS-ом (rating-hide.css). */
+function ratingCell(el: HTMLElement): HTMLElement {
+  el.setAttribute("data-pn-rating", "");
+  return el;
+}
+
 function buildRow(labels: string[], head: boolean): HTMLElement {
   const row = document.createElement("div");
   row.className = head ? "pn-ts-row pn-ts-head" : "pn-ts-row";
-  labels.forEach((l, i) => row.appendChild(cell(l, i === 0 || i >= 2 ? "pn-ts-num" : "")));
+  labels.forEach((l, i) => {
+    const c = cell(l, i === 0 || i >= 2 ? "pn-ts-num" : "");
+    row.appendChild(l === "MMR" ? ratingCell(c) : c);
+  });
   return row;
 }
 
 function nickCell(r: SummaryRow): HTMLElement {
-  if (!r.id) return cell(r.nick, "pn-ts-nick");
+  // Свой ник из заметки — «Ник (свой)», как в остальных списках. Строго:
+  // строка без id (до резолва или «недоступно») по истории ников чужих
+  // записей не подписывается — как плитка этого же стола (ревью 22.10.2026).
+  const policy = aliasPolicy(aliasSettings, isStreaming(aliasSettings.obs_enabled === true));
+  const label = nickWithAlias(r.nick, aliases && policy !== "none" ? aliasFrom(aliases[policy === "safe" ? "safe" : "all"], r.id, r.nick, true) : "");
+  if (!r.id) return cell(label, "pn-ts-nick");
   const a = document.createElement("a");
   a.className = "pn-ts-nick";
-  a.textContent = r.nick;
+  a.textContent = label;
   a.href = `https://polemicagame.com/profile/${encodeURIComponent(r.id)}`;
   a.target = "_blank";
   a.rel = "noopener noreferrer";
@@ -198,6 +228,31 @@ let sortMode: SortMode = "seat";
 /** Поколение резолва: поздний ответ старого состава не красит новый. */
 let generation = 0;
 let active = false;
+/** Свои ники из заметок; null — ещё не прочитаны или чтение упало (тогда голые ники). */
+let aliases: { all: AliasIndex; safe: AliasIndex } | null = null;
+/** Настройки для решения, какие свои ники показывать (тумблеры + эфир). */
+let aliasSettings: Partial<Settings> = {};
+let unwatchStream: (() => void) | null = null;
+/** Поколение включения для чтения своих ников (generation растёт и при смене стола). */
+let aliasGen = 0;
+
+async function loadAliases(): Promise<void> {
+  const gen = aliasGen;
+  try {
+    const { notes, loadFailed } = await loadNotes();
+    if (!active || gen !== aliasGen || loadFailed) return;
+    // Оба вида сразу: смена эфира перерисовывает окно без нового чтения заметок.
+    aliases = { all: buildAliasIndex(notes), safe: buildAliasIndex(notes, true) };
+    rerender();
+  } catch {
+    /* без своих ников окно всё равно полезно */
+  }
+}
+
+/** Правка заметки (в этой или другой вкладке) — свои ники перечитываются. */
+function onStorageChanged(changes: Record<string, unknown>, area: string): void {
+  if (area === "local" && NOTES_KEY in changes) void loadAliases();
+}
 
 function rerender(): void {
   panel?.render(rows);
@@ -328,7 +383,14 @@ function tick(): void {
   }
   const players = readTable();
   const sig = tableSignature(players);
-  if (players.length === 0) return; // стол ещё не отрисован — ждём
+  if (players.length === 0) {
+    if (lastSignature === "") return; // стол ещё не отрисован — ждём
+    lastSignature = "";
+    generation++;
+    rows = [];
+    rerender();
+    return;
+  }
   if (!panel) panel = new TableSummaryPanel();
   if (!panel.isMounted) panel.mount();
   if (sig === lastSignature) return;
@@ -340,10 +402,14 @@ function tick(): void {
 export const tableSummaryFeature: Feature = {
   id: "table-summary",
   settingKey: "table_summary_enabled",
-  enable() {
+  enable(ctx: FeatureContext) {
     active = true;
+    aliasSettings = ctx.settings;
+    unwatchStream = watchStreamState(rerender, () => aliasSettings.obs_enabled === true);
     sortMode = loadSortPref();
     lastSignature = "";
+    browser.storage.onChanged.addListener(onStorageChanged);
+    void loadAliases();
     tick();
     offDom = onDomChange(() => {
       if (tickTimer) return;
@@ -354,9 +420,18 @@ export const tableSummaryFeature: Feature = {
     });
     log.info(SCOPE, "enabled");
   },
+  update(ctx: FeatureContext) {
+    aliasSettings = ctx.settings;
+    rerender();
+  },
   disable() {
     active = false;
     generation++;
+    browser.storage.onChanged.removeListener(onStorageChanged);
+    unwatchStream?.();
+    unwatchStream = null;
+    aliasGen++;
+    aliases = null;
     offDom?.();
     offDom = null;
     if (tickTimer) {

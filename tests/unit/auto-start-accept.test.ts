@@ -9,6 +9,12 @@ const seam = vi.hoisted(() => ({
   subs: [] as Array<(muts: Array<{ addedNodes: unknown[] }>) => void>,
 }));
 vi.mock("@core/dom", () => ({
+  onDomChangeImmediate: (fn: (muts: MutationRecord[]) => void) => {
+    const mo = new MutationObserver(fn);
+    mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
+    return () => mo.disconnect();
+  },
+
   onDomChange: vi.fn((cb: (muts: Array<{ addedNodes: unknown[] }>) => void) => {
     seam.subs.push(cb);
     return () => {
@@ -39,7 +45,7 @@ vi.mock("@content/features/role-faker", () => ({
   isRoleFaked: () => fakerSeam.faked,
 }));
 vi.mock("@core/keyboard", () => ({
-  keyboard: { register: vi.fn(() => () => {}), registerHold: vi.fn(() => () => {}) },
+  keyboard: { register: vi.fn(() => () => {}), registerHold: vi.fn(() => () => {}), observe: vi.fn(() => () => {}) },
 }));
 
 import {
@@ -48,6 +54,7 @@ import {
   shouldRehideAfterPeek,
 } from "@content/features/auto-start";
 import { keyboard } from "@core/keyboard";
+import { pinOwnRole, releasePins } from "@content/role-pin";
 import { safeClick } from "@core/dom";
 import { log } from "@core/log";
 import type { Settings } from "@shared/types";
@@ -232,68 +239,21 @@ describe("подсматривание ролей: возврат скрытия
     autoStartFeature.disable();
   });
 
-  test("«подсмотреть» показывает и СВОЮ роль, скрытую нативно (жалоба стримера 27.08.2026)", () => {
-    // Скрытие живёт двумя слоями: CSS прячет роли ВСЕХ, а свою роль сайт
-    // прячет ещё и сам (#stop вместо иконки). Клавиша снимала только CSS —
-    // стример видел роли всех, КРОМЕ своей, то есть ровно ту, ради которой
-    // клавишу и держат.
-    const kb = vi.mocked(keyboard);
-    document.body.innerHTML = `
-      <div class="players">
-        <div class="player my-player">
-          <div class="player__role role role my-role"><svg><use href="#stop"></use></svg></div>
-        </div>
-      </div>`;
-    const dKeys: string[] = [];
-    // Сайт на свой D переворачивает иконку роли — без этого проверка возврата
-    // была бы ложно-зелёной: «уже скрыто» и без нашего участия.
-    const use = document.querySelector("use") as SVGElement;
-    const spy = vi.spyOn(document, "dispatchEvent").mockImplementation((e: Event) => {
-      if (e.type === "keydown") {
-        dKeys.push((e as KeyboardEvent).code);
-        const now = use.getAttribute("href") ?? "";
-        use.setAttribute("href", now.includes("#stop") ? "#role-mafia" : "#stop");
-      }
-      return true;
-    });
-    autoStartFeature.enable({ settings: { auto_hide_roles_enabled: true } } as never);
-    vi.advanceTimersByTime(1_100);
-    expect(document.getElementById("polemica-role-hide"), "роли скрыты CSS").not.toBeNull();
-
-    const holdCall = kb.registerHold.mock.calls.at(-1)!;
-    dKeys.length = 0;
-    (holdCall[1] as () => void)();
-    expect(document.getElementById("polemica-role-hide"), "CSS снят").toBeNull();
-    expect(dKeys, "сайту дослан D — иначе своя роль осталась бы под #stop").toContain("KeyD");
-
-    // Отпускание обязано вернуть ОБА слоя: роль, оставшаяся на экране, уедет
-    // в эфир — это ровно то, от чего фича защищает.
-    dKeys.length = 0;
-    (holdCall[2] as () => void)();
-    expect(document.getElementById("polemica-role-hide"), "CSS вернулся").not.toBeNull();
-    expect(dKeys, "нативное скрытие вернулось").toContain("KeyD");
-    spy.mockRestore();
-    autoStartFeature.disable();
+  test("после отпускания возвращаем РОВНО то скрытие, что было (21.10.2026)", () => {
+    // Решение не по «роли сейчас видны»: во время удержания они видны по
+    // определению, и сверка с DOM успевала записать «показаны» — отпускание
+    // тогда ничего не прятало, и роль уезжала в эфир. Без настроек скрытия
+    // тоже возвращаем: снятым мог быть страховочный CSS.
+    expect(shouldRehideAfterPeek({ nightShowDue: false, nightSceneSafe: true })).toBe(true);
+    expect(shouldRehideAfterPeek({ nightShowDue: false, nightSceneSafe: false })).toBe(true);
   });
 
-  test("после отпускания прячем ВСЕГДА, когда авто-скрытие включено", () => {
-    // Решение считается по настройкам и фазе, а не по «роли сейчас видны»:
-    // во время удержания они видны по определению, и сверка с DOM успевала
-    // записать «показаны» — отпускание тогда ничего не прятало, и роль
-    // оставалась на экране (то есть уезжала в эфир).
-    expect(shouldRehideAfterPeek({ autoHideRoles: true, rolePhaseSwitch: false }, "day")).toBe(true);
-    expect(shouldRehideAfterPeek({ autoHideRoles: true, rolePhaseSwitch: false }, "night")).toBe(true);
-    expect(shouldRehideAfterPeek({ autoHideRoles: true, rolePhaseSwitch: false }, null)).toBe(true);
-  });
-
-  test("ночью с автосменой решение остаётся за фазовой логикой", () => {
-    expect(shouldRehideAfterPeek({ autoHideRoles: true, rolePhaseSwitch: true }, "night")).toBe(false);
-    expect(shouldRehideAfterPeek({ autoHideRoles: true, rolePhaseSwitch: true }, "day")).toBe(true);
-  });
-
-  test("когда не прячем вовсе — возвращать нечего", () => {
-    expect(shouldRehideAfterPeek({ autoHideRoles: false, rolePhaseSwitch: false }, "night")).toBe(false);
-    expect(shouldRehideAfterPeek({ autoHideRoles: false, rolePhaseSwitch: false }, "day")).toBe(false);
+  test("ночной показ положен: не прячем только на ночной сцене эфира", () => {
+    // На ночной сцене спрятать, чтобы показ тут же открыл, — мигание.
+    expect(shouldRehideAfterPeek({ nightShowDue: true, nightSceneSafe: true })).toBe(false);
+    // Эфир ещё на дневной сцене — прятать обязательно (прежде ночью с
+    // автосменой не прятали вовсе — роли оставались на дневной сцене).
+    expect(shouldRehideAfterPeek({ nightShowDue: true, nightSceneSafe: false })).toBe(true);
   });
 
   test("автосмена работает САМА, без авто-скрытия (просьба Ильи 12.08.2026)", () => {
@@ -302,9 +262,6 @@ describe("подсматривание ролей: возврат скрытия
     expect(hidesRolesByDay({ autoHideRoles: false, rolePhaseSwitch: true })).toBe(true);
     expect(hidesRolesByDay({ autoHideRoles: true, rolePhaseSwitch: false })).toBe(true);
     expect(hidesRolesByDay({ autoHideRoles: false, rolePhaseSwitch: false })).toBe(false);
-
-    expect(shouldRehideAfterPeek({ autoHideRoles: false, rolePhaseSwitch: true }, "day")).toBe(true);
-    expect(shouldRehideAfterPeek({ autoHideRoles: false, rolePhaseSwitch: true }, "night")).toBe(false);
   });
 });
 
@@ -350,8 +307,8 @@ describe("inline-слой подчиняется фазе (жалоба Ильи
         <span class="player__role role my-role red"><svg><use href="#sheriff"></use></svg></span>
       </div>`;
     const role = document.querySelector<HTMLElement>(".my-role")!;
-    // Inline-скрытие, как его пишут вход в игру и возврат после peek.
-    role.style.display = "none";
+    // Inline-скрытие, как его пишут вход в игру и возврат после peek. БЕЗ
+    // display (21.10.2026): display:none — флаг сайта, наш слой его не пишет.
     role.style.visibility = "hidden";
     role.style.opacity = "0";
     return role;
@@ -367,8 +324,8 @@ describe("inline-слой подчиняется фазе (жалоба Ильи
     } as never);
     // Интервал фазы (~1с) + night-show (3с) + верификация (0.5с).
     vi.advanceTimersByTime(6_000);
-    expect(role.style.display, "inline снят — проверки ночью видны").not.toBe("none");
-    expect(role.style.visibility).not.toBe("hidden");
+    expect(role.style.visibility, "inline снят — проверки ночью видны").not.toBe("hidden");
+    expect(role.style.opacity).not.toBe("0");
     autoStartFeature.disable();
   });
 
@@ -385,12 +342,12 @@ describe("inline-слой подчиняется фазе (жалоба Ильи
     const kb = keyboard as unknown as { registerHold: ReturnType<typeof vi.fn> };
     const holdCall = kb.registerHold.mock.calls.at(-1)!;
     (holdCall[1] as () => void)(); // зажали V: peek поднимает inline
-    expect(role.style.display, "во время удержания роль видна").not.toBe("none");
+    expect(role.style.visibility, "во время удержания роль видна").not.toBe("hidden");
     (holdCall[2] as () => void)(); // отпустили
     expect(
-      role.style.display,
+      role.style.visibility,
       "ночью с автосменой inline не возвращается — иначе каждый отпуск гасил роль",
-    ).not.toBe("none");
+    ).not.toBe("hidden");
     autoStartFeature.disable();
   });
 
@@ -401,7 +358,7 @@ describe("inline-слой подчиняется фазе (жалоба Ильи
         <span class="player__role role my-role red"><svg><use href="#sheriff"></use></svg></span>
       </div>`;
     const role = document.querySelector<HTMLElement>(".my-role")!;
-    role.style.display = "none";
+    role.style.visibility = "hidden"; // наш inline-слой (не display — он сайта)
     autoStartFeature.enable({
       settings: {
         auto_hide_roles_enabled: true,
@@ -414,7 +371,7 @@ describe("inline-слой подчиняется фазе (жалоба Ильи
     const holdCall = kb.registerHold.mock.calls.at(-1)!;
     (holdCall[1] as () => void)();
     (holdCall[2] as () => void)();
-    expect(role.style.display, "днём скрытие возвращается").toBe("none");
+    expect(role.style.visibility, "днём скрытие возвращается").toBe("hidden");
     autoStartFeature.disable();
   });
 
@@ -430,10 +387,125 @@ describe("inline-слой подчиняется фазе (жалоба Ильи
       new KeyboardEvent("keydown", { code: "KeyD", cancelable: true }),
     );
     expect(document.getElementById("polemica-role-hide"), "CSS снят").toBeNull();
-    expect(role.style.display, "inline снят тем же нажатием — D работает с первого раза").not.toBe(
-      "none",
-    );
+    expect(
+      role.style.visibility,
+      "inline снят тем же нажатием — D работает с первого раза",
+    ).not.toBe("hidden");
     autoStartFeature.disable();
+  });
+});
+
+/**
+ * «Одна власть» (решение владельца 21.10.2026): роли видны/скрыты только по
+ * нашему CSS. Скрытие сайта (флаг roleDisplay → v-show → inline display:none
+ * на каждой роли) нейтрализовано правилом стилей, а решение игрока на сайте
+ * принимается в наш слой. Синтетического D сайту больше нет.
+ */
+describe("одна власть: флаг сайта нейтрализован, его решения — в наш слой", () => {
+  /** Стол мафии со скрытым сайтом флагом и сайтовым D (как v-show). */
+  function mafiaTableWithSiteFlag(phase: "day" | "night"): {
+    own: HTMLElement;
+    partner: HTMLElement;
+    siteToggles: () => number;
+  } {
+    document.body.innerHTML = `
+      <div class="stage"><div class="substage current">${phase === "night" ? "Ход мафии" : "Речь игрока"}</div></div>
+      <div class="player my-player">
+        <span class="player__role role my-role mafia"><svg><use href="#mafia"></use></svg></span>
+      </div>
+      <div class="player">
+        <span class="player__role role godfather"><svg><use href="#godfather"></use></svg></span>
+      </div>`;
+    const own = document.querySelector<HTMLElement>(".my-role")!;
+    const partner = document.querySelector<HTMLElement>(".godfather")!;
+    let toggles = 0;
+    document.addEventListener("keydown", (e) => {
+      if ((e as KeyboardEvent).code !== "KeyD" || (e as KeyboardEvent).ctrlKey) return;
+      toggles++;
+    });
+    // Игрок уже спрятал роли самим сайтом (его D / меню).
+    own.style.display = "none";
+    partner.style.display = "none";
+    return { own, partner, siteToggles: () => toggles };
+  }
+  /** Видит ли зритель роль: наш CSS-тег и нейтрализатор display сайта. */
+  const seen = (el: HTMLElement) =>
+    (el.style.display !== "none" || !!document.getElementById("pn-role-display-override")) &&
+    !document.getElementById("polemica-role-hide");
+
+  const pressOurD = () => {
+    const kb = keyboard as unknown as { register: ReturnType<typeof vi.fn> };
+    const roleKeyCall = kb.register.mock.calls.find((c) => c[0] === "KeyD")!;
+    (roleKeyCall[1] as (e?: KeyboardEvent) => void)(
+      new KeyboardEvent("keydown", { code: "KeyD", cancelable: true }),
+    );
+  };
+
+  test("скрытие сайта при включении принято в наш CSS; D показывает всё, сайту D не шлём", async () => {
+    const { own, partner, siteToggles } = mafiaTableWithSiteFlag("day");
+    autoStartFeature.enable({
+      settings: { auto_hide_roles_enabled: false, role_phase_auto_switch_enabled: false },
+    } as never);
+    expect(document.getElementById("polemica-role-hide"), "решение сайта принято").not.toBeNull();
+    expect([seen(own), seen(partner)]).toEqual([false, false]);
+    pressOurD();
+    expect([seen(own), seen(partner)], "своя И дон видны вместе").toEqual([true, true]);
+    expect(own.style.display, "inline display сайта мы не трогаем (инвариант №13)").toBe("none");
+    expect(siteToggles(), "синтетического D сайту больше нет").toBe(0);
+    autoStartFeature.disable();
+    expect(document.getElementById("pn-role-display-override"), "без нас решает сайт").toBeNull();
+  });
+
+  test("V при скрытии сайтом: видно всё вместе, отпустили — всё скрыто вместе", () => {
+    const { own, partner, siteToggles } = mafiaTableWithSiteFlag("day");
+    autoStartFeature.enable({
+      settings: { auto_hide_roles_enabled: false, role_phase_auto_switch_enabled: false, hotkey_role_peek: "KeyV" },
+    } as never);
+    const kb = keyboard as unknown as { registerHold: ReturnType<typeof vi.fn> };
+    const holdCall = kb.registerHold.mock.calls.at(-1)!;
+    expect((holdCall[1] as () => boolean)(), "подсматривание включилось").toBe(true);
+    expect([seen(own), seen(partner)]).toEqual([true, true]);
+    (holdCall[2] as () => void)();
+    expect([seen(own), seen(partner)], "отпустили — скрыты ОБЕ").toEqual([false, false]);
+    expect(siteToggles()).toBe(0);
+    autoStartFeature.disable();
+  });
+
+  test("ночной автопоказ при скрытии сайтом — видно всё вместе, без D сайту", () => {
+    const { own, partner, siteToggles } = mafiaTableWithSiteFlag("night");
+    autoStartFeature.enable({
+      settings: { auto_hide_roles_enabled: true, role_phase_auto_switch_enabled: true },
+    } as never);
+    vi.advanceTimersByTime(6_000);
+    expect([seen(own), seen(partner)]).toEqual([true, true]);
+    expect(siteToggles()).toBe(0);
+    autoStartFeature.disable();
+  });
+
+  test("№5: выключили авто-скрытие под дневным пином — роли стола видны", () => {
+    const { partner } = mafiaTableWithSiteFlag("day");
+    partner.style.display = "";
+    document.querySelector<HTMLElement>(".my-role")!.style.display = "";
+    autoStartFeature.enable({
+      settings: { auto_hide_roles_enabled: true, role_phase_auto_switch_enabled: false },
+    } as never);
+    pinOwnRole("hidden"); // дневной пин obs-панели
+    autoStartFeature.update!({
+      settings: { auto_hide_roles_enabled: false, role_phase_auto_switch_enabled: false },
+    } as never);
+    expect(seen(partner), "сокомандник виден").toBe(true);
+    releasePins();
+    autoStartFeature.disable();
+  });
+
+  test("CSS-скрытие прячет и уведомление «Игрок является …» (внешний аудит 21.10.2026)", () => {
+    document.body.innerHTML = `<div class="player"><div class="notifications-block player__notifications-block">
+      <div class="notification-element roleReveal"><span>Игрок является мафией</span></div></div></div>`;
+    autoStartFeature.enable({ settings: { auto_hide_roles_enabled: true } } as never);
+    const note = document.querySelector(".roleReveal")!;
+    expect(getComputedStyle(note).visibility).toBe("hidden");
+    autoStartFeature.disable();
+    expect(getComputedStyle(note).visibility).not.toBe("hidden");
   });
 });
 
@@ -468,28 +540,15 @@ describe("клавиша скрытия уступает подмене роли
 describe("peek и пин: source-стражи (№7/№10; поведение пина — в role-pin.test)", () => {
   const src = readFileSync("src/content/features/auto-start.ts", "utf8");
 
-  test("верификация ночного показа видит застрявший inline (03.09.2026)", () => {
-    // Поведенчески не закрепить без гонок с таймингами интервала фазы:
-    // окно верификации 500 мс. Страж по исходнику: проверка «показана ли»
-    // обязана включать inlineHidden, иначе inline-скрытая роль считается
-    // показанной и ретрай молчит.
-    const start = src.indexOf("const stillHidden = el");
-    expect(start).toBeGreaterThan(-1);
-    const slice = src.slice(start, start + 220);
-    expect(slice).toMatch(/\|\| getOwnRoleState\(\)\.inlineHidden/);
-    // Семантический мутант «inlineHidden && false» содержал подстроку и
-    // проходил прежнюю грепу (adversarial 03.09.2026, №7 из списка мутаций).
-    expect(slice).not.toMatch(/inlineHidden\s*&&/);
-  });
-
   test("Н6: возврат натива ночью с автосменой перевзводит ночной показ", () => {
     // V, удержанная через переход в ночь дольше night-show, оставляла роль
     // нативно скрытой до ручного D: показ отработал ПОД клавишей, а
     // applyRolePhase его не перевзводит (фаза не менялась).
     const stopStart = src.indexOf("function stopPeek");
-    const body = src.slice(stopStart, src.indexOf("function restoreNativeHide"));
-    expect(body).toMatch(/scheduleNightRoleAutoShow\(/);
-    expect(body).toMatch(/lastDetectedRolePhase === "night"/);
+    const body = src.slice(stopStart, src.indexOf("function bindPeekKey"));
+    // Поведенчески — в role-visibility-fuzz («V держали через смену на ночь»).
+    expect(body).toMatch(/showAllRoles\(\)/);
+    expect(body).toMatch(/nightShowDue\(\)/);
   });
 
   test("№7: peek поднимает пин через владельца, а не срывом стилей", () => {
@@ -497,7 +556,7 @@ describe("peek и пин: source-стражи (№7/№10; поведение п
     const body = src.slice(start, src.indexOf("function stopPeek"));
     expect(body).toMatch(/liftPins\(\)/);
     const stopBody = src.slice(src.indexOf("function stopPeek"), src.indexOf("function bindPeek"));
-    expect(stopBody, "возврат пина при отпускании").toMatch(/restoreLiftedPins\(\)/);
+    expect(stopBody, "возврат пина при отпускании").toMatch(/if \(restorePin\) restoreLiftedPins\(/);
   });
 
   test("№7: запинённый узел не считается «нашим inline» и не попадает в снимки", () => {
@@ -510,8 +569,8 @@ describe("peek и пин: source-стражи (№7/№10; поведение п
   });
 
   test("№10: D во время peek глушится и для сайта", () => {
-    const start = src.indexOf("if (peeking) {");
-    const body = src.slice(start, start + 600);
-    expect(body).toMatch(/stopPropagation/);
+    const start = src.indexOf("function handleRoleKey");
+    const body = src.slice(start, src.indexOf("if (isRoleFaked())", start));
+    expect(body).toMatch(/if \(peeking\) \{[\s\S]*stopPropagation/);
   });
 });

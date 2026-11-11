@@ -1,0 +1,51 @@
+{
+  "date": "2026-11-08",
+  "version": "9.78.0",
+  "supersedesDecisionIn": "requeue-followup-2026-11-08.json",
+  "summary": "A positively finished game now uses a prepared search connection after an explicit click. It sends one HTTP quit, waits for Response.ok, rechecks current intent, then sends start_game_search before navigating in the same tab.",
+  "eligibility": [
+    "Postgame feature and skip-confirm enabled; positive finished-game state and a consistent game id.",
+    "Foreground tab, explicit button click and no newer trusted input.",
+    "Fresh cross-tab live-match check before quit and before starting search.",
+    "Viewer/eliminated-only state, stream windows, missing identity, manual confirmation and cold connections retain the existing page flow."
+  ],
+  "navigationCheckpoints": {
+    "pending": "No quit authorized; the existing page flow may continue.",
+    "quitting": "Quit may have reached the server. A new document never retries quit or automatically starts search; it asks the user to continue manually.",
+    "search": "HTTP quit acknowledged; a new document may resume search, but never repeat quit.",
+    "queued": "Search acknowledged; reconnect may accept a server-confirmed newly assigned game."
+  },
+  "failureHandling": [
+    "Double click does not duplicate quit; HTTP errors, network errors and the 8-second quit timeout never retry quit.",
+    "Cancellation invalidates pending authorization, fetch, socket retry and late results.",
+    "New game identity, changed settings or newer trusted input stop the current intent.",
+    "Pagehide invalidates the transport readiness retained by BFCache; persisted checkpoints survive normal navigation."
+  ],
+  "validation": {
+    "productionTypecheck": "passed",
+    "testTypecheck": "passed",
+    "offline": { "passed": 3218, "files": 177, "durationSeconds": 232.96, "maxWorkers": 4 },
+    "rolesModel": "passed",
+    "chromeBuild": "passed",
+    "firefoxBuild": "passed",
+    "browserBundleSmoke": "passed",
+    "firefoxLint": { "errors": 0, "notices": 0, "warnings": 42 },
+    "independentReview": { "verdict": "К РЕЛИЗУ ГОТОВО", "targetedPassed": 152 },
+    "rolesPrivacy": "17 DOM regressions passed; fake, hidden, pinned and peeked roles cannot leak through panel text, probabilities or diagnostics"
+  },
+  "measurement": {
+    "method": "Offline deterministic tests with a fake clock and controlled HTTP/socket replies; not measurements of the live service.",
+    "controlledQuitResponseMs": 81,
+    "controlledQuitAckToSearchEmitMs": 0,
+    "meaning": "The prepared path has no fixed page-load or 8-second settle delay after the successful quit response. Real time also includes server responses, cross-tab authorization and browser scheduling.",
+    "loggedIntervals": [
+      "click to quit request",
+      "quit request to HTTP success",
+      "HTTP success to each search request",
+      "click to first search request, latest search request and search acknowledgement"
+    ],
+    "liveLatency": "not measured",
+    "priorityAfterRefresh": "not verified on a live authenticated session",
+    "fasterThanPreparedSecondTab": "not established by live measurement"
+  }
+}

@@ -11,7 +11,7 @@
  * а не подстановкой в innerHTML.
  */
 import { log } from "@core/log";
-import { idKey, isIdKey, MAX_OWN_NOTE_TEXT } from "@core/notes-store";
+import { idKey, isIdKey, MAX_ALIAS, MAX_OWN_NOTE_TEXT, nickWithAlias } from "@core/notes-store";
 import { redactNick } from "@shared/redact";
 import { TAG_PRESETS } from "./tag-palette";
 import type { ModalPort } from "./modal-port";
@@ -169,6 +169,8 @@ export function openNickColorManager(port: ModalPort): void {
   const list = document.createElement("div");
   /** Ключ записи с раскрытой палитрой (одна за раз). */
   let expandedKey: string | null = null;
+  /** Перемаскировка строк на месте — когда пересоздавать список нельзя (открыт редактор). */
+  let relabelRows: Array<() => void> = [];
   /**
    * Ключ записи, которую только что сохранили: рядом с ней на пару секунд
    * появляется «Сохранено ✓». Кнопки «Сохранить» здесь нет намеренно —
@@ -183,12 +185,18 @@ export function openNickColorManager(port: ModalPort): void {
     if (savedTimer) clearTimeout(savedTimer);
     savedTimer = setTimeout(() => {
       savedKey = null;
-      if (overlay.isConnected) render();
+      if (!overlay.isConnected) return;
+      // Открыт редактор — полная перерисовка пересоздала бы его из записи и
+      // стёрла недописанный текст (ревью 22.10.2026: «ник → заметка» терял
+      // черновик через 2 с). Тогда снимаем только бейдж.
+      if (expandedKey === null) render();
+      else list.querySelectorAll("[data-pn-saved]").forEach((n) => n.remove());
     }, 2000);
   };
 
   const render = () => {
     list.replaceChildren();
+    relabelRows = [];
     const entries = port.model.playerEntries();
     if (entries.length === 0) {
       const empty = document.createElement("div");
@@ -212,6 +220,10 @@ export function openNickColorManager(port: ModalPort): void {
         expandedKey = expandedKey === `n:${entry.key}` ? null : `n:${entry.key}`;
         render();
       };
+      const openAlias = () => {
+        expandedKey = expandedKey === `a:${entry.key}` ? null : `a:${entry.key}`;
+        render();
+      };
 
       const swatch = document.createElement("button");
       swatch.title = entry.color ? "Сменить цвет" : "Назначить цвет";
@@ -226,7 +238,16 @@ export function openNickColorManager(port: ModalPort): void {
       const who = document.createElement("div");
       who.style.cssText = "flex:1 1 auto;min-width:0;";
       const nick = document.createElement("div");
-      nick.textContent = entry.nick;
+      // Идёт эфир и осуждёнку прячут: в кадре вместо неё — «🙈» (Б4).
+      const relabel = () => {
+        const masked = entry.condemned && port.maskCondemned?.() === true;
+        nick.textContent = masked
+          ? `${entry.nick} (🙈)`
+          : nickWithAlias(entry.nick, entry.alias) + (entry.condemned ? " 🙈" : "");
+      };
+      relabel();
+      relabelRows.push(relabel);
+      if (entry.condemned) nick.title = "Осуждёнка — на эфире этот свой ник не показывается";
       nick.style.cssText =
         "color:#fff;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
       who.appendChild(nick);
@@ -254,6 +275,16 @@ export function openNickColorManager(port: ModalPort): void {
         "font-size:12px;background:rgba(99,102,241,.3);flex:0 0 auto;";
       noteBtn.addEventListener("click", openNote);
 
+      // Свой ник (22.10.2026): как ты называешь игрока — правится и здесь,
+      // не только в окне заметки на плитке.
+      const aliasBtn = document.createElement("button");
+      aliasBtn.textContent = entry.alias ? "Ник" : "+ ник";
+      aliasBtn.title = "Свой ник — в игре вместо ника сайта, в списках «Ник (свой)»";
+      aliasBtn.style.cssText =
+        "padding:4px 10px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
+        "font-size:12px;background:rgba(99,102,241,.3);flex:0 0 auto;";
+      aliasBtn.addEventListener("click", openAlias);
+
       const colorBtn = document.createElement("button");
       colorBtn.textContent = "Цвет";
       colorBtn.style.cssText =
@@ -268,8 +299,10 @@ export function openNickColorManager(port: ModalPort): void {
         "padding:4px 8px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
         "font-size:12px;background:rgba(239,68,68,.35);flex:0 0 auto;";
       del.addEventListener("click", () => {
-        // Подтверждение: удаляется и заметка тоже, а не только цвет.
-        const what = entry.text ? "заметку и цвет" : "цвет";
+        // Подтверждение называет ВСЁ, что уйдёт: запись удаляется целиком
+        // (ревью 22.10.2026: у записи с одним своим ником спрашивалось «цвет»).
+        const parts = [entry.text && "заметку", entry.alias && "свой ник", entry.color && "цвет"].filter(Boolean);
+        const what = parts.length ? parts.join(", ") : "запись";
         if (!window.confirm(`Удалить ${what} игрока ${entry.nick}?`)) return;
         void port.model.deleteEntry(entry.key).then((ok) => {
           if (ok) {
@@ -283,10 +316,11 @@ export function openNickColorManager(port: ModalPort): void {
       if (savedKey === entry.key) {
         const saved = document.createElement("span");
         saved.textContent = "Сохранено ✓";
+        saved.dataset.pnSaved = "1";
         saved.style.cssText = "color:#22c55e;font-size:11px;flex:0 0 auto;";
         row.appendChild(saved);
       }
-      row.append(noteBtn, colorBtn, del);
+      row.append(aliasBtn, noteBtn, colorBtn, del);
       list.appendChild(row);
 
       // ── раскрытая палитра ──
@@ -332,6 +366,78 @@ export function openNickColorManager(port: ModalPort): void {
         list.appendChild(palette);
       }
 
+      // ── раскрытый редактор своего ника ──
+      if (expandedKey === `a:${entry.key}`) {
+        const editor = document.createElement("div");
+        editor.style.cssText =
+          "display:flex;gap:8px;align-items:center;padding:8px 0 12px;" +
+          "border-bottom:1px solid rgba(255,255,255,.08);";
+        const input = document.createElement("input");
+        input.type = entry.condemned && port.maskCondemned?.() === true ? "password" : "text";
+        input.maxLength = MAX_ALIAS;
+        input.value = entry.alias;
+        input.placeholder = `Свой ник для ${entry.nick}`;
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        input.style.cssText = `
+          flex: 1 1 auto; min-width: 0; box-sizing: border-box;
+          background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2);
+          border-radius: 6px; color: #fff; padding: 6px 8px; font: 13px system-ui, sans-serif;
+        `;
+        const cancel = document.createElement("button");
+        cancel.textContent = "Отмена";
+        cancel.style.cssText =
+          "padding:5px 12px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
+          "font-size:12px;background:rgba(255,255,255,.12);flex:0 0 auto;";
+        const close = () => {
+          expandedKey = null;
+          render();
+        };
+        cancel.addEventListener("click", close);
+        const save = document.createElement("button");
+        save.textContent = "Сохранить";
+        save.style.cssText =
+          "padding:5px 12px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
+          "font-size:12px;background:rgba(99,102,241,.6);flex:0 0 auto;";
+        const doSave = () => {
+          const own = `a:${entry.key}`;
+          void port.model.setAlias(entry.key, input.value, box.checked).then((ok) => {
+            if (!ok) {
+              save.textContent = "не сохранилось";
+              return;
+            }
+            flashSaved(entry.key);
+            // Пока ждали фон, могли открыть другой редактор — его не трогаем.
+            if (expandedKey !== own) return;
+            expandedKey = null;
+            render();
+          });
+        };
+        save.addEventListener("click", doSave);
+        // Хоткеи расширения не должны срабатывать при наборе; Enter — сохранить.
+        input.addEventListener("keydown", (e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") {
+            e.preventDefault();
+            doSave();
+          }
+        });
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.checked = entry.condemned;
+        const boxLabel = document.createElement("label");
+        boxLabel.title =
+          "Осуждёнка — не показывать этот ник на эфире (вне эфира он виден). Эфир — через интеграцию OBS";
+        boxLabel.style.cssText =
+          "display:flex;align-items:center;gap:4px;color:rgba(255,255,255,.75);font-size:12px;" +
+          "flex:0 0 auto;cursor:pointer;user-select:none;";
+        boxLabel.append(box, document.createTextNode("Осуждёнка"));
+        editor.append(input, boxLabel, cancel, save);
+        list.appendChild(editor);
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+      }
+
       // ── раскрытый редактор заметки ──
       if (expandedKey === `n:${entry.key}`) {
         const editor = document.createElement("div");
@@ -366,12 +472,17 @@ export function openNickColorManager(port: ModalPort): void {
           "padding:5px 12px;color:#fff;border:none;border-radius:6px;cursor:pointer;" +
           "font-size:12px;background:rgba(99,102,241,.6);";
         const doSave = () => {
+          const own = `n:${entry.key}`;
           void port.model.setNoteText(entry.key, area.value.trim()).then((ok) => {
-            if (ok) {
-              expandedKey = null;
-              flashSaved(entry.key);
-              render();
-            } else save.textContent = "не сохранилось";
+            if (!ok) {
+              save.textContent = "не сохранилось";
+              return;
+            }
+            flashSaved(entry.key);
+            // Пока ждали фон, могли открыть другой редактор — его не трогаем.
+            if (expandedKey !== own) return;
+            expandedKey = null;
+            render();
           });
         };
         save.addEventListener("click", doSave);
@@ -441,7 +552,7 @@ export function openNickColorManager(port: ModalPort): void {
 
   const hint = document.createElement("div");
   hint.textContent =
-    "Цвет применяется сразу; заметка — по кнопке «Сохранить» (или Ctrl+Enter). " +
+    "Цвет применяется сразу; заметка — по «Сохранить» (или Ctrl+Enter), свой ник — по Enter. " +
     "То же самое можно делать прямо в игре — кнопка ✎ на плитке игрока.";
   hint.style.cssText = "color:rgba(255,255,255,.45);font-size:11px;margin:10px 0 12px;";
 
@@ -453,7 +564,15 @@ export function openNickColorManager(port: ModalPort): void {
     "padding:8px 16px;color:#fff;border:none;border-radius:8px;cursor:pointer;" +
     "font-size:13px;background:rgba(255,255,255,.12);display:block;margin-left:auto;";
 
+  // Эфир начался/кончился при открытом окне — строки перемаскируются (Н5).
+  // Открытый редактор не пересоздаём: это стёрло бы черновик.
+  const offStream = port.onStreamChange?.(() => {
+    if (!overlay.isConnected) return;
+    if (expandedKey === null) render();
+    else relabelRows.forEach((f) => f()); // редактор с черновиком не трогаем (Н10)
+  }) ?? null;
   const close = () => {
+    offStream?.();
     document.removeEventListener("keydown", onKey, true);
     overlay.remove();
     port.unregisterModal(close);

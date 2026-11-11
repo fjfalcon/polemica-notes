@@ -8,11 +8,14 @@
  *     `classList`. Имя игрока живёт в реестре ДВАЖДЫ: `SITE.player` = ".player"
  *     и `SITE_CLASS.player` = "player" (инвариант сверяет их согласованность).
  *  2. `src/static/notes.css` — CSS дистрибутива, в нём разметка сайта и
- *     scoped-хеш Vue (`[data-v-…]`). Список известных классов — в инварианте
+ *     scoped-хеш Vue (`[data-v-…]`); `src/static/rating-hide.css` — классы
+ *     рейтинга сайта для режима «Скрыть рейтинг». Список известных классов — в инварианте
  *     `architecture.test.ts`, он же чек-лист.
  *  3. CSS-БЛОКИ внутри фич: скрытие роли (auto-start), сворачивание ников
  *     (nick-plate), таблица разбора (match-stats), тултипы, порядок контролов,
  *     страница матча. Они перечислены в том же инварианте поимённо.
+ *     Плюс цвет затухания фото в profile-photo (FADE_TO) — это верх
+ *     градиента `.avatarlvl__info` сайта.
  *
  * Пункты 2 и 3 отваливаются МОЛЧА: правило просто перестаёт применяться,
  * исключения нет. Поэтому после редизайна проходить надо по всем трём.
@@ -20,6 +23,9 @@
 
 /** CSS-селекторы элементов сайта. */
 export const SITE = {
+  searchBootstrap: "game-search",
+  csrfParam: 'meta[name="csrf-param"]',
+  csrfToken: 'meta[name="csrf-token"]',
   // Игроки и их панели
   player: ".player",
   playerDesktop:
@@ -128,9 +134,34 @@ export const SITE = {
   /** Ник и аватар на странице профиля. */
   profileNickname: ".profileinfo__main-info-username",
   profileAvatarImg: "img.profileinfo__main-info-avatar",
-  /** Список участников (лобби/итоги): строка и ник внутри неё. */
+  /**
+   * Левая карточка профиля (уровень и MMR). До отключения Ready Player Me в
+   * ней стоял 3D-аватар (`.avatarlvl__avatar`); теперь — только блок
+   * `.avatarlvl__info`, перед которым profile-photo ставит фото.
+   */
+  profileLevelCard: ".avatarlvl__container",
+  /**
+   * Карточка профиля на странице поиска: ряд «картинка | ник, уровень, MMR».
+   * До Ready Player Me первым в нём стоял `.p-play__profile-avatar` —
+   * search-card-avatar ставит туда свою картинку.
+   */
+  searchProfileMain: ".p-play__profile-main",
+  /** Кнопка «Профиль» в той же карточке (bundle/game-search, 11.11.2026): за ней — «У меня тильт». */
+  searchProfileButtonLink: ".p-play__profile-btn",
+  /** Аватар в шапке сайта — это сам пользователь (`getUserAvatarUrl(user.avatar,"100x")`). */
+  headerAvatarImg: "img.p-header__userCont-user-avatar",
+  /** Список участников (лобби/итоги): строка, ник и аватар внутри неё. */
   participantsItem: ".participants-item",
   participantsName: ".participants-name",
+  participantsImage: "img.participants-image",
+  /**
+   * Строка «Участников» ОЧЕРЕДИ: список стоит внутри галочки режима
+   * (`label.p-play__profile-modes-item`). Тот же компонент живёт и в скрытых
+   * поповерах витрины «Открытые лобби» (`.p-play__lobby-table-cell-players`)
+   * — там сайт аватары присылает сам, и запросы были бы впустую
+   * (adversarial 22.10.2026, блокер).
+   */
+  queueParticipantsItem: ".p-play__profile-modes-item .participants-item",
   /** Номер матча на странице игры (role-marker). */
   gameIdBlock: ".game-info-block .game-id, .game-info-block__section.game-id",
   /** Правая колонка профиля и её вкладки — точка вставки наших карточек. */
@@ -145,13 +176,59 @@ export const SITE = {
    *  отсутствии узла просто ничего не делает — оставлен как безопасный
    *  фолбэк до правки самой фичи. */
   playerMenuWithRole: ".player__menu.with-role",
+  /**
+   * Подтверждение ППК (04.11.2026). Пункт меню игрока на плитке: `<li>` с
+   * подписью Loc.vote_for_menu_stop («ППК»); клик сразу запускает голосование
+   * (подтверждение у сайта только судье). Меню судьи — тот же контейнер.
+   */
+  playerMenuItem: ".player .menu__container li",
+  /**
+   * Ползунок «Громкость игрока» в меню плитки (VolumeControl, room/bundle,
+   * сверено 09.11.2026): `.menu__container … .volume input[type=range]`,
+   * 0…100. Меню рисуется только открытым (v-if) — ползунок живёт, пока оно
+   * открыто. Тот же блок в меню судьи.
+   */
+  playerVolumeSlider: '.player .menu__container .volume input[type="range"]',
+  playerMenuContainer: ".player .menu__container",
+  /** Ссылка «Профиль» в том же меню: playerProfileLink = /profile/<userId>. */
+  playerMenuProfileLink: 'a[href^="/profile/"]',
+  /**
+   * Голосование за наказание на плитке обвиняемого (PenaltyVoting): заголовок
+   * `${type}_voting_title` и кнопки «Да»/«Нет». Тот же блок у технического фола
+   * и удаления — ППК узнаём по заголовку.
+   */
+  penaltyVoting: ".voting",
+  penaltyVotingTitle: ".voting__top-title",
+  penaltyVotingButton: "button.voting__bottom-button",
+  /**
+   * Кнопка действия на плитке игрока (PlayerAction, 04.11.2026): выставить,
+   * проголосовать, выстрел, проверка. Лежит в `.player__actions`, пока у
+   * игрока есть действие (v-if); у выставления контейнер `show-on-hover` —
+   * opacity:0 до наведения, поэтому «видимость» по стилю не проверяем.
+   */
+  playerActionButton: ".player__actions .player-action",
+  /** Подпись кнопки действия (Loc.nominate_player и др.) — носитель подсказки клавиши. */
+  playerActionLabel: ".player-action__content > span",
   // Роли (SVG-спрайты)
   roleUse: "use[href], use[xlink\\:href]",
+  /** Корень Vue-приложения страницы поиска (у него __vue__ — клиент поиска сайта). */
+  vueRoot: "#app",
   /** МЁРТВЫЙ по текущей разметке: роли берутся из внешнего SVG-спрайта,
    *  инлайновых <symbol> на странице нет. Потребители деградируют молча. */
   roleSymbols: "symbol#civilian, symbol#sheriff, symbol#mafia, symbol#godfather",
   myRole: ".player__role.role.role.my-role",
   anyRole: ".player__role.role.role",
+  /**
+   * Собственный display роли в стилях сайта (room/bundle/style.css:
+   * `.player__role{display:flex}`). Им нейтрализуем скрытие сайта (v-show
+   * пишет inline display:none) — правилом таблицы стилей с !important.
+   */
+  roleDisplayValue: "flex",
+  /**
+   * Уведомление на плитке «Игрок является мафией» (сокет on_reveal_role;
+   * класс элемента = тип уведомления). То же знание, что значок роли.
+   */
+  roleRevealNotice: ".notifications-block .roleReveal",
   // Свои роли — все варианты разметки для скрытия/показа (auto-start)
   // Сверено с бандлом (аудит устойчивости 01.08.2026): класс my-role стоит
   // НА САМОМ элементе роли, отдельного предка .my-role сайт не создаёт —
@@ -163,6 +240,13 @@ export const SITE = {
   ] as readonly string[],
   // Стадии игры (день/ночь/голосование)
   stage: ".stage, .substage",
+  /**
+   * Узлы, смена которых может сменить фазу для немедленного детектора ролей:
+   * этап, сам роллер (сайт ЗАМЕНЯЕТ DesktopRoller на RollerFixedState —
+   * «Промах», пауза, итог — мутациями с target `.roller`, ни одна не внутри
+   * `.stage`; внешний аудит №4, B01) и экран `.ended`.
+   */
+  rolePhaseHost: ".roller, .stage, .substage, .ended, .new-stage",
   substageCurrent: ".substage.current",
   /** МЁРТВЫЙ: сайт рендерит подстадии только как current/next/temp. */
   substageActive: ".substage.active",
@@ -347,8 +431,18 @@ export const SITE = {
   statsCellTitle: ".cell.title",
   /** Ячейка с ником игрока в таблице разбора — якорь ссылки на профиль. */
   statsUsernameCell: ".cell.username",
+  /** Заголовок строки таблицы разбора (подпись, не игрок): `cell title username`. */
+  statsTitleCell: ".title",
   /** Строка фазы в таблице разбора (её строим мы, имя общее). */
   statsRowPhase: ".row[data-phase]",
+  /**
+   * История игр на профиле (режим «Скрыть рейтинг»): колонки задаёт бандл
+   * профиля массивом columns — Дата, Тип игры, Роль, MMR, Результат.
+   * Колонку MMR ищем по подписи заголовка, а не по номеру.
+   */
+  profileGamesHeadItem: ".profileGames__table-head-row-item",
+  profileGamesBodyRow: ".profileGames__table-body-row",
+  profileGamesBodyItem: ".profileGames__table-body-row-item",
   penaltyDots: ".penalty-dots",
   penaltyDot: ".penalty-dot",
   bestMoveDot: ".best-move-dot",
@@ -379,6 +473,37 @@ export const TEXT = {
    */
   finishSpeechButton: ["завершите речь", "end the speech"] as readonly string[],
   outcryButton: ["выкрикнуть", "outcry"] as readonly string[],
+  /**
+   * ТОЧНЫЕ подписи кнопок лучшего хода на плитке (PlayerAction, сверено
+   * 10.11.2026): guessMaf make_guess_maf (пистолет), guessCiv make_guess_civ
+   * (сердце), guessVice make_guess_vice (корона).
+   */
+  guessAction: {
+    maf: ["оставить мафией", "select as mafia"],
+    civ: ["оставить мирным", "select as civilian"],
+    vice: ["оставить за главного", "leave in charge"],
+  } as Readonly<Record<"maf" | "civ" | "vice", readonly string[]>>,
+  /**
+   * ТОЧНЫЕ подписи переключателей режима ЛХ в центре контролов
+   * (Loc["action_" + playerAction]): guessRoles — пистолеты и сердца на
+   * плитках, guessVice — корона. Подпись guessVice совпадает с кнопкой
+   * короны на плитке — различаем контейнером (контролы, не плитка).
+   */
+  guessModeButton: {
+    roles: ["угадать роли", "guess roles"],
+    vice: ["оставить за главного", "leave in charge"],
+  } as Readonly<Record<"roles" | "vice", readonly string[]>>,
+  /**
+   * ТОЧНЫЕ подписи кнопки действия на плитке (PlayerAction.actionText, RU и EN
+   * локали комнаты, сверено 04.11.2026). Действие узнаём по подписи: в
+   * isolated world вид действия из стора сайта не прочитать.
+   */
+  playerAction: {
+    nominate: ["выставить этого игрока", "nominate this player"],
+    vote: ["проголосовать за этого игрока", "vote for this player"],
+    shot: ["сделать выстрел", "make a shot"],
+    check: ["раскрыть роль", "reveal role"],
+  } as Readonly<Record<"nominate" | "vote" | "shot" | "check", readonly string[]>>,
   /**
    * ТОЧНЫЕ подписи пункта «пауза» в меню настроек игры. Держатся здесь, а не
    * внутри pause-hotkey: их читает ещё и подсказка клавиши на кнопке, а два
@@ -595,6 +720,8 @@ export const OWN = {
   rotateButton: "rotate-button",
   muteButton: "mute-button",
   roleHideStyle: "polemica-role-hide",
+  /** Нейтрализатор скрытия ролей САЙТОМ (его v-show): display поверх inline. */
+  roleDisplayOverride: "pn-role-display-override",
   /** Контейнер для иконок, добавляемых к игроку. */
   playerIcons: "player-icons",
   /** Контейнер инлайновой статистики игрока. */
@@ -621,6 +748,8 @@ export const OWN = {
  * молча, пока `SITE` выглядел бы исправленным (внешний аудит).
  */
 export const SITE_CLASS = {
+  /** Значок роли игрока (span под v-show флага roleDisplay). */
+  playerRole: "player__role",
   /** Плитка игрока и своя плитка. */
   player: "player",
   myPlayer: "my-player",
@@ -637,6 +766,8 @@ export const SITE_CLASS = {
   button: "button",
   /** Кнопка сайта в недоступном состоянии. */
   disabled: "disabled",
+  /** Выбранный режим ЛХ в контролах (ControlsButton playerActions). */
+  activated: "activated",
   /** Контейнеры vue-scroll: по ним ищем прокручиваемого предка. */
   vueScroll: "__vuescroll",
   vueScrollPanel: "__panel",
@@ -712,6 +843,16 @@ export function matchFinishedVisible(): boolean {
   return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
 }
 
+/**
+ * Я выбыл из матча (убит, заголосован, дисквалифицирован): видимая метка на
+ * СВОЕЙ плитке. У сайта это латч на весь документ (плитки живут по месту,
+ * isKilled не сбрасывается) — привязку к текущей игре делает вызыватель.
+ */
+export function ownEliminatedVisible(): boolean {
+  const el = document.querySelector<HTMLElement>(SITE.myEliminatedState);
+  return !!el && el.offsetWidth > 0 && el.offsetHeight > 0;
+}
+
 export function classifyPhaseText(text: string): "day" | "night" | null {
   const day = hasPhaseMarker(text, TEXT.day);
   const night = hasPhaseMarker(text, TEXT.night);
@@ -719,4 +860,17 @@ export function classifyPhaseText(text: string): "day" | "night" | null {
   if (day) return "day";
   if (night) return "night";
   return null;
+}
+
+/**
+ * Подпись этапа «день», когда следующий этап — «ночь». Так выглядит и
+ * последний этап дня, и ЗАСТРЯВШАЯ подпись роллера: на `toNight` с отсчётом
+ * сайт после отсчёта не вызывает setStage (`case"evening":return`), и до
+ * следующего пакета `current` остаётся старым днём при уже ночной игре —
+ * сколько угодно дольше двух секунд (внешний аудит №6, §2.2/B03). Прятать по
+ * такой подписи можно (fail-safe), заканчивать ночь — нельзя.
+ */
+export function staleDayLabel(): boolean {
+  const text = (sel: string) => (document.querySelector(sel)?.textContent ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+  return classifyPhaseText(text(SITE.substageCurrent)) === "day" && classifyPhaseText(text(SITE.substageNext)) === "night";
 }

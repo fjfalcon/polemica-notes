@@ -11,6 +11,7 @@ import { browser } from "@core/env";
 import { log } from "@core/log";
 import { isGameRoomPath } from "@shared/routes";
 import { SITE } from "@core/selectors";
+import { predictorDiag } from "./features/roles-predictor";
 
 function snapshot(): Record<string, number> {
   const out: Record<string, number> = {};
@@ -35,6 +36,15 @@ export function setupDiagnostics(): void {
     // eslint-disable-next-line no-console
     console.log(`[polemica:diag] v${version}`, { selectors, missing });
     return { version, selectors, missing };
+  };
+
+  // Отдельная команда: разбор игрового стола глазами предиктора. Игровую
+  // разметку не увидеть вне игры, поэтому проверять фичу приходится изнутри.
+  (window as any).polemicaPredictor = () => {
+    const data = predictorDiag();
+    // eslint-disable-next-line no-console
+    console.log("[polemica:predictor]", data);
+    return data;
   };
 
   // Пассивная проверка: если это похоже на игровую страницу, но игроков нет —

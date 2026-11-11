@@ -16,6 +16,7 @@ const seam = vi.hoisted(() => ({
 }));
 
 vi.mock("@core/dom", () => ({
+  onDomChangeImmediate: () => () => {},
   onDomChange: vi.fn(() => () => {}),
   safeClick: vi.fn(),
   isVisible: () => true,

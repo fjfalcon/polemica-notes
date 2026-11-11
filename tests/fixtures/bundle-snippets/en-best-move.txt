@@ -1,0 +1,3 @@
+make_guess_maf:"Select as mafia",make_guess_civ:"Select as civilian",make_guess_vice:"Leave in charge"
+speech_player_finish:"End the speech"
+action_guessRoles:"Guess roles",action_guessVice:"Leave in charge"

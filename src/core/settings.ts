@@ -10,10 +10,13 @@ import { sanitizeObsHost } from "@shared/safe-endpoint";
 import { log } from "./log";
 import { DEFAULT_CUSTOM_COLOR } from "@shared/button-theme";
 import { DEFAULT_LAST_GAMES_COUNT } from "@shared/last-games";
+import { DEFAULT_PLAYER_ACTION_KEYS } from "@shared/player-action-keys";
 import type { Settings, SettingKey } from "@shared/types";
 
 export const DEFAULT_SETTINGS: Settings = {
   extension_enabled: true,
+  // Скрыть рейтинг — выбор игрока против тильта, по умолчанию рейтинг виден.
+  hide_rating: false,
   show_mmr: true,
   show_games: true,
   show_id: false,
@@ -23,13 +26,25 @@ export const DEFAULT_SETTINGS: Settings = {
   statistics_enabled: true,
   session_stats_enabled: false,
   // Микрофон через OBS (09.10.2026): действие над эфиром — включает сам
-  // стример. «Mic/Aux» — стандартное имя микрофона в свежем OBS.
+  // стример. Источник "" — «авто»: главный микрофон OBS в его языке и после
+  // переименования (9.75.0; прежнее «Mic/Aux» есть не в каждом OBS).
   mic_sync_enabled: false,
-  mic_sync_input: "Mic/Aux",
+  // Подтверждение ППК — защита игрока от бана, действий за него не делает.
+  ppk_confirm_enabled: true,
+  mic_sync_input: "",
   mic_sync_hotkey: "",
   // Окно поверх стола — дело вкуса: выключено, как «Мой вечер» (09.10.2026).
   table_summary_enabled: false,
   profile_mmr_chart_enabled: true,
+  // Внешний вид без действий за игрока — включены (22.10.2026).
+  profile_photo_enabled: true,
+  search_avatars_enabled: true,
+  search_card_avatar_enabled: true,
+  // Режим «Тильт» и «У меня тильт» на странице поиска (просьба владельца
+  // 11.11.2026): весь режим отключается одной настройкой.
+  tilt_mode_enabled: true,
+  tilt_button_enabled: true,
+  own_avatar_source: "site",
   obs_auto_record_enabled: false,
   obs_clip_enabled: false,
   obs_clip_hotkey_code: "F9",
@@ -50,10 +65,17 @@ export const DEFAULT_SETTINGS: Settings = {
   disable_webcam_clicks: false,
   enable_role_faker: false,
   auto_hide_roles_enabled: false,
+  // Игра окончена — прятать нечего: стол открывается сам (23.10.2026).
+  roles_reveal_on_game_end: true,
   role_phase_auto_switch_enabled: false,
   camera_rotate_enabled: true,
   player_mute_enabled: true,
+  // Сайт сбрасывает громкость игрока с каждой игрой (просьба владельца 09.11.2026).
+  player_volume_memory_enabled: true,
   nick_colors_enabled: true,
+  nick_aliases_enabled: true,
+  nick_aliases_on_stream: true,
+  nick_aliases_hide_condemned_on_stream: true,
   // "thick" (3px) — вид, каким рамки были всегда; тонкие/средние — по вкусу.
   note_frame_width: "thick",
   btn_stats_enabled: true,
@@ -76,6 +98,9 @@ export const DEFAULT_SETTINGS: Settings = {
   // Включено: точка — прежнее поведение с 8.1.x; выключают те, кому мешает.
   note_indicator_enabled: true,
   role_marker_enabled: false,
+  // Выключено по умолчанию: панель вероятностей — нишевый аналитический
+  // инструмент, и она занимает место на экране. Включать осознанно.
+  roles_predictor_enabled: false,
   // Иконки включены: это и есть новый вид (9.26.0); текст — для тех, кому
   // подписи привычнее.
   role_marker_icons_enabled: true,
@@ -97,6 +122,26 @@ export const DEFAULT_SETTINGS: Settings = {
   // Тот же принцип, что у остальных «действий за игрока»: включает сам игрок.
   outcry_hotkey_enabled: false,
   outcry_hotkey_code: "KeyC",
+  // Досрочный конец своей речи необратим — выключено, пока игрок не включит.
+  finish_speech_hotkey_enabled: false,
+  finish_speech_hotkey_code: "KeyS",
+  // ЛХ по клавишам — внутри «Действий по цифрам» (сама фича выключена по
+  // умолчанию); выбор ЛХ обратим до «Оставить ЛХ».
+  player_action_guess: true,
+  guess_key_maf: "KeyQ",
+  guess_key_civ: "KeyW",
+  guess_key_vice: "KeyA",
+  // ВЫКЛЮЧЕНО по умолчанию (решение владельца 04.11.2026): клавиша жмёт
+  // действие за игрока, а выстрел и голос не отменить. Включив, получаешь
+  // выставление и голос; выстрел и проверку игрок включает сам — промах
+  // клавишей на выстреле это несострел.
+  player_action_keys_enabled: false,
+  player_action_nominate: true,
+  player_action_vote: true,
+  player_action_shot: false,
+  player_action_check: false,
+  player_action_keys: DEFAULT_PLAYER_ACTION_KEYS,
+  player_action_numpad: true,
   // Включено: подсказка ничего не делает за игрока и появляется только там,
   // где клавиша реально сработает.
   hotkey_hints_enabled: true,
@@ -154,6 +199,7 @@ export const DEFAULT_SETTINGS: Settings = {
   obs_auto_mode_enabled: false,
   obs_day_scene: "",
   obs_night_scene: "",
+  obs_day_scene_when_out: true,
   twitch_chat_enabled: false,
   twitch_channel_name: "",
   // true: настройка теперь реально гейтит показ панели (раньше не читалась
