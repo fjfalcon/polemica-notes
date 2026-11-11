@@ -564,8 +564,9 @@ browser.tabs.onRemoved.addListener((closedId) => {
         await browser.storage.local.remove(OBS_SCENE_OWNER_KEY);
         log.debug("background", "scene ownership released (owner tab closed)");
       }
-    } catch {
+    } catch (e) {
       /* не критично: владение протухнет по TTL */
+      log.debug("background", "scene ownership release failed", e);
     }
   });
 });
