@@ -554,6 +554,18 @@ describe("mergeNickKeysIntoId: мусор под ник-ключом и исто
     }).not.toThrow();
     expect(merged!.record.nicks).toEqual(["Вася"]);
   });
+
+  test("две записи из будущего: побеждает большее исходное время, а не момент вызова Date.now", () => {
+    let now = NOW;
+    vi.spyOn(Date, "now").mockImplementation(() => now++);
+    const notes: NotesMap = {
+      "u:42": rec("по id", NOW + 60_000),
+      Аня: rec("по нику", NOW + 30_000),
+    };
+    const record = mergeNickKeysIntoId(notes, "Аня", 42)?.record;
+    expect(record?.text).toBe("по id");
+    expect(record?.timestamp).toBe(NOW + 60_000);
+  });
 });
 
 describe("round-trip своего бэкапа не режет заметку (ревью 27.08.2026)", () => {

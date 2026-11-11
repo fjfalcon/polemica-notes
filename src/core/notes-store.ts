@@ -439,12 +439,14 @@ export function mergeNickKeysIntoId(
 
   const ts = (n: NoteRecord | string | undefined) =>
     n && typeof n !== "string" && typeof n.timestamp === "number" ? n.timestamp : 0;
-  const toRecord = (n: unknown): NoteRecord | undefined =>
-    normalizeNoteRecord(n, Number.POSITIVE_INFINITY) ?? undefined;
-  const aliasesOf = (r: NoteRecord): string[] =>
-    [r.nick, ...(Array.isArray(r.nicks) ? r.nicks : [])].filter(
-      (n): n is string => typeof n === "string" && n.length > 0,
-    );
+  const toRecord = (n: unknown): NoteRecord | undefined => {
+    const r = normalizeNoteRecord(n, Number.POSITIVE_INFINITY);
+    if (!r) return undefined;
+    const t = (n as { timestamp?: unknown }).timestamp;
+    if (typeof t === "number" && Number.isFinite(t) && t > 0) r.timestamp = t;
+    return r;
+  };
+  const aliasesOf = (r: NoteRecord): string[] => (r.nick ? [r.nick] : []).concat(r.nicks ?? []);
 
   // Легаси-строка под u:-ключом — тоже запись, её текст нельзя терять.
   let best: NoteRecord | undefined = toRecord(notes[key]);
