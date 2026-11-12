@@ -426,6 +426,38 @@ describe("кнопка «Перезагрузить камеры»", () => {
     ]);
   });
 
+  test("ЛЕСЕНКА: второе пересоздание раньше 30 с не шлём — у всех мигала бы плитка", () => {
+    const video = room();
+    video.srcObject = stream({ muted: true, readyState: "live" });
+    cameraHealthFeature.enable(ctx());
+    tickOnce();
+    const probe = armProbe();
+    const actions = () => probe.sent.filter((m) => m.source === MEDIA_CMD_SOURCE).map((m) => m.action);
+    button()!.click();
+    probe.ready();
+    probeReplies(true, "refresh");
+    tickOnce();
+    vi.advanceTimersByTime(3100);
+    probeReplies(true, "reconnect");
+    vi.advanceTimersByTime(7100); // вердикт, кнопка свободна
+    expect(actions()).toEqual(["refresh", "reconnect"]);
+    // Сразу второй клик: мягкий шаг — да, жёсткий — нет, с честной подсказкой.
+    button()!.click();
+    probeReplies(true, "refresh");
+    tickOnce();
+    vi.advanceTimersByTime(3100);
+    expect(actions()).toEqual(["refresh", "reconnect", "refresh"]);
+    expect(toasts.some((t) => t.includes("только что пересобирали"))).toBe(true);
+    expect(button()!.disabled).toBe(false);
+    // Через 30 с — снова можно.
+    vi.advanceTimersByTime(30_000);
+    button()!.click();
+    probeReplies(true, "refresh");
+    tickOnce();
+    vi.advanceTimersByTime(3100);
+    expect(actions().at(-1)).toBe("reconnect");
+  });
+
   test("зонд молчит — кнопка не остаётся заблокированной навсегда", () => {
     room();
     cameraHealthFeature.enable(ctx());

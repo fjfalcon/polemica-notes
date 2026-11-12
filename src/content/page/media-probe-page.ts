@@ -1,6 +1,17 @@
 /**
  * Зонд медиа-комнаты — PAGE-скрипт (мир страницы).
  *
+ * 12.11.2026 сайт переписал медиа-слой (room/bundle): клиент `im` с
+ * сигнализацией через сокет комнаты, сам чинит себя (ICE restart — L0,
+ * пересоздание сессии — L1, бюджет 3 попытки). Наружу у mediaRoom только
+ * resume/updateSource/updateStreams/blackTileSignal/reportBlackTile/close —
+ * isConnected/connect/disconnect больше нет, и старый жёсткий шаг молча
+ * отказывал «видеосвязь не поднята» (жалоба владельца 12.11.2026).
+ * Новый жёсткий шаг — ТА ЖЕ L1 сайта: `media_recreate {gen, reason}` в
+ * сокет комнаты; номер сессии gen берём из `media_resume`, который
+ * resume() синхронно шлёт через socket.emit (перехватываем и глотаем).
+ * Старый путь (disconnect/connect) оставлен на случай отката сайта.
+ *
  * Единственная задача: по явной команде расширения пересоздать медиа-сессию
  * комнаты — «F5 только для видео». Чат, журнал и состояние игры не трогаются.
  *
@@ -37,8 +48,12 @@ interface RoomProxy {
     disconnect?: (keepStream: boolean) => void;
     connect?: (gameId: unknown) => void;
     updateStreams?: () => void;
+    /** Новый медиа-клиент (12.11.2026): шлёт media_resume {gen} в сокет. */
+    resume?: () => void;
   } | null;
   createMediaRoom?: () => void;
+  socket?: { emit?: (event: string, ...args: unknown[]) => unknown; connected?: boolean } | null;
+  connectedToRoom?: boolean;
   $store?: { state?: { gameId?: unknown } };
 }
 
@@ -119,8 +134,11 @@ export function findRoomProxy(doc: Document): RoomProxy | null {
 }
 
 /**
- * МЯГКИЙ шаг: mediaRoom.updateStreams() — публичный метод сайта. Для каждого
- * игрока он дожимает ОТЛОЖЕННУЮ подписку (события медиасервера, пропущенные
+ * МЯГКИЙ шаг: mediaRoom.updateStreams() — публичный метод сайта. У нового
+ * медиа-клиента (12.11.2026) он лишь заново раздаёт уже полученные потоки по
+ * плиткам (expectVideo + updatePlayerByRealUserId) — помогает, когда плитка
+ * потеряла привязку, а не когда порвалось соединение. У старого клиента он
+ * дожимал ОТЛОЖЕННУЮ подписку (события медиасервера, пропущенные
  * из-за гонки с состоянием комнаты, лежат в карте до этого вызова) и заново
  * раздаёт потоки по плиткам. Ничего не разрывает: у остальных игроков картинка
  * даже не мигнёт. Это максимально близкое к «обновить одного игрока», что
@@ -131,10 +149,41 @@ export function refreshStreams(doc: Document): string | null {
   if (!proxy) return "vue_root_not_found";
   const room = proxy.mediaRoom;
   if (!room) return "media_room_not_found";
-  if (!room.isConnected) return "media_not_connected";
+  // Старый клиент сообщал isConnected; у нового поля нет — не отказываем.
+  if (room.isConnected === false) return "media_not_connected";
   if (typeof room.updateStreams !== "function") return "update_streams_missing";
   room.updateStreams();
   return null;
+}
+
+/**
+ * Номер текущей медиа-сессии: resume() нового клиента синхронно зовёт
+ * socket.emit("media_resume", {gen}). На время вызова подменяем emit
+ * экземпляра, забираем gen и НЕ отправляем (лишний resume серверу не нужен).
+ * Экспорт — тестовый шов.
+ */
+export function readMediaGen(proxy: RoomProxy): number | null {
+  const room = proxy.mediaRoom;
+  const sock = proxy.socket as (Record<string, unknown> & { emit?: unknown }) | null | undefined;
+  if (!room || typeof room.resume !== "function" || !sock || typeof sock.emit !== "function") return null;
+  const hadOwn = Object.prototype.hasOwnProperty.call(sock, "emit");
+  const own = sock.emit;
+  let gen: number | null = null;
+  sock.emit = function (this: unknown, event: unknown, payload: unknown, ...rest: unknown[]) {
+    if (event === "media_resume") {
+      const g = (payload as { gen?: unknown } | null)?.gen;
+      if (typeof g === "number" && Number.isFinite(g)) gen = g;
+      return sock; // проглотили
+    }
+    return (own as (...a: unknown[]) => unknown).call(this, event, payload, ...rest);
+  };
+  try {
+    room.resume();
+  } finally {
+    if (hadOwn) sock.emit = own;
+    else delete sock.emit;
+  }
+  return gen;
 }
 
 /**
@@ -146,6 +195,25 @@ export function reconnectMedia(doc: Document): string | null {
   const proxy = findRoomProxy(doc);
   if (!proxy) return "vue_root_not_found";
   const room = proxy.mediaRoom;
+  // Новый медиа-клиент: запускаем его же L1 — серверное пересоздание сессии.
+  // Признак — resume без старого connect (откат сайта уйдёт в старую ветку).
+  if (room && typeof room.resume === "function" && typeof room.connect !== "function") {
+    const emit = proxy.socket?.emit;
+    if (typeof emit !== "function") return "socket_missing";
+    // Сокет комнаты лежит — emit лёг бы в буфер и ушёл бы до connect_room
+    // со старым gen; сайт сам поднимет медиа после переподключения (ревью).
+    if (proxy.socket?.connected === false || proxy.connectedToRoom === false) return "media_not_connected";
+    const gen = readMediaGen(proxy);
+    if (gen === null) return "media_gen_unknown";
+    if (gen === 0) {
+      // Сессии ещё нет: сайт на входе делает ровно resume() с gen 0 —
+      // повторяем его, теперь не глотая.
+      room.resume();
+      return null;
+    }
+    emit.call(proxy.socket, "media_recreate", { gen, reason: "other" });
+    return null;
+  }
   if (!room || typeof room.disconnect !== "function") return "media_room_not_found";
   if (!room.isConnected) return "media_not_connected";
   if (typeof proxy.createMediaRoom !== "function") return "create_media_room_missing";

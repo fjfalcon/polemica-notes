@@ -9,7 +9,7 @@
  */
 import { describe, expect, test, vi } from "vitest";
 
-import { findRoomProxy, reconnectMedia, refreshStreams } from "@content/page/media-probe-page";
+import { findRoomProxy, readMediaGen, reconnectMedia, refreshStreams } from "@content/page/media-probe-page";
 
 function appWithProxy(proxy: unknown): void {
   document.body.innerHTML = `<div id="app"></div>`;
@@ -167,5 +167,127 @@ describe("честные отказы вместо поломки страниц
     const container = { _vnode: { component: { proxy } } };
     app.__vue_app__ = { _instance: null, _container: container };
     expect(findRoomProxy(document)).toBe(proxy);
+  });
+});
+
+/**
+ * Новый медиа-клиент сайта (12.11.2026): у mediaRoom только resume /
+ * updateStreams / close, номер сессии — внутри клиента. Жёсткий шаг —
+ * L1 самого сайта: media_recreate {gen, reason:"other"} в сокет комнаты.
+ */
+function newApiProxy(gen = 7) {
+  const sent: Array<[string, unknown]> = [];
+  class Socket {
+    emit(event: string, payload: unknown): this {
+      sent.push([event, payload]);
+      return this;
+    }
+  }
+  const socket = new Socket();
+  const proxy = {
+    socket,
+    mediaRoom: {
+      // Как у сайта: resume() → signaling.emit("media_resume", {gen}), где signaling — тот же сокет.
+      resume: vi.fn(() => socket.emit("media_resume", { gen })),
+      updateStreams: vi.fn(),
+      close: vi.fn(),
+    },
+    createMediaRoom: vi.fn(),
+    $store: { state: { gameId: 42 } },
+  };
+  return { proxy, sent, socket };
+}
+
+describe("новый медиа-клиент сайта (12.11.2026)", () => {
+  test("жёсткий шаг — L1 сайта: media_recreate с текущим gen, resume серверу не уходит", () => {
+    const { proxy, sent, socket } = newApiProxy(7);
+    appWithProxy(proxy);
+    expect(reconnectMedia(document)).toBeNull();
+    expect(sent).toEqual([["media_recreate", { gen: 7, reason: "other" }]]);
+    // Сессию не рушим сами и свою камеру не трогаем — всё делает сайт по ответу сервера.
+    expect(proxy.mediaRoom.close).not.toHaveBeenCalled();
+    expect(proxy.createMediaRoom).not.toHaveBeenCalled();
+    // emit экземпляра восстановлен: дальше сокет работает как прежде.
+    expect(Object.prototype.hasOwnProperty.call(socket, "emit")).toBe(false);
+    socket.emit("ping", 1);
+    expect(sent.at(-1)).toEqual(["ping", 1]);
+  });
+
+  test("свой emit на экземпляре — возвращается тот же", () => {
+    const { proxy } = newApiProxy(3);
+    const own = vi.fn();
+    (proxy.socket as unknown as { emit: unknown }).emit = own;
+    (proxy.mediaRoom as { resume: () => void }).resume = () =>
+      (proxy.socket as unknown as { emit: (e: string, p: unknown) => void }).emit("media_resume", { gen: 3 });
+    expect(readMediaGen(proxy as never)).toBe(3);
+    expect((proxy.socket as unknown as { emit: unknown }).emit).toBe(own);
+    expect(own, "resume проглочен").not.toHaveBeenCalled();
+  });
+
+  test("сессии ещё нет (gen 0) — повторяем вход сайта: resume с gen 0 уходит, recreate нет", () => {
+    const { proxy, sent } = newApiProxy(0);
+    appWithProxy(proxy);
+    expect(reconnectMedia(document)).toBeNull();
+    expect(sent).toEqual([["media_resume", { gen: 0 }]]);
+  });
+
+  test("сокет комнаты лежит — ничего не шлём (emit лёг бы в буфер со старым gen)", () => {
+    const { proxy, sent } = newApiProxy(7);
+    (proxy.socket as unknown as { connected: boolean }).connected = false;
+    appWithProxy(proxy);
+    expect(reconnectMedia(document)).toBe("media_not_connected");
+    expect(sent).toEqual([]);
+    const second = newApiProxy(7);
+    (second.proxy as unknown as { connectedToRoom: boolean }).connectedToRoom = false;
+    appWithProxy(second.proxy);
+    expect(reconnectMedia(document)).toBe("media_not_connected");
+    expect(second.sent).toEqual([]);
+  });
+
+  test("сокет — реактивный Proxy Vue: перехват и восстановление идут через ловушки", () => {
+    const { proxy, sent, socket } = newApiProxy(5);
+    const reactive = new Proxy(socket, {});
+    (proxy as { socket: unknown }).socket = reactive;
+    proxy.mediaRoom.resume = vi.fn(() => reactive.emit("media_resume", { gen: 5 }));
+    appWithProxy(proxy);
+    expect(reconnectMedia(document)).toBeNull();
+    expect(sent).toEqual([["media_recreate", { gen: 5, reason: "other" }]]);
+    expect(Object.prototype.hasOwnProperty.call(socket, "emit")).toBe(false);
+  });
+
+  test("откат сайта: у mediaRoom снова connect — идём старым путём", () => {
+    const { proxy, calls } = workingProxy();
+    (proxy.mediaRoom as unknown as { resume: () => void }).resume = vi.fn();
+    appWithProxy(proxy);
+    expect(reconnectMedia(document)).toBeNull();
+    expect(calls).toEqual(["disconnect:true", "create", "connect:42"]);
+  });
+
+  test("resume ничего не прислал — media_gen_unknown; нет сокета — socket_missing", () => {
+    const { proxy, sent } = newApiProxy();
+    (proxy.mediaRoom as { resume: () => void }).resume = () => undefined;
+    appWithProxy(proxy);
+    expect(reconnectMedia(document)).toBe("media_gen_unknown");
+    expect(sent).toEqual([]);
+    const second = newApiProxy();
+    (second.proxy as { socket: unknown }).socket = null;
+    appWithProxy(second.proxy);
+    expect(reconnectMedia(document)).toBe("socket_missing");
+  });
+
+  test("resume бросил — emit всё равно восстановлен", () => {
+    const { proxy, socket } = newApiProxy();
+    (proxy.mediaRoom as { resume: () => void }).resume = () => {
+      throw new Error("boom");
+    };
+    expect(() => readMediaGen(proxy as never)).toThrow("boom");
+    expect(Object.prototype.hasOwnProperty.call(socket, "emit")).toBe(false);
+  });
+
+  test("мягкий шаг без isConnected (у нового клиента поля нет) — работает", () => {
+    const { proxy } = newApiProxy();
+    appWithProxy(proxy);
+    expect(refreshStreams(document)).toBeNull();
+    expect(proxy.mediaRoom.updateStreams).toHaveBeenCalled();
   });
 });

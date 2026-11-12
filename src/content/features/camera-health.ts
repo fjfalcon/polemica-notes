@@ -49,6 +49,12 @@ export const WATCH_INTERVAL_MS = 2000;
 const VERDICT_DELAY_MS = 7000;
 /** Пауза после МЯГКОГО шага: дожатой подписке нужна пара секунд на кадры. */
 const SOFT_WAIT_MS = 3000;
+/**
+ * Жёсткий шаг — пересоздание медиа-сессии на сервере: у ВСЕХ мигает наша
+ * плитка. У сайта на это бюджет (3 за 2 минуты), мы его обходим — поэтому
+ * свой предел: не чаще раза в 30 с (ревью 12.11.2026).
+ */
+export const HARD_COOLDOWN_MS = 30_000;
 
 // ─────────────────────────── чистые функции ───────────────────────────
 
@@ -136,6 +142,8 @@ class CameraHealth {
   private reconnecting = false;
   /** Текущий шаг лесенки: мягкий refresh или жёсткий reconnect. */
   private stage: "refresh" | "reconnect" | null = null;
+  /** Когда последний раз просили сервер пересоздать сессию (HARD_COOLDOWN_MS). */
+  private lastHardAt = -Infinity;
 
   enable(ctx: FeatureContext): void {
     this.settings = ctx.settings;
@@ -457,6 +465,8 @@ class CameraHealth {
         "create_media_room_missing",
         "game_id_missing",
         "recreate_failed",
+        "socket_missing",
+        "media_gen_unknown",
         "unknown",
       ]);
       const rawReason = typeof d.reason === "string" ? d.reason : "unknown";
@@ -492,8 +502,19 @@ class CameraHealth {
           showToast("Видео обновлено");
           return;
         }
+        const wait = HARD_COOLDOWN_MS - (Date.now() - this.lastHardAt);
+        if (wait > 0) {
+          this.reconnecting = false;
+          this.stage = null;
+          this.syncButton();
+          const sec = Math.ceil(wait / 1000);
+          log.info(SCOPE, `мягкого шага мало, но видео пересобирали только что — жёсткий шаг через ${sec} с`);
+          showToast(`Видео только что пересобирали — попробуй через ${sec} с`);
+          return;
+        }
         log.info(SCOPE, `мягкого шага мало, остались [${still.join(", ")}] — пересоздаю сессию`);
         showToast("Не помогло мягко — переподключаю видео целиком…");
+        this.lastHardAt = Date.now();
         this.sendCmd("reconnect");
       }, SOFT_WAIT_MS);
       return;

@@ -111,7 +111,7 @@ GET https://game.polemicagame.com/api/search
 открытии страницы без входа; дальше числа ведёт поисковый сокет — то есть
 пока игрок сам в поиске. `censorshipModesUpdate` пишет и `available`, и при
 false СНИМАЕТ выбранные галочки, а анонимный ответ отдаёт `available:false`
-у всех столов. Поэтому кнопка «↻ Обновить» (9.84.0,
+у всех столов. Поэтому кнопка «↻ Обновить» (10.0.0,
 page/search-counts-page.ts) метод сайта не зовёт: сама запрашивает числа
 без куки и пишет только `count` в `censorshipModes` (стол с массивом
 `participants` не трогает). Пробы: `searchCounts*`, `searchBusyFlags`.
@@ -193,3 +193,22 @@ auth: `/auth/login|logout|register|social-login`; кабинет:
 поэтому разбор «почему выкинуло из очереди» обычно полон. Если в логе не
 хватает входящих событий — сверьтесь с этой строкой, прежде чем считать
 отчёт полным (аудит устойчивости 01.08.2026, находка 16).
+
+## Медиа комнаты (12.11.2026)
+
+Сайт переписал медиа-слой: клиент (`im` в room/bundle) сигналит через
+СОКЕТ КОМНАТЫ (`signaling: this.socket`) событиями `media_session`,
+`media_publish_answer`, `media_subscribe_offer`, `media_ice`,
+`media_resumed`, `media_error`; клиент шлёт `media_resume {gen}`,
+`media_publish_offer`, `media_subscribe_answer`, `media_restart {gen, pc}`
+(L0, ICE restart), `media_recreate {gen, reason}` (L1, пересоздание сессии;
+reason `publish_failed` | `other`), `media_telemetry`. Сам себя чинит:
+бюджет — 3 пересоздания в окне, затем статус error. `media_session` с
+бо́льшим gen запускает новую сессию у того же клиента.
+
+Наружу (`this.mediaRoom`) — только `resume`, `updateSource`,
+`updateStreams`, `blackTileSignal`, `reportBlackTile`, `close(stopOwn=true)`;
+`isConnected/connect/disconnect` и `createMediaRoomWithRelay` исчезли.
+Номер сессии `gen` закрыт в замыкании; узнаём его из `media_resume`, который
+`resume()` отправляет синхронно. Кнопка «Обновить камеры» (10.0.0+) жёстким
+шагом шлёт ровно L1 сайта — `media_recreate {gen, reason:"other"}`.

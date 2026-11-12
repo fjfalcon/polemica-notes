@@ -40,3 +40,21 @@ ame:"PlayerNumber",props:{id:Number}};var vy=(0,Ff.A)(gy,[["render",function(e,t
 /*—SNIPPET—*/
 age({type:t.stage,time:t.stageTime})}if(e.$store.state.gameDidStart&&e.$store.commit("updateOnlinePlayers",l),n){var m={agree:t.votingAgainstPause.agree,disagree:t.votingAgainstPause.disagree},f=null;t.pause&&t.pause.initiatorId&&(f=t.pause.initiatorId),e.on_start_pause({time:n,voted:t.votingAgainstPause.voted,votes:m,initiatorId:f}),e.votingForGameContinue.inProgress=!0,e.votingForGameContinue.voted=t.votingAgainstPause.voted,e.votingForGameContinue.agreeIds=t.votingAgainstPause.agreeIds}if(!e.mediaRoom.isConnecte
 
+/*—SNIPPET—*/
+new im({signaling:t.socket,createPeerConnection:function(t){return 
+/*—SNIPPET—*/
+{resume:function(){return o.resume()},updateSource:function(){return o.replaceLocalStream(t.$store.state.playerStream)},updateStreams:function(){
+/*—SNIPPET—*/
+{key:"resume",value:function(){this.signaling.emit("media_resume",{gen:this.gen})}}
+/*—SNIPPET—*/
+"media error: ".concat(e.error)),"publish_failed"===e.error?this.requestRecreate("publish_failed"):"subscribe_failed"===e.error&&this.requestRecreate("other")}}else e.gen>this.gen&&this.startSession(e)
+/*—SNIPPET—*/
+{key:"requestRecreate",value:function(t){var e=this;if(null===this.recreateTimer&&0!==this.gen){var i=this.timers.now();this.budget.exhausted(i)?this.setStatus("error"):this.setStatus("recovering");var n=this.gen;this.recreateTimer=this.timers.setTimeout((function(){e.recreateTimer=null,n===e.gen&&(e.budget.record(e.timers.now()),e.telemetry({type:"recovery",level:"L1",reason:t}),e.send("media_recreate",n,{reason:t}))}),this.budget.delay(i))}}},{key:"updateStatus",value:function(){if(0!==this.gen&&"closed"!==this.status){var t=!this.publish||t
+/*—SNIPPET—*/
+{key:"send",value:function(t,e,i){this.signaling.emit(t,Xd({gen:e},i))}}
+/*—SNIPPET—*/
+socket:null,signallingUrl:null,mediaRoom:null
+/*—SNIPPET—*/
+tm=["media_session","media_publish_answer","media_subscribe_offer","media_ice","media_resumed","media_error"]
+/*—SNIPPET—*/
+on.reload()}}]}):(this.signallingUrl=a.result.gameContainer.socketIoUrl,this.$store.commit("setGameId",a.result.gameId),this.initializeSocket(),this.roomSounds=new jh,this.emiter=new th(this.socket,this.roomSounds),this.createMediaRoom(),"v

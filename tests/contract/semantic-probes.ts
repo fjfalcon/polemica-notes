@@ -268,6 +268,52 @@ export const gameSearchProbes: Record<string, Probe> = {
 // ─────────────────────────── room/main.js ───────────────────────────
 
 export const roomProbes: Record<string, Probe> = {
+  /**
+   * Медиа-клиент сайта (12.11.2026) — опора кнопки «Обновить камеры»
+   * (page/media-probe-page): mediaRoom отдаёт resume/updateStreams, resume
+   * шлёт media_resume {gen:this.gen} в сокет комнаты (из него берём gen),
+   * L1 сайта — send("media_recreate", gen, {reason}), а media_session с
+   * бо́льшим gen запускает новую сессию у того же клиента.
+   */
+  mediaRoomWrapper: re(
+    /\{resume:function\(\)\{return [\w$]+\.resume\(\)\},updateSource:function\(\)\{return [\w$]+\.replaceLocalStream\([^)]*\)\},updateStreams:function\(\)\{/,
+    "mediaRoom = {resume, updateSource, updateStreams, …}",
+  ),
+  mediaResumeEmitsGen: re(
+    /\{key:"resume",value:function\(\)\{this\.signaling\.emit\("media_resume",\{gen:this\.gen\}\)\}\}/,
+    "resume() → signaling.emit(\"media_resume\", {gen:this.gen}) синхронно",
+  ),
+  mediaSignalingIsRoomSocket: re(
+    /new [\w$]+\(\{signaling:[\w$]+\.socket,/,
+    "медиа-клиент сигналит через сокет комнаты (this.socket)",
+  ),
+  mediaRecreateMessage: (text) => {
+    const send = /\{key:"send",value:function\(([\w$]+),([\w$]+),([\w$]+)\)\{this\.signaling\.emit\(\1,[\w$]+\(\{gen:\2\},\3\)\)\}\}/.test(text);
+    const recreate = /[\w$]+\.send\("media_recreate",[\w$]+,\{reason:[\w$]+\}\)/.test(text);
+    const other = /requestRecreate\("other"\)/.test(text);
+    return {
+      ok: send && recreate && other,
+      detail: `L1: media_recreate {gen, reason} (send=${send}, recreate=${recreate}, reason other=${other})`,
+    };
+  },
+  mediaSessionByGen: re(
+    /else [\w$]+\.gen>this\.gen&&this\.startSession\([\w$]+\)/,
+    "media_session с бо́льшим gen → startSession того же клиента",
+  ),
+  /** Сокет комнаты создаётся один раз — медиа-клиент и this.socket не разъедутся. */
+  roomSocketCreatedOnce: (text) => {
+    const n = text.split("this.initializeSocket()").length - 1;
+    return { ok: n === 1, detail: `initializeSocket() зовётся ровно один раз (найдено ${n})` };
+  },
+  /** Медиа-клиент подписан на media_session — по нему приходит пересозданная сессия. */
+  mediaSessionSubscribed: re(
+    /=\["media_session","media_publish_answer","media_subscribe_offer","media_ice","media_resumed","media_error"\]/,
+    "события медиа-клиента на сокете комнаты, включая media_session",
+  ),
+  roomHasSocketAndMedia: has(
+    "socket:null,signallingUrl:null,mediaRoom:null",
+    "data комнаты: socket и mediaRoom (по ним зонд находит компонент и сокет)",
+  ),
   /** Нажатая готовность = класс active, привязанный к votingForGameStart.voted. */
   readyActiveBoundToVoted: re(
     /\{active:[\w$]+(\.\$parent)?\.votingForGameStart\.voted\}/,
