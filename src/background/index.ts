@@ -7,6 +7,7 @@ import { browser } from "@core/env";
 import { log } from "@core/log";
 import { installErrorCapture } from "@core/errors";
 import { handleInstalled } from "./onboarding";
+import { installStoreUpdate, requestStoreUpdate } from "./store-update";
 import { onMessage, sendToTab } from "@core/messaging";
 import { isGameRoomPath } from "@shared/routes";
 import { getSettings, getSetting, onSettingsChanged } from "@core/settings";
@@ -833,6 +834,9 @@ async function handleObsQuery(
 }
 
 onMessage((msg: ExtMessage, sender) => {
+  if ("type" in msg && msg.type === "apply_store_update") {
+    return requestStoreUpdate();
+  }
   if ("type" in msg && msg.type === "obs_command") {
     return handleObsQuery(msg.command, msg.data, sender.tab?.id)
       .then((data) => ({ success: true, data }))
@@ -1294,6 +1298,8 @@ browser.runtime.onInstalled.addListener((details) => {
 
 // Диагностика: перехват ошибок + гейт персиста логов по настройке.
 installErrorCapture("bg");
+// Обновление из магазина: применить сразу, когда это не помешает игре.
+installStoreUpdate();
 void getSetting("debug_logging_enabled").then((on) => log.setPersist(on));
 /**
  * Последние известные background'у значения настроек OBS.

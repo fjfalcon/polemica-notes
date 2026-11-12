@@ -190,7 +190,10 @@ describe("режим «Тильт» отключается целиком", () =
     // Девятой вкладке в 360px нет места: «Тильт» открывает только кнопка шапки.
     expect(d.querySelector('.tab[data-tab="tilt"]')).toBeNull();
     expect(d.querySelector('.panel[data-panel="tilt"]')).not.toBeNull();
-    expect(d.querySelector('.panel[data-panel="tilt"] #tilt_button_enabled')).not.toBeNull();
+    // Подопция «кнопка на сайте» — сразу под режимом во «Ещё» (12.11.2026:
+    // во вкладке «Тильт» её не находили).
+    expect(d.querySelector('.panel[data-panel="misc"] #tilt_button_row #tilt_button_enabled')).not.toBeNull();
+    expect(d.querySelector('.panel[data-panel="tilt"] #tilt_button_enabled')).toBeNull();
     expect(d.querySelector(".hdr #tilt_open")).not.toBeNull();
   });
 

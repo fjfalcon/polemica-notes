@@ -1083,6 +1083,11 @@ describe("§4.7 lifecycle heuristic", () => {
       timers: 0,
       reason: "dismiss handler is owned by the removable update banner",
     },
+    "src/content/features/queue-counts-refresh.ts": {
+      listeners: 1,
+      timers: 0,
+      reason: "click handler is owned by the removable counts-refresh button",
+    },
   };
 
   test("§4.7: пауза проходов наблюдателя всегда снимается", () => {

@@ -371,15 +371,28 @@
   justify-content: center;
   background: rgba(0, 0, 0, .55);
 }
+/* Упражнения свёрстаны под попап (≈380px, мелкий шрифт) — на сайте окно
+   выглядело крошечным (жалоба 12.11.2026). Увеличиваем целиком через zoom:
+   пропорции и анимация дыхания те же. Размеры внутри zoom умножаются на
+   него, поэтому пределы по экрану делим на тот же коэффициент. */
 .pn-tilt-box {
-  width: min(380px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
+  --pn-tilt-zoom: 1;
+  width: min(400px, calc((100vw - 32px) / var(--pn-tilt-zoom)));
+  max-height: calc((100vh - 32px) / var(--pn-tilt-zoom));
   overflow: auto;
   padding: 12px 14px 16px;
   border-radius: 14px;
   background: #0f1420;
   border: 1px solid rgba(255, 255, 255, .12);
   box-shadow: 0 10px 40px rgba(0, 0, 0, .5);
+}
+/* Firefox до 126 zoom не знает (минимальная у нас — 121): без @supports
+   пределы делились бы на 1.5 при неувеличенном окне (ревью 12.11.2026). */
+@supports (zoom: 1.5) {
+  .pn-tilt-box { --pn-tilt-zoom: 1.5; zoom: var(--pn-tilt-zoom); }
+  @media (max-width: 720px), (max-height: 620px) {
+    .pn-tilt-box { --pn-tilt-zoom: 1.2; }
+  }
 }
 .pn-tilt-head {
   display: flex;

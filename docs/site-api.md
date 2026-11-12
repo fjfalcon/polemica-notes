@@ -107,6 +107,15 @@ GET https://game.polemicagame.com/api/search
              "prime":{...,"players":2}}}
 ```
 
+Сайт зовёт его (`getSearchState`, с `credentials:"include"`) только при
+открытии страницы без входа; дальше числа ведёт поисковый сокет — то есть
+пока игрок сам в поиске. `censorshipModesUpdate` пишет и `available`, и при
+false СНИМАЕТ выбранные галочки, а анонимный ответ отдаёт `available:false`
+у всех столов. Поэтому кнопка «↻ Обновить» (9.84.0,
+page/search-counts-page.ts) метод сайта не зовёт: сама запрашивает числа
+без куки и пишет только `count` в `censorshipModes` (стол с массивом
+`participants` не трогает). Пробы: `searchCounts*`, `searchBusyFlags`.
+
 **Поимённый состав очереди — только сокетом и только для СЕБЯ.**
 `censorshipModesUpdate` умеет читать `players` и числом, и массивом
 (`Array.isArray(r) ? (count=r.length, participants=r) : count=r`), а

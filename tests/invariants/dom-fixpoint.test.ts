@@ -103,6 +103,7 @@ import { searchCardAvatarFeature } from "@content/features/search-card-avatar";
 import { hideRatingFeature } from "@content/features/hide-rating";
 import { playerActionKeysFeature } from "@content/features/player-action-keys";
 import { tiltButtonFeature } from "@content/features/tilt-button";
+import { queueCountsRefreshFeature } from "@content/features/queue-counts-refresh";
 import type { FeatureContext } from "@core/feature";
 
 const ROUND_MS = 600;
@@ -172,6 +173,7 @@ afterEach(() => {
   hideRatingFeature.disable();
   playerActionKeysFeature.disable();
   tiltButtonFeature.disable();
+  queueCountsRefreshFeature.disable();
   syncProfileCrossoverRoute(null);
   syncProfileMmrRoute(null);
   vi.useRealTimers();
@@ -301,6 +303,38 @@ describe("§4 fixpoint: «У меня тильт»", () => {
     const r = await driveToFixpoint();
     expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
     expect(document.querySelectorAll(".pn-tilt-btn")).toHaveLength(1);
+  });
+});
+
+describe("§4 fixpoint: «↻ Обновить» счётчиков столов", () => {
+  test("кнопка встаёт один раз за «Очередью»; старт и стоп поиска только прячут/показывают её, DOM тих", async () => {
+    window.history.replaceState(null, "", "/game-search");
+    const idle = '<div class="p-play-profile__wr"><button class="p-play__profile-button">Играть</button></div>';
+    const searching =
+      '<div class="p-play-profile__wr"><div class="p-play__profile-game p-play__profile-game--search">' +
+      '<span class="p-play__profile-game-search-time">0:05</span></div></div>';
+    document.body.innerHTML =
+      `<div class="p-play__profile-panel">${idle}<button class="pn-queue-peek-button">Очередь</button></div>`;
+    const before = domObserver.subscriberCount();
+    queueCountsRefreshFeature.enable({ settings: {} } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    const btn = () => document.querySelector<HTMLElement>(".pn-counts-refresh-button");
+    let r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    expect(document.querySelectorAll(".pn-counts-refresh-button")).toHaveLength(1);
+    expect(btn()!.previousElementSibling?.className).toBe("pn-queue-peek-button");
+    expect(btn()!.style.display).toBe("");
+    // Игрок нажал «Играть»: Vue подменил блок — кнопка прячется, не пересоздаётся.
+    const kept = btn();
+    document.querySelector(".p-play-profile__wr")!.outerHTML = searching;
+    r = await driveToFixpoint();
+    expect(r.settled).toBe(true);
+    expect(btn()).toBe(kept);
+    expect(btn()!.style.display).toBe("none");
+    document.querySelector(".p-play-profile__wr")!.outerHTML = idle;
+    r = await driveToFixpoint();
+    expect(r.settled).toBe(true);
+    expect(btn()!.style.display).toBe("");
   });
 });
 

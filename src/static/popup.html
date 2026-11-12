@@ -277,6 +277,9 @@
             <div class="row"><span>Картинка в карточке поиска<span class="hint">слева от ника, где раньше стоял 3D-аватар. Что именно показывать — «Стата» → «Моя картинка». Видно только вам</span></span>
                 <label class="switch"><input type="checkbox" id="search_card_avatar_enabled" checked><span class="slider"></span></label>
             </div>
+            <div class="row"><span>Кнопка «↻ Обновить» счётчиков<span class="hint">на странице поиска рядом с «Играть»: перечитывает, сколько человек за столами («Обычный 8/10»…). Сайт сам обновляет их только во время поиска</span></span>
+                <label class="switch"><input type="checkbox" id="queue_counts_refresh_enabled" checked><span class="slider"></span></label>
+            </div>
             <div class="row"><span>Кнопка «Кто в очереди»<span class="hint">на странице поиска: на секунду заходит в самую пустую очередь, показывает состав и выходит. Нужна Pro-подписка, иначе только счётчики</span></span>
                 <label class="switch"><input type="checkbox" id="queue_peek_enabled"><span class="slider"></span></label>
             </div>
@@ -704,9 +707,6 @@
 
         <!-- ── Тильт: упражнения для успокоения (наполняет @core/calm-ui; открывает кнопка «Тильт» в шапке) ── -->
         <div class="panel" data-panel="tilt">
-            <div class="row"><span>Кнопка «У меня тильт» на сайте<span class="hint">в карточке на странице поиска, в правом нижнем углу (под «Профилем»): открывает эти же упражнения поверх страницы</span></span>
-                <label class="switch"><input type="checkbox" id="tilt_button_enabled" checked><span class="slider"></span></label>
-            </div>
             <div id="calm_panel" style="margin-top:8px"></div>
         </div>
 
@@ -715,10 +715,16 @@
             <div class="row"><span>Режим «Тильт»<span class="hint">упражнения для успокоения: красная кнопка «Тильт» сверху (открывает упражнения) и кнопка «У меня тильт» на сайте. Выключено — всё это пропадает</span></span>
                 <label class="switch"><input type="checkbox" id="tilt_mode_enabled" checked><span class="slider"></span></label>
             </div>
+            <div class="row" id="tilt_button_row" style="padding-left:14px"><span>└ Кнопка «У меня тильт» на сайте<span class="hint">в карточке на странице поиска, под «Профилем». Выключите — кнопка со страницы пропадёт, а упражнения останутся под красной кнопкой «Тильт» сверху</span></span>
+                <label class="switch"><input type="checkbox" id="tilt_button_enabled" checked><span class="slider"></span></label>
+            </div>
             <div class="row" id="update_notify_row"><span>Уведомлять о новой версии<span class="hint">проверка релизов на GitHub раз в час</span></span>
                 <label class="switch"><input type="checkbox" id="update_check_enabled" checked><span class="slider"></span></label>
             </div>
             <div class="note-box" id="store_update_note" style="display:none">Расширение установлено из магазина — новые версии браузер ставит сам, поэтому уведомлений о них нет. Проверить, раздаёт ли магазин обновление, можно кнопкой ниже.</div>
+            <div class="row" id="store_update_ready_row" style="display:none"><span>Скачана версия <b id="store_update_ready_version"></b><span class="hint" id="store_update_ready_hint">расширение перезапустится; не нажимайте во время поиска игры (выключится автопринятие), открытые вкладки Полемики после этого обновите (F5)</span></span>
+                <button id="store_update_apply" class="btn btn-primary">Обновить</button>
+            </div>
             <div class="row"><span>Проверить обновление<span class="hint">сейчас, не дожидаясь плановой проверки</span></span>
                 <span class="btn-row">
                     <button id="check_update_now" class="btn btn-primary">Проверить</button>

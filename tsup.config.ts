@@ -28,6 +28,7 @@ export default defineConfig({
     "direct-requeue-page": "src/content/page/direct-requeue-page.ts",
     // Громкость игроков: вызывает метод плитки сайта updateVolumeIcon, лениво.
     "player-volume-page": "src/content/page/player-volume-page.ts",
+    "search-counts-page": "src/content/page/search-counts-page.ts",
     "room-probe-inject": "src/content/page/room-probe-inject.ts",
     // Ранний флаг «Скрыть рейтинг» (content-скрипт на document_start): бандл
     // сайта рисует MMR раньше, чем грузится content.js.

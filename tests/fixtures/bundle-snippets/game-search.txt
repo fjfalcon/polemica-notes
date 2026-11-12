@@ -43,3 +43,9 @@ emit("start_game_search",{gameMode:e.gameType,role:e.role,userId:e.user.id,censo
 fr="polemica-client-reload";function _r(){try{sessionStorage.removeItem(fr)}catch(e){}}function vr(){try{if("1"===sessionStorage.getItem(fr))return sessionStorage.removeItem(fr),!1;sessionStorage.setItem(fr,"1")}catch(e){return!1}return window.location.reload(),!0}
 /*—SNIPPET—*/
 notifyServerIsDown:function(){!this.sessionAccepted&&vr()||(this.socketConnectionRefused=!0,this.isIniSearch=!1,this.toggleViewSearching(!1))},playSta
+/*—SNIPPET—*/
+getSearchState:function(){var e=this;return s(o().mark((function t(){var n,r;return o().wrap((function(t){for(;;)switch(t.prev=t.next){case 0:if(e.newGameService||e.newGameService.httpUrl){t.next=2;break}return t.abrupt("return");case 2:return t.prev=2,t.next=5,fetch(e.newGameService.httpUrl+"/api/search",{method:"GET",credentials:"include",headers:{"Content-Type":"application/json;charset=utf-8"}});case 5:return n=t.sent,t.next=8,n.json();case 8:r=t.sent,e.censorshipModesUpdate(r)
+/*—SNIPPET—*/
+censorshipModesUpdate:function(e){var t=this;if(e&&e.queues){var n=e.queues;this.censorshipModes.forEach((function(e){var r=n[e.mode],a=r.players,s=r.available;(null!=a&&(Array.isArray(a)?(e.count=a.length,e.participants=a):(e.count=a,e.participants=void 0)),e.available=s,s)||t.selectedCensorshipModes.indexOf(e.mode)>=0
+/*—SNIPPET—*/
+data:function(){return{gameType:"league",role:"player",roles:["player","judge"],gameTypes:["league","fast"],socket:null,searchState:null,isIniSearch:!1,isSearching:!1,isFoundGame:!1,acceptingPhase:{processing:!1}

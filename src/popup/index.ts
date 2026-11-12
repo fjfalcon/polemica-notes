@@ -10,6 +10,8 @@
  *  • chrome.* → browser.*, console.* → log.*.
  */
 import { browser, isStoreInstall } from "@core/env";
+import { STORE_UPDATE_READY_KEY, readyFrom, versionNewer } from "@shared/store-update";
+import { isGameRoomPath } from "@shared/routes";
 import { LEGACY_MIC_DEFAULT } from "@shared/mic-input";
 import {
   DEFAULT_PLAYER_ACTION_KEYS,
@@ -433,6 +435,75 @@ document.addEventListener("DOMContentLoaded", () => {
     if (note) note.style.display = "";
   }
 
+  // Скачанное из магазина обновление ждёт (открыта Полемика) — кнопка
+  // «Обновить» применяет его сразу (background/store-update).
+  const readyRow = $("store_update_ready_row");
+  const applyBtn = $<HTMLButtonElement>("store_update_apply");
+  // Поколение: событие storage свежее первичного get, а подсказка ждёт
+  // tabs.query — поздний ответ не должен затереть новое состояние.
+  let readySeq = 0;
+  let readyLive = false;
+  const syncReadyRow = async (raw: unknown): Promise<void> => {
+    if (!readyRow) return;
+    const seq = ++readySeq;
+    const ready = readyFrom(raw);
+    const show =
+      !!ready && !ready.attempted && versionNewer(ready.version, browser.runtime.getManifest().version);
+    readyRow.style.display = show ? "" : "none";
+    if (!show || !ready) return;
+    const ver = $("store_update_ready_version");
+    if (ver) ver.textContent = ready.version;
+    // Открыта игра — честно предупреждаем: перезапуск выключит наши функции
+    // в комнате до F5.
+    let inGame = false;
+    try {
+      const tabs = await browser.tabs.query({ url: "*://*.polemicagame.com/game*" });
+      inGame = tabs.some((t) => {
+        try {
+          return isGameRoomPath(new URL(String(t.url || "")).pathname);
+        } catch {
+          return false;
+        }
+      });
+    } catch {
+      /* без списка вкладок — общий текст */
+    }
+    const hint = $("store_update_ready_hint");
+    if (hint && seq === readySeq) {
+      hint.textContent = inGame
+        ? "сейчас открыта игра — лучше обновить после неё: до F5 в комнате не будет функций расширения"
+        : "расширение перезапустится; не нажимайте во время поиска игры (выключится автопринятие), открытые вкладки Полемики после этого обновите (F5)";
+    }
+  };
+  void browser.storage.local
+    .get({ [STORE_UPDATE_READY_KEY]: null })
+    .then((st) => {
+      if (!readyLive) void syncReadyRow((st as Record<string, unknown>)[STORE_UPDATE_READY_KEY]);
+    })
+    .catch(() => undefined);
+  browser.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && STORE_UPDATE_READY_KEY in changes) {
+      readyLive = true;
+      void syncReadyRow(changes[STORE_UPDATE_READY_KEY].newValue);
+    }
+  });
+  applyBtn?.addEventListener("click", async () => {
+    applyBtn.disabled = true;
+    applyBtn.textContent = "Обновляю…";
+    const res = await sendRuntime<{ ok?: boolean; reason?: string }>({ type: "apply_store_update" }).catch(
+      () => undefined,
+    );
+    if (res?.ok) return; // фон перезапускается — попап закроется сам
+    applyBtn.disabled = false;
+    applyBtn.textContent = "Обновить";
+    showPopupToast(
+      res?.reason === "in_game"
+        ? "Сейчас открыта игра — обновите после неё (перезапуск выключил бы функции в комнате)"
+        : "Не удалось применить обновление — перезапустите браузер",
+      "error",
+    );
+  });
+
   const checkUpdateBtn = $<HTMLButtonElement>("check_update_now");
   if (checkUpdateBtn) {
     checkUpdateBtn.addEventListener("click", async () => {
@@ -484,7 +555,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (store) {
           if (store.status === "update_available") {
             showPopupToast(
-              `Стор уже раздаёт версию ${store.version || latest || "новее вашей"} — браузер скачает и применит её сам (быстрее всего — перезапустить браузер)`,
+              `Магазин раздаёт версию ${store.version || latest || "новее вашей"} — скачиваю. Без открытой Полемики обновится сам, иначе здесь появится кнопка «Обновить»`,
             );
           } else if (newer) {
             // Без утверждения «стор ещё не одобрил»: при статусе throttled
@@ -1834,6 +1905,7 @@ document.addEventListener("DOMContentLoaded", () => {
     set("search_avatars_enabled", items.search_avatars_enabled);
     set("search_card_avatar_enabled", items.search_card_avatar_enabled);
     set("tilt_button_enabled", items.tilt_button_enabled);
+    set("queue_counts_refresh_enabled", items.queue_counts_refresh_enabled);
     set("tilt_mode_enabled", items.tilt_mode_enabled);
     syncTiltMode();
     const avatarSource = $<HTMLSelectElement>("own_avatar_source");
@@ -2019,6 +2091,7 @@ document.addEventListener("DOMContentLoaded", () => {
       search_avatars_enabled: cb("search_avatars_enabled", true),
       search_card_avatar_enabled: cb("search_card_avatar_enabled", true),
       tilt_button_enabled: cb("tilt_button_enabled", true),
+      queue_counts_refresh_enabled: cb("queue_counts_refresh_enabled", true),
       tilt_mode_enabled: cb("tilt_mode_enabled", true),
       own_avatar_source:
         $<HTMLSelectElement>("own_avatar_source")?.value === "custom" ? "custom" : "site",
@@ -2157,6 +2230,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "search_avatars_enabled",
     "search_card_avatar_enabled",
     "tilt_button_enabled",
+    "queue_counts_refresh_enabled",
     "tilt_mode_enabled",
     "own_avatar_source",
     "obs_auto_record_enabled",
@@ -2251,12 +2325,16 @@ document.addEventListener("DOMContentLoaded", () => {
   /**
    * Режим «Тильт» выключен — нет красной кнопки в шапке (а вкладку «Тильт»
    * открывает только она); открытый «Тильт» уходит на прежнюю вкладку.
-   * Переключатель — во «Ещё».
+   * Переключатель — во «Ещё», под ним подопция «кнопка на сайте» (12.11.2026
+   * переехала туда из вкладки «Тильт»: там её не находили).
    */
   function syncTiltMode(): void {
     const on = $<HTMLInputElement>("tilt_mode_enabled")?.checked !== false;
     const head = $("tilt_open");
     if (head) head.style.display = on ? "" : "none";
+    // Подопция «кнопка на сайте» без режима ничего не значит — прячем.
+    const sub = $("tilt_button_row");
+    if (sub) sub.style.display = on ? "" : "none";
     if (!on && document.querySelector('.panel.active[data-panel="tilt"]')) {
       // Вернуть туда, где был, а не затереть запомненную вкладку «Игрой».
       let saved: string | null = null;

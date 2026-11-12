@@ -102,6 +102,29 @@ export const gameSearchProbes: Record<string, Probe> = {
     /"\/api\/games\/quit",\{method:"POST",credentials:"include",headers:\{"Content-Type":"application\/json;charset=utf-8"\},body:JSON\.stringify\(\{\}\)\}/,
     "POST /api/games/quit: credentials include, тело {}",
   ),
+  /**
+   * Счётчики столов (кнопка «↻ Обновить», 12.11.2026): источник — GET
+   * <newGameService.httpUrl>/api/search, а в data компонента столы лежат как
+   * censorshipModes [{mode, count, …}] — page-скрипт пишет именно count.
+   */
+  searchCountsSource: re(
+    /getSearchState:function\(\)\{.{0,400}?fetch\([\w$]+\.newGameService\.httpUrl\+"\/api\/search",\{method:"GET"/,
+    "getSearchState: GET <httpUrl>/api/search — источник счётчиков (по имени метода page-скрипт находит компонент)",
+  ),
+  searchCountsField: re(
+    /censorshipModes:\[\{mode:"standard",title:"[^"]+",count:0,countTarget:10,participants:void 0/,
+    "censorshipModes[{mode, count, countTarget, participants}] — поле count у стола",
+  ),
+  /** Сайт сам раскладывает players в count (число или длина массива) — мы повторяем то же. */
+  searchCountsUpdate: re(
+    /var [\w$]+=[\w$]+\[[\w$]+\.mode\],[\w$]+=[\w$]+\.players,[\w$]+=[\w$]+\.available;\(null!=[\w$]+&&\(Array\.isArray\([\w$]+\)\?\([\w$]+\.count=[\w$]+\.length,[\w$]+\.participants=[\w$]+\):\([\w$]+\.count=[\w$]+,[\w$]+\.participants=void 0\)\)/,
+    "censorshipModesUpdate: queues[mode].players → count (длина массива или число)",
+  ),
+  /** Гейт «не во время поиска»: эти флаги page-скрипт читает у компонента. */
+  searchBusyFlags: re(
+    /searchState:null,isIniSearch:!1,isSearching:!1,isFoundGame:!1/,
+    "data: isIniSearch/isSearching/isFoundGame — флаги занятости поиска",
+  ),
   /** Тело заявки поиска — ровно эти четыре поля (queue-peek и DirectSearch шлют их же). */
   startSearchPayload: re(
     /emit\("start_game_search",\{gameMode:[\w$]+\.gameType,role:[\w$]+\.role,userId:[\w$]+\.user\.id,censorship:[\w$]+\.selectedCensorshipModes\}\)/,

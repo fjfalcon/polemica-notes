@@ -191,6 +191,8 @@ export interface Settings {
   queue_peek_enabled: boolean;
   /** Сразу смотреть состав очередей при открытии страницы поиска. */
   queue_peek_auto: boolean;
+  /** Кнопка «↻ Обновить» счётчиков столов на странице поиска. */
+  queue_counts_refresh_enabled: boolean;
   /** Развалилось принятое лобби — автоматически снова встать в поиск. */
   requeue_after_lobby_fail_enabled: boolean;
   /** Кнопка «В поиск» после конца игры/смерти: выйти из игры и снова в очередь. */
@@ -536,8 +538,17 @@ export interface DiagStateMsg {
   type: "diag_state";
 }
 
+/**
+ * Применить скачанное обновление из магазина (кнопка «Обновить» в попапе).
+ * Фон отвечает и перезапускает расширение; при открытой игре — отказ.
+ */
+export interface ApplyStoreUpdateMsg {
+  type: "apply_store_update";
+}
+
 export type ExtMessage =
   | ObsCommandMsg
+  | ApplyStoreUpdateMsg
   | ObsRoomProbeMsg
   | DiagStateMsg
   | NotesMigrateMsg
