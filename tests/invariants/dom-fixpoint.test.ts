@@ -104,6 +104,7 @@ import { hideRatingFeature } from "@content/features/hide-rating";
 import { playerActionKeysFeature } from "@content/features/player-action-keys";
 import { tiltButtonFeature } from "@content/features/tilt-button";
 import { queueCountsRefreshFeature } from "@content/features/queue-counts-refresh";
+import { roomQueueCountsFeature } from "@content/features/room-queue-counts";
 import type { FeatureContext } from "@core/feature";
 
 const ROUND_MS = 600;
@@ -174,6 +175,7 @@ afterEach(() => {
   playerActionKeysFeature.disable();
   tiltButtonFeature.disable();
   queueCountsRefreshFeature.disable();
+  roomQueueCountsFeature.disable();
   syncProfileCrossoverRoute(null);
   syncProfileMmrRoute(null);
   vi.useRealTimers();
@@ -335,6 +337,25 @@ describe("§4 fixpoint: «↻ Обновить» счётчиков столов
     r = await driveToFixpoint();
     expect(r.settled).toBe(true);
     expect(btn()!.style.display).toBe("");
+  });
+});
+
+describe("§4 fixpoint: «А что там в очереди» в комнате", () => {
+  test("кнопка встаёт в ряд контролов один раз; перерисовка ряда сайтом не рождает цикла", async () => {
+    window.history.replaceState(null, "", "/game/5");
+    document.body.innerHTML =
+      '<div class="controls"><div class="right"><div class="button">cam</div></div></div>';
+    const before = domObserver.subscriberCount();
+    roomQueueCountsFeature.enable({ settings: {} } as unknown as FeatureContext);
+    expect(domObserver.subscriberCount(), "фича реально подписалась").toBe(before + 1);
+    let r = await driveToFixpoint();
+    expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
+    expect(document.querySelectorAll(".pn-room-queue-btn")).toHaveLength(1);
+    // Vue перерисовал ряд — кнопка возвращается один раз и DOM снова тих.
+    document.querySelector(".controls")!.innerHTML = '<div class="right"><div class="button">cam</div></div>';
+    r = await driveToFixpoint();
+    expect(r.settled).toBe(true);
+    expect(document.querySelectorAll(".pn-room-queue-btn")).toHaveLength(1);
   });
 });
 

@@ -1906,6 +1906,7 @@ document.addEventListener("DOMContentLoaded", () => {
     set("search_card_avatar_enabled", items.search_card_avatar_enabled);
     set("tilt_button_enabled", items.tilt_button_enabled);
     set("queue_counts_refresh_enabled", items.queue_counts_refresh_enabled);
+    set("room_queue_counts_enabled", items.room_queue_counts_enabled);
     set("tilt_mode_enabled", items.tilt_mode_enabled);
     syncTiltMode();
     const avatarSource = $<HTMLSelectElement>("own_avatar_source");
@@ -2092,6 +2093,7 @@ document.addEventListener("DOMContentLoaded", () => {
       search_card_avatar_enabled: cb("search_card_avatar_enabled", true),
       tilt_button_enabled: cb("tilt_button_enabled", true),
       queue_counts_refresh_enabled: cb("queue_counts_refresh_enabled", true),
+      room_queue_counts_enabled: cb("room_queue_counts_enabled", true),
       tilt_mode_enabled: cb("tilt_mode_enabled", true),
       own_avatar_source:
         $<HTMLSelectElement>("own_avatar_source")?.value === "custom" ? "custom" : "site",
@@ -2231,6 +2233,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "search_card_avatar_enabled",
     "tilt_button_enabled",
     "queue_counts_refresh_enabled",
+    "room_queue_counts_enabled",
     "tilt_mode_enabled",
     "own_avatar_source",
     "obs_auto_record_enabled",

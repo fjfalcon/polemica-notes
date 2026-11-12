@@ -413,3 +413,32 @@
   color: #8b93a7;
 }
 .pn-tilt-close:hover { color: #e6e9f0; }
+
+/* «А что там в очереди» (room-queue-counts, 12.11.2026): окошко над кнопкой
+   в ряду контролов комнаты. */
+.pn-rqc-pop {
+  position: fixed;
+  z-index: 2147483000;
+  min-width: 190px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #0f1420;
+  border: 1px solid rgba(255, 255, 255, .14);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .5);
+  color: #e6e9f0;
+  font: 500 14px/1.4 system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+}
+.pn-rqc-head { font-weight: 700; margin-bottom: 6px; }
+.pn-rqc-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+.pn-rqc-row b { font-variant-numeric: tabular-nums; }
+.pn-rqc-hot { color: #d6ff38; }
+.pn-rqc-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; font-size: 12px; color: #8b93a7; }
+.pn-rqc-refresh {
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .06);
+  color: #e6e9f0;
+  cursor: pointer;
+  padding: 0 8px;
+  font: 600 14px/1.6 system-ui, sans-serif;
+}

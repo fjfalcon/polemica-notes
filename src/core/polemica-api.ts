@@ -14,6 +14,7 @@
  * Здесь НЕТ логики фич: функции ничего не знают ни о плитках, ни о
  * заметках, ни о настройках.
  */
+import { sanitizeQueueCounts } from "@shared/search-counts";
 
 /** Игрок из общего рейтинга (топ-1000). */
 export interface RatingPlayer {
@@ -90,6 +91,59 @@ export function fetchActiveGames(): Promise<unknown[]> {
     })
     .finally(() => clearTimeout(timeout));
   activeGamesPromise = p;
+  return p;
+}
+
+/** Счётчики очередей: кэш 10 с; ↻ (force) — не чаще раза в 2 с. */
+export const QUEUE_COUNTS_TTL_MS = 10_000;
+const QUEUE_COUNTS_FORCE_MIN_MS = 2_000;
+const QUEUE_COUNTS_TIMEOUT_MS = 10_000;
+let queueCountsPromise: Promise<Record<string, number>> | null = null;
+let queueCountsFetchedAt = 0;
+
+/** Тестовый шов: кэш счётчиков переживал бы соседний тест. */
+export function resetQueueCountsCacheForTest(): void {
+  queueCountsPromise = null;
+  queueCountsFetchedAt = 0;
+}
+
+/**
+ * Сколько человек сейчас в каждой очереди: публичный GET /api/search без
+ * куки — в очередь не заходит, поэтому годится и посреди своей игры
+ * («А что там в очереди», 12.11.2026). Тот же принцип never-overlap, что у
+ * fetchActiveGames: висящий запрос не порождает второй, TTL — от развязки.
+ * force — свежий запрос в обход кэша (кнопка ↻), но не поверх висящего.
+ */
+export function fetchQueueCounts(force = false): Promise<Record<string, number>> {
+  const now = Date.now();
+  if (
+    queueCountsPromise &&
+    (queueCountsFetchedAt === 0 ||
+      now - queueCountsFetchedAt < (force ? QUEUE_COUNTS_FORCE_MIN_MS : QUEUE_COUNTS_TTL_MS))
+  ) {
+    return queueCountsPromise;
+  }
+  queueCountsFetchedAt = 0;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), QUEUE_COUNTS_TIMEOUT_MS);
+  const p: Promise<Record<string, number>> = fetch("https://game.polemicagame.com/api/search", {
+    signal: controller.signal,
+    credentials: "omit",
+    cache: "no-store",
+  })
+    .then(async (response) => {
+      if (!response.ok) throw new Error(`queue counts API error: ${response.status}`);
+      const counts = sanitizeQueueCounts(await response.json());
+      if (!counts) throw new Error("queue counts API returned invalid data");
+      if (queueCountsPromise === p) queueCountsFetchedAt = Date.now();
+      return counts;
+    })
+    .catch((e) => {
+      if (queueCountsPromise === p) queueCountsPromise = null;
+      throw e;
+    })
+    .finally(() => clearTimeout(timeout));
+  queueCountsPromise = p;
   return p;
 }
 

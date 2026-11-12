@@ -193,6 +193,8 @@ export interface Settings {
   queue_peek_auto: boolean;
   /** Кнопка «↻ Обновить» счётчиков столов на странице поиска. */
   queue_counts_refresh_enabled: boolean;
+  /** Кнопка «А что там в очереди» в игровой комнате (счётчики столов). */
+  room_queue_counts_enabled: boolean;
   /** Развалилось принятое лобби — автоматически снова встать в поиск. */
   requeue_after_lobby_fail_enabled: boolean;
   /** Кнопка «В поиск» после конца игры/смерти: выйти из игры и снова в очередь. */

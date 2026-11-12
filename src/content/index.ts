@@ -43,6 +43,7 @@ import { connectionDiagFeature, syncConnectionDiagRoute } from "./features/conne
 import { queueGuardFeature, syncQueueGuardRoute } from "./features/queue-guard";
 import { queuePeekFeature } from "./features/queue-peek";
 import { queueCountsRefreshFeature } from "./features/queue-counts-refresh";
+import { roomQueueCountsFeature } from "./features/room-queue-counts";
 import { queueRequeueFeature } from "./features/queue-requeue";
 import { postgameSearchFeature } from "./features/postgame-search";
 import { nickPlateFeature } from "./features/nick-plate";
@@ -100,6 +101,7 @@ const manager = new FeatureManager().register(
   queueGuardFeature,
   queuePeekFeature,
   queueCountsRefreshFeature,
+  roomQueueCountsFeature,
   postgameSearchFeature,
   nickPlateFeature,
   wsLogFeature,
