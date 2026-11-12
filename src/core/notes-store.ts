@@ -439,11 +439,17 @@ export function mergeNickKeysIntoId(
 
   const ts = (n: NoteRecord | string | undefined) =>
     n && typeof n !== "string" && typeof n.timestamp === "number" ? n.timestamp : 0;
-  const toRecord = (n: NoteRecord | string): NoteRecord =>
-    typeof n === "string" ? { text: n, timestamp: 0 } : n;
+  const toRecord = (n: unknown): NoteRecord | undefined => {
+    const r = normalizeNoteRecord(n, Number.POSITIVE_INFINITY);
+    if (!r) return undefined;
+    const t = (n as { timestamp?: unknown }).timestamp;
+    if (typeof t === "number" && Number.isFinite(t) && t > 0) r.timestamp = t;
+    return r;
+  };
+  const aliasesOf = (r: NoteRecord): string[] => (r.nick ? [r.nick] : []).concat(r.nicks ?? []);
 
   // Легаси-строка под u:-ключом — тоже запись, её текст нельзя терять.
-  let best: NoteRecord | undefined = notes[key] !== undefined ? toRecord(notes[key]) : undefined;
+  let best: NoteRecord | undefined = toRecord(notes[key]);
   // Текст легаси-СТРОКИ под id-ключом: у неё ts=0, поэтому любая ник-запись
   // с настоящим временем побеждает её по времени. Такой текст нельзя терять
   // молча — ниже он дописывается в победителя наравне с ничьёй.
@@ -451,6 +457,7 @@ export function mergeNickKeysIntoId(
   const losers: NoteRecord[] = [];
   for (const nk of nickKeys) {
     const record = toRecord(notes[nk]);
+    if (!record) continue;
     if (!best) {
       best = record;
     } else if (ts(record) > ts(best)) {
@@ -497,6 +504,9 @@ export function mergeNickKeysIntoId(
       winner.aliasCondemned = true;
     }
   }
+
+  const nicks = mergeNickLists(winner.nicks, losers.flatMap(aliasesOf), username);
+  if (nicks.length > 0) winner.nicks = nicks;
 
   return { key, nickKeys, record: { ...winner, ...withNickHistory(winner, username) } };
 }
