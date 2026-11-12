@@ -15,9 +15,13 @@
  * Маршрут сообщает URL-роутер (syncObsRecordRoute) — тот же источник правды,
  * что у остальных route-фич. F5 посреди игры безопасен: record_start при
  * уже идущей записи отвечает {already} и ничего не делает.
+ *
+ * OBS, поднятый позже входа в комнату, догоняем по obs_connected; запись,
+ * остановленную не нами, фон на реконнекте не возобновляет.
  */
 import { log } from "@core/log";
 import { sendRuntime } from "@core/messaging";
+import { onObsConnected } from "@core/obs-events";
 import { showToast } from "@core/toast";
 import type { Feature } from "@core/feature";
 
@@ -25,10 +29,14 @@ const SCOPE = "obs-record";
 
 let enabled = false;
 let inRoom = false;
+let offConnected: (() => void) | null = null;
 
-async function command(cmd: "record_start" | "record_stop"): Promise<void> {
+async function command(
+  cmd: "record_start" | "record_stop",
+  data?: { reconnect?: boolean },
+): Promise<void> {
   const res = await sendRuntime<{ success?: boolean; data?: Record<string, unknown>; error?: string }>(
-    { type: "obs_command", command: cmd },
+    { type: "obs_command", command: cmd, data },
   );
   if (!res?.success) {
     // Типовая причина — OBS не подключён; для стримера это тихий no-op,
@@ -39,10 +47,15 @@ async function command(cmd: "record_start" | "record_stop"): Promise<void> {
   const d = res.data ?? {};
   if (cmd === "record_start") {
     if (d.started) {
-      log.info(SCOPE, "запись начата (вход в комнату)");
+      log.info(
+        SCOPE,
+        data?.reconnect ? "запись начата (OBS подключился)" : "запись начата (вход в комнату)",
+      );
       showToast("● Запись игры включена");
     } else if (d.already) {
       log.info(SCOPE, "запись уже шла — не присваиваем (пишет сам стример)");
+    } else if (d.ignored) {
+      log.info(SCOPE, "старт записи пропущен:", String(d.ignored));
     }
   } else {
     if (d.stopped) {
@@ -50,6 +63,9 @@ async function command(cmd: "record_start" | "record_stop"): Promise<void> {
       showToast("■ Запись игры сохранена");
     } else if (d.ignored) {
       log.info(SCOPE, "остановка записи пропущена:", String(d.ignored));
+      if (d.ignored === "unconfirmed") {
+        showToast("Запись не остановлена: после переподключения OBS не видно, чья она — остановите в OBS");
+      }
     }
   }
 }
@@ -68,11 +84,16 @@ export const obsRecordFeature: Feature = {
 
   enable() {
     enabled = true;
+    offConnected = onObsConnected(() => {
+      if (enabled && inRoom) void command("record_start", { reconnect: true });
+    });
     // Включили настройку уже сидя в комнате — стартуем не дожидаясь перехода.
     if (inRoom) void command("record_start");
   },
 
   disable() {
+    offConnected?.();
+    offConnected = null;
     // Симметрия: выключение фичи в комнате останавливает НАШУ запись (чужую
     // фон и так не тронет).
     if (enabled && inRoom) void command("record_stop");
