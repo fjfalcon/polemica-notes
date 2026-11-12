@@ -8,7 +8,7 @@
  *
  * Правила:
  *  - только стабильные якоря: строковые литералы, имена свойств и ключи
- *    локали; минифицированные имена переменных матчатся как \w+;
+ *    локали; минифицированные имена переменных матчатся как [\w$]+;
  *  - пробы чистые (текст → вердикт): их гоняет и живой контракт-тест по
  *    сети, и офлайн-юнит по реальным фрагментам с мутациями — так
  *    мутационный критерий проверяется без сети;
@@ -70,7 +70,7 @@ function inWindow(
 export const gameSearchProbes: Record<string, Probe> = {
   /** Непринятость обозначена ровно cursor-pointer, привязанным к !isGameAccepted. */
   acceptCursorBinding: re(
-    /class:\{"cursor-pointer":!\w+\.isGameAccepted\}/,
+    /class:\{"cursor-pointer":![\w$]+\.isGameAccepted\}/,
     "cursor-pointer ⇔ !isGameAccepted (queue-requeue и auto-start читают класс как состояние)",
   ),
   /** isGameAccepted — это group.ready, а не что-то другое. */
@@ -80,7 +80,7 @@ export const gameSearchProbes: Record<string, Probe> = {
   ),
   /** Отказ лобби перезагружает страницу — на этом стоит мост этапа 1. */
   notAcceptedReloads: re(
-    /"game_not_accepted"===\w+\.reason\?window\.location\.reload\(\)/,
+    /"game_not_accepted"===[\w$]+\.reason\?window\.location\.reload\(\)/,
     "on_stop_game_search(game_not_accepted) → window.location.reload()",
   ),
   /** Подпись непринятой карточки. */
@@ -166,7 +166,7 @@ export const gameSearchProbes: Record<string, Probe> = {
   ),
   /** disabled у «Играть» ⇔ не выбраны очереди (queue-requeue и postgame читают). */
   playDisabledBinding: re(
-    /attrs:\{disabled:!\w+\.selectedCensorshipModes\.length\}/,
+    /attrs:\{disabled:![\w$]+\.selectedCensorshipModes\.length\}/,
     "disabled «Играть» ⇔ !selectedCensorshipModes.length",
   ),
   /**
@@ -175,7 +175,7 @@ export const gameSearchProbes: Record<string, Probe> = {
    * которой стоит самолечение postgame-search (лог 07.08.2026, 18:29).
    */
   searchBtnLoaderBinding: re(
-    /isSearchBtnLoading\?\w+\("div",\{staticClass:"p-play__profile-game p-play__profile-game--search p-play__profile-game-loader-gradient"\}/,
+    /isSearchBtnLoading\?[\w$]+\("div",\{staticClass:"p-play__profile-game p-play__profile-game--search p-play__profile-game-loader-gradient"\}/,
     "isSearchBtnLoading ⇔ лоадер p-play__profile-game-loader-gradient вместо «Играть»",
   ),
   /**
@@ -184,7 +184,7 @@ export const gameSearchProbes: Record<string, Probe> = {
    * же строки). Разъедутся — гейт «тот же игрок» перестанет что-то значить.
    */
   participantsRowBinding: re(
-    /key:(\w+)\.username\+"_participant",staticClass:"participants-item",attrs:\{href:"\/profile\/"\.concat\(\1\.id\)[\s\S]{0,160}?staticClass:"participants-image",attrs:\{src:\w+\.getUserAvatarUrl\(\1\.avatar_url,"100x"\)[\s\S]{0,80}?UsernameLabel",\{attrs:\{username:\1\.use/,
+    /key:([\w$]+)\.username\+"_participant",staticClass:"participants-item",attrs:\{href:"\/profile\/"\.concat\(\1\.id\)[\s\S]{0,160}?staticClass:"participants-image",attrs:\{src:[\w$]+\.getUserAvatarUrl\(\1\.avatar_url,"100x"\)[\s\S]{0,80}?UsernameLabel",\{attrs:\{username:\1\.use/,
     "строка участника: href /profile/{id}, картинка и ник — из одного объекта",
   ),
   /** Список очереди живёт в галочке режима — по ней search-avatars отличает его от витрины лобби. */
@@ -197,12 +197,12 @@ export const gameSearchProbes: Record<string, Probe> = {
   ),
   /** Адрес аватара: file_name и size — query-параметры /image/user-avatar. */
   avatarUrlBuilder: re(
-    /\w+\.append\("file_name",\w+\),\w+&&\w+\.append\("size",\w+\),"\/image\/user-avatar\?"\.concat\(/,
+    /[\w$]+\.append\("file_name",[\w$]+\),[\w$]+&&[\w$]+\.append\("size",[\w$]+\),"\/image\/user-avatar\?"\.concat\(/,
     "getUserAvatarUrl: /image/user-avatar?file_name=…&size=…",
   ),
   /** Пока userInGame — поиск запрещён; «Играть» в DOM не существует. */
   searchDisabledWhileInGame: re(
-    /searchDisabled:function\(\)\{return (?:\w+|this)\.gameSearchDisabled\|\|(?:\w+|this)\.userInGame&&!(?:\w+|this)\.inGameUsersAllowed\}/,
+    /searchDisabled:function\(\)\{return (?:[\w$]+|this)\.gameSearchDisabled\|\|(?:[\w$]+|this)\.userInGame&&!(?:[\w$]+|this)\.inGameUsersAllowed\}/,
     "searchDisabled ⇔ gameSearchDisabled || userInGame && !inGameUsersAllowed",
   ),
 };
@@ -212,7 +212,7 @@ export const gameSearchProbes: Record<string, Probe> = {
 export const roomProbes: Record<string, Probe> = {
   /** Нажатая готовность = класс active, привязанный к votingForGameStart.voted. */
   readyActiveBoundToVoted: re(
-    /\{active:\w+(\.\$parent)?\.votingForGameStart\.voted\}/,
+    /\{active:[\w$]+(\.\$parent)?\.votingForGameStart\.voted\}/,
     "active ⇔ votingForGameStart.voted (второй признак готовности в queue-requeue)",
   ),
   /** Экран набора игроков ⇔ ровно стадия voting_for_game_start. */
@@ -223,7 +223,7 @@ export const roomProbes: Record<string, Probe> = {
   newStageClass: has('class:"new-stage"', "класс new-stage существует в шаблоне роллера"),
   /** on_game_disbandment только запускает отсчёт (t.time) — больше ничего. */
   disbandmentStartsCountdown: re(
-    /on\("on_game_disbandment",[\s\S]{0,220}?startDisbandmentCountdown\(\w+\.time\)/,
+    /on\("on_game_disbandment",[\s\S]{0,220}?startDisbandmentCountdown\([\w$]+\.time\)/,
     "on_game_disbandment → startDisbandmentCountdown(t.time)",
   ),
   /** Старт стадии немедленно ставит gameDidStart (гасит отсчёт роспуска). */
@@ -278,7 +278,7 @@ export const roomProbes: Record<string, Probe> = {
   ),
   /** Пара without-hover/with-hover принадлежит кнопке продолжения паузы. */
   withoutHoverContinue: re(
-    /class:"without-hover",textContent:\w+\(\w+\.\$parent\.readinessTextWithoutHoverContinue\)/,
+    /class:"without-hover",textContent:[\w$]+\([\w$]+\.\$parent\.readinessTextWithoutHoverContinue\)/,
     "without-hover привязан к тексту продолжения паузы (F8)",
   ),
   /** Строка суммы в таблице статистики подписана «Итог» (захардкожено сайтом). */
@@ -288,7 +288,7 @@ export const roomProbes: Record<string, Probe> = {
   ),
   /** Ячейки таблицы статистики: ["cell","title",code] / ["cell","player",code]. */
   statsCellClasses: (text) => ({
-    ok: /\["cell","title",\w+\.code\]/.test(text) && /\["cell","player",\w+\.code\]/.test(text),
+    ok: /\["cell","title",[\w$]+\.code\]/.test(text) && /\["cell","player",[\w$]+\.code\]/.test(text),
     detail: "классы ячеек таблицы статистики (.cell.title.<code>)",
   }),
   // ── «В поиск» после игры (postgame-search) ──
@@ -332,7 +332,7 @@ export const roomProbes: Record<string, Probe> = {
   ),
   /** Номер игрока: класс player-N (id), подпись — id+1. */
   playerNumberBinding: re(
-    /\["player-number","player-"\.concat\(\w+\.id\)\][^)]*\)[^)]*textContent:\w+\(\w+\.id\+1\)/,
+    /\["player-number","player-"\.concat\([\w$]+\.id\)\][^)]*\)[^)]*textContent:[\w$]+\([\w$]+\.id\+1\)/,
     "PlayerNumber: класс player-<id>, текст id+1 (id 0-based, подпись с единицы)",
   ),
   /**
@@ -343,7 +343,7 @@ export const roomProbes: Record<string, Probe> = {
    * узнать об этом надо тестом, а не по жалобе.
    */
   pauseInitiatorInState: re(
-    /\w+\.pause&&\w+\.pause\.initiatorId&&\(\w+=\w+\.pause\.initiatorId\)/,
+    /[\w$]+\.pause&&[\w$]+\.pause\.initiatorId&&\([\w$]+=[\w$]+\.pause\.initiatorId\)/,
     "состояние игры несёт pause.initiatorId",
   ),
   /**
@@ -354,7 +354,7 @@ export const roomProbes: Record<string, Probe> = {
    * читает. Проверять это можно только живой сессией (ревью 08.08.2026).
    */
   pauseInitiatorReachesHandler: re(
-    /on_start_pause\(\{time:\w+,voted:[^}]*initiatorId:\w+\}\)/,
+    /on_start_pause\(\{time:[\w$]+,voted:[^}]*initiatorId:[\w$]+\}\)/,
     "сайт передаёт initiatorId в свой обработчик паузы (внутренний вызов)",
   ),
   /** Футер статистики: «Поиск игры» ведёт на /game-search (fromGame). */
@@ -541,19 +541,19 @@ export const ruLocaleProbes: Record<string, Probe> = {
  */
 export const roomRatingProbes: Record<string, Probe> = {
   mmrLabelClass: re(
-    /\w+=\{class:"mmrLabel"\}[\s\S]{0,700}image:"\/images\/user_mmr\//,
+    /[\w$]+=\{class:"mmrLabel"\}[\s\S]{0,700}image:"\/images\/user_mmr\//,
     "значок MMR комнаты — .mmrLabel с иконками /images/user_mmr/",
   ),
-  mmrLabelValue: has(
-    "value:e.playerView.user.mmr",
+  mmrLabelValue: re(
+    /value:[\w$]+\.playerView\.user\.mmr/,
     "в .mmrLabel лобби рисуется MMR игрока (playerView.user.mmr)",
   ),
   previewRatingLines: re(
-    /\{class:"player-preview default-modal"\},\w+=\{class:"profile-info"\}[\s\S]{0,80}\{class:"wrapper"\},\w+=\{class:"username"\}/,
+    /\{class:"player-preview default-modal"\},[\w$]+=\{class:"profile-info"\}[\s\S]{0,80}\{class:"wrapper"\},[\w$]+=\{class:"username"\}/,
     "карточка игрока: .player-preview .profile-info .wrapper > p.username",
   ),
   previewRatingText: re(
-    /ratingTypeText\[\w+\.type\]\(\w+\.player\.position\)[\s\S]{0,120}" ранг"/,
+    /ratingTypeText\[[\w$]+\.type\]\([\w$]+\.player\.position\)[\s\S]{0,120}" ранг"/,
     "место в рейтинге и ранг — абзацы .wrapper рядом с ником (не .username)",
   ),
 };
@@ -561,7 +561,7 @@ export const roomRatingProbes: Record<string, Probe> = {
 export const profileRatingProbes: Record<string, Probe> = {
   mmrLabelClass: has('return"mmrLabel ".concat', "значок MMR профиля — тот же класс .mmrLabel"),
   levelCardMmr: re(
-    /t\("UserMmrLabel",\{attrs:\{containerClass:"avatarlvl__info-block avatarlvl__info-block-mmr"[\s\S]{0,200}value:Number\(\w+\.user\.mmr\)/,
+    /t\("UserMmrLabel",\{attrs:\{containerClass:"avatarlvl__info-block avatarlvl__info-block-mmr"[\s\S]{0,200}value:Number\([\w$]+\.user\.mmr\)/,
     "MMR в карточке уровня — компонент UserMmrLabel",
   ),
   historyMmrCell: re(
@@ -577,21 +577,21 @@ export const profileRatingProbes: Record<string, Probe> = {
  */
 export const roomPpkProbes: Record<string, Probe> = {
   menuContainer: re(
-    /\w+=\{class:"menu"\},\w+=\{class:"menu__container"\}/,
+    /[\w$]+=\{class:"menu"\},[\w$]+=\{class:"menu__container"\}/,
     "меню игрока: .menu > .menu__container (селектор пункта ППК)",
   ),
   menuItemStartsVoting: re(
-    /yo\("li",\{class:\w+\(\{disabled:!e\.\$parent\.canStartVotingForStop\}\),onClick:[\s\S]{0,160}startStopVoting[\s\S]{0,60}Loc\.vote_for_menu_stop/,
+    /[\w$]+\("li",\{class:[\w$]+\(\{disabled:![\w$]+\.\$parent\.canStartVotingForStop\}\),onClick:[\s\S]{0,160}startStopVoting[\s\S]{0,60}Loc\.vote_for_menu_stop/,
     "пункт <li> «ППК» запускает голосование, недоступный — класс disabled",
   ),
-  votingTitleByType: has(
-    'title:function(){var e="".concat(this.type,"_voting_title")',
+  votingTitleByType: re(
+    /title:function\(\)\{var ([\w$]+)="".concat\(this\.type,"_voting_title"\);return this\.\$root\.Loc\[\1\]/,
     "заголовок голосования — `${type}_voting_title` (ППК узнаём по нему)",
   ),
-  votingTitleClass: re(/\w+=\{key:0,class:"voting__top-title"\}/, "заголовок голосования — .voting__top-title"),
-  votingRoot: has('ao("div",{class:d(["voting",', "корень голосования — .voting (closest от кнопки «Да»)"),
+  votingTitleClass: re(/[\w$]+=\{key:0,class:"voting__top-title"\}/, "заголовок голосования — .voting__top-title"),
+  votingRoot: re(/[\w$]+\("div",\{class:[\w$]+\(\["voting",/, "корень голосования — .voting (closest от кнопки «Да»)"),
   votingYesButton: re(
-    /yo\("button",\{class:"voting__bottom-button",onClick:[^}]*o\.vote\(!0\)\}\)\},g\(this\.\$root\.Loc\.yes\)/,
+    /[\w$]+\("button",\{class:"voting__bottom-button",onClick:[^}]*[\w$]+\.vote\(!0\)\}\)\},[\w$]+\(this\.\$root\.Loc\.yes\)/,
     "голос «за» — button.voting__bottom-button с подписью Loc.yes",
   ),
 };
@@ -613,29 +613,29 @@ export const ratingPageProbes: Record<string, Probe> = {
     "колонки вкладки по MMR: Место, Игрок, MMR, Игры (CSS гасит 1-й и 3-й заголовок)",
   ),
   headInInner: re(
-    /staticClass:"p-rating-table__inner"\},\[\w+\("div",\{staticClass:"p-rating-table__head"\},\w+\._l\(\w+\.columns/,
+    /staticClass:"p-rating-table__inner"\},\[[\w$]+\("div",\{staticClass:"p-rating-table__head"\},[\w$]+\._l\([\w$]+\.columns/,
     "заголовок — .p-rating-table__head внутри .p-rating-table__inner, ячейки по columns",
   ),
   rowPlaceCell: re(
-    /staticClass:"p-rating-table__row"\},\[\w+\.position\?\w+\("span",\{staticClass:"p-rating-table__cell p-rating-table__place"\}/,
+    /staticClass:"p-rating-table__row"\},\[[\w$]+\.position\?[\w$]+\("span",\{staticClass:"p-rating-table__cell p-rating-table__place"\}/,
     "место в рейтинге — .p-rating-table__place прямым ребёнком строки",
   ),
   mmrCellLabel: re(
-    /showMmrColumn\?\w+\("span",\{staticClass:"p-rating-table__cell p-rating-table__amount"\},\[\w+\("UserMmrLabel"/,
+    /showMmrColumn\?[\w$]+\("span",\{staticClass:"p-rating-table__cell p-rating-table__amount"\},\[[\w$]+\("UserMmrLabel"/,
     "MMR в строке — UserMmrLabel прямо в .p-rating-table__amount, только при колонке MMR",
   ),
-  personMmrLabel: re(/\w+\.ratingInfo\.mmr\?\w+\("UserMmrLabel"/, "значок MMR в карточке — только на вкладке по MMR"),
+  personMmrLabel: re(/[\w$]+\.ratingInfo\.mmr\?[\w$]+\("UserMmrLabel"/, "значок MMR в карточке — только на вкладке по MMR"),
   personStatistic: re(
-    /staticClass:"p-rating-person__statistic"\},\w+\._l\(\w+\.ratingInfo/,
+    /staticClass:"p-rating-person__statistic"\},[\w$]+\._l\([\w$]+\.ratingInfo/,
     "блок «Место / MMR» карточки — .p-rating-person__statistic по ratingInfo",
   ),
   mmrLabelClass: has('return"mmrLabel ".concat(this.containerClass)', "UserMmrLabel — класс mmrLabel на корне"),
   mmrLabelOnRoot: re(
-    /directives:\[\{name:"show"[^\]]*\}\],class:\w+\.contClassname\}/,
+    /directives:\[\{name:"show"[^\]]*\}\],class:[\w$]+\.contClassname\}/,
     "contClassname висит на корне UserMmrLabel (иначе > .mmrLabel не найдёт)",
   ),
   userInfoMmrBranch: re(
-    /\{place:\{label:"Место",value:\w+\+1\},mmr:\{label:"MMR",value:this\.toLocaleNumber\(\w+\.mmr\)\}\}/,
+    /\{place:\{label:"Место",value:[\w$]+\+1\},mmr:\{label:"MMR",value:this\.toLocaleNumber\([\w$]+\.mmr\)\}\}/,
     "карточка вкладки по MMR — ровно {place, mmr}: значок карточки и скрытый блок",
   ),
   viewerColumns: has(
@@ -643,16 +643,16 @@ export const ratingPageProbes: Record<string, Probe> = {
     "«Зрители» — мафпоинты без MMR (их места остаются)",
   ),
   personInMain: re(
-    /staticClass:"p-rating-main"\},\[\w+\.userRatingInfo\?\w+\("UserBlock"[\s\S]{0,200}staticClass:"p-rating__tablecont"/,
+    /staticClass:"p-rating-main"\},\[[\w$]+\.userRatingInfo\?[\w$]+\("UserBlock"[\s\S]{0,200}staticClass:"p-rating__tablecont"/,
     "карточка и таблица — в одном .p-rating-main (запасной селектор карточки)",
   ),
   tabsDisabledAttr: re(
-    /staticClass:"p-rating__filterbtns-btn",class:\{[^}]*\},attrs:\{disabled:\w+\.tabsDisabled\}/,
+    /staticClass:"p-rating__filterbtns-btn",class:\{[^}]*\},attrs:\{disabled:[\w$]+\.tabsDisabled\}/,
     "кнопки вкладок disabled на время загрузки",
   ),
-  loadingWired: re(/on:\{ratingLoading:\w+\.changeTabsDisabled\}/, "ratingLoading списка → блок кнопок вкладок"),
+  loadingWired: re(/on:\{ratingLoading:[\w$]+\.changeTabsDisabled\}/, "ratingLoading списка → блок кнопок вкладок"),
   rowsWithLoadingEnd: re(
-    /\w+\.rows=\w+,\w+\.\$emit\("ratingLoading",!1\)/,
+    /[\w$]+\.rows=[\w$]+,[\w$]+\.\$emit\("ratingLoading",!1\)/,
     "строки подменяются в том же такте, что снимается блок вкладок",
   ),
 };
@@ -667,16 +667,16 @@ export const roomPlayerActionProbes: Record<string, Probe> = {
     "подпись кнопки по действию: nominate/shot/vote/check → Loc.nominate_player/aim_player/vote_player/reveal_role",
   ),
   actionRootClick: re(
-    /ao\("div",\{class:\w+\(\["player-action",\w+\.actionClasses\]\),onClick:[^}]*\$emit\("doAction"\)/,
+    /ao\("div",\{class:[\w$]+\(\["player-action",[\w$]+\.actionClasses\]\),onClick:[^}]*\$emit\("doAction"\)/,
     "корень кнопки — .player-action, клик по нему — doAction",
   ),
-  actionContentClass: re(/\w+=\{class:"player-action__content"\}/, "обёртка подписи — .player-action__content"),
+  actionContentClass: re(/[\w$]+=\{class:"player-action__content"\}/, "обёртка подписи — .player-action__content"),
   actionLabelSpan: re(
-    /yo\("span",null,\w+\(\w+\.actionText\),1\)\]\)/,
+    /yo\("span",null,[\w$]+\([\w$]+\.actionText\),1\)\]\)/,
     "подпись — <span> прямым ребёнком обёртки (носитель подсказки клавиши)",
   ),
   actionsContainer: re(
-    /ao\("div",\{key:\d+,class:\w+\(\["player__actions",[\s\S]{0,260}onDoAction:function\(\)\{return \w+\.doAction\(e\)\}/,
+    /[\w$]+\("div",\{key:\d+,class:[\w$]+\(\["player__actions",[\s\S]{0,260}onDoAction:function\(\)\{return [\w$]+\.doAction\([\w$]+\)\}/,
     "кнопки лежат в .player__actions, клик передаёт действие doAction(e)",
   ),
   /**
@@ -685,17 +685,17 @@ export const roomPlayerActionProbes: Record<string, Probe> = {
    * Починит сайт — проба упадёт, и глушение надо пересмотреть.
    */
   siteDigitKeysWithoutAction: re(
-    /_h\(""\.concat\(\w+,", num_"\)\.concat\(\w+\),\(function\(\)\{return event\.preventDefault\(\),\w+\.doAction\(\),!1\}\)\)/,
+    /[\w$]+\(""\.concat\([\w$]+,", num_"\)\.concat\([\w$]+\),\(function\(\)\{return event\.preventDefault\(\),[\w$]+\.doAction\(\),!1\}\)\)/,
     "цифры сайта (1…0, num_) вызывают doAction() без действия",
   ),
   /** …а Player.doAction шлёт РОВНО аргумент: дефолта «текущее действие» нет. */
   playerDoActionPassesArg: re(
-    /doAction:function\((\w+)\)\{var \w+=\{id:this\.id,position:this\.id\+1,action:\1\};this\.\$EventBus\.\$emit\("player:onAction"/,
+    /doAction:function\(([\w$]+)\)\{var [\w$]+=\{id:this\.id,position:this\.id\+1,action:\1\};this\.\$EventBus\.\$emit\("player:onAction"/,
     "Player.doAction(e) отправляет action: e без подстановки",
   ),
   /** …и onPlayerAction снимает кнопки ДО разбора действия — потому цифра их и гасит. */
   onActionClearsFirst: re(
-    /"guess"!==\w+\.action&&this\.preparePlayersToAction\(""\),\w+\.action\)\{case"nominate"/,
+    /"guess"!==[\w$]+\.action&&this\.preparePlayersToAction\(""\),[\w$]+\.action\)\{case"nominate"/,
     "onPlayerAction: сначала preparePlayersToAction(\"\"), потом switch по действию",
   ),
 };
@@ -714,42 +714,42 @@ export const ruPlayerActionProbes: Record<string, Probe> = {
  */
 export const roomPlayerVolumeProbes: Record<string, Probe> = {
   updateVolumeIcon: re(
-    /updateVolumeIcon:function\((\w+)\)\{this\.currentVolume=\1;var (\w+)=this\.currentVolume\/100;this\.\$store\.state\.useAudioAmplification\?this\.volumeAmplifier\.setVolume\(\2\):this\.\$refs\.audioOutput\.volume=\2\}/,
+    /updateVolumeIcon:function\(([\w$]+)\)\{this\.currentVolume=\1;var ([\w$]+)=this\.currentVolume\/100;this\.\$store\.state\.useAudioAmplification\?this\.volumeAmplifier\.setVolume\(\2\):this\.\$refs\.audioOutput\.volume=\2\}/,
     "updateVolumeIcon(v): currentVolume = v и громкость звука v/100 (усилитель или <audio>)",
   ),
   menuCallsUpdateVolumeIcon: re(
-    /onPlayerVolumeChanged:\w+\.updateVolumeIcon[,}]/,
+    /onPlayerVolumeChanged:[\w$]+\.updateVolumeIcon[,}]/,
     "ползунок меню плитки ведёт в updateVolumeIcon",
   ),
   sliderShowsCurrentVolume: re(
-    /\(\w+,\{volume:\w+\.player\.currentVolume,onChanged:\w+\.playerVolumeChanged\}/,
+    /\([\w$]+,\{volume:[\w$]+\.player\.currentVolume,onChanged:[\w$]+\.playerVolumeChanged\}/,
     "ползунок показывает currentVolume плитки",
   ),
   sliderMarkup: re(
-    /\w+=\{class:"volume__container"\},\w+=\{class:"volume"\}[\s\S]{0,1200}yo\("input",\{type:"range",min:"0",max:"100",value:\w+\.volume/,
+    /[\w$]+=\{class:"volume__container"\},[\w$]+=\{class:"volume"\}[\s\S]{0,1200}yo\("input",\{type:"range",min:"0",max:"100",value:[\w$]+\.volume/,
     "ползунок — input[type=range] 0…100 в .volume__container > .volume",
   ),
   sliderEmitsValue: re(
-    /changeValue:function\((\w+)\)\{return this\.\$emit\("changed",parseFloat\(\1\.target\.value\)\)\}/,
+    /changeValue:function\(([\w$]+)\)\{return this\.\$emit\("changed",parseFloat\(\1\.target\.value\)\)\}/,
     "значение ползунка — его value как есть (шкала 0…100)",
   ),
-  menuContainerClass: re(/\w+=\{class:"menu"\},\w+=\{class:"menu__container"\}/, "меню плитки — .menu > .menu__container"),
+  menuContainerClass: re(/[\w$]+=\{class:"menu"\},[\w$]+=\{class:"menu__container"\}/, "меню плитки — .menu > .menu__container"),
   profileLinkHref: re(
     /playerProfileLink:function\(\)\{[^}]*\?"\/profile\/"\.concat\(this\.player\.playerView\.user\.id\):null\}/,
     "ссылка «Профиль» меню — /profile/<playerView.user.id>",
   ),
   profileLinkInMenu: re(
-    /\w+\.playerProfileLink\?\(to\(\),ao\("li",\w+,\[yo\("a",\{href:\w+\.playerProfileLink/,
+    /[\w$]+\.playerProfileLink\?\([\w$]+\(\),[\w$]+\("li",[\w$]+,\[[\w$]+\("a",\{href:[\w$]+\.playerProfileLink/,
     "ссылка профиля — <a href> в том же меню, что ползунок",
   ),
   currentVolumeData: re(/actionTimerDuration:0,currentVolume:100,/, "currentVolume — поле data плитки"),
   itsMeComputed: re(/itsMe:function\(\)\{return this\.id===this\.\$store\.state\.playerId\}/, "itsMe — своя плитка"),
   outcryRestores: re(
-    /startOutcry:function\(\w+\)\{this\.isOutcry=!0,this\.savedVolume=this\.currentVolume,/,
+    /startOutcry:function\([\w$]+\)\{this\.isOutcry=!0,this\.savedVolume=this\.currentVolume,/,
     "выкрик: isOutcry и сохранение громкости (её вернёт сайт)",
   ),
   outcryWatcherRestores: re(
-    /isOutcry:function\((\w+)\)\{!\1&&this\.currentVolume===this\.outcryVolume&&this\.\$store\.state\.useAudioAmplification&&this\.updateVolumeIcon\(this\.savedVolume\)\}/,
+    /isOutcry:function\(([\w$]+)\)\{!\1&&this\.currentVolume===this\.outcryVolume&&this\.\$store\.state\.useAudioAmplification&&this\.updateVolumeIcon\(this\.savedVolume\)\}/,
     "конец выкрика: сайт сам возвращает сохранённую громкость (поэтому во время выкрика не применяем)",
   ),
 };
@@ -762,7 +762,7 @@ export const roomPlayerVolumeProbes: Record<string, Probe> = {
  */
 export const roomBestMoveProbes: Record<string, Probe> = {
   skipIsFinishSpeech: re(
-    /case"skip":return\{label:\w+\.\$root\.Loc\.speech_player_finish,tooltip:\w+\.\$root\.Loc\.finish_speech_tooltip,icon:[^}]*onClick:function\(\)\{\w+\.runAction\(\w+\)\}\}/,
+    /case"skip":return\{label:[\w$]+\.\$root\.Loc\.speech_player_finish,tooltip:[\w$]+\.\$root\.Loc\.finish_speech_tooltip,icon:[^}]*onClick:function\(\)\{[\w$]+\.runAction\([\w$]+\)\}\}/,
     "действие skip — кнопка «Завершите речь» (speech_player_finish), клик запускает skip",
   ),
   skipHasNoSiteHotKey: re(
@@ -774,19 +774,19 @@ export const roomBestMoveProbes: Record<string, Probe> = {
     "кнопки ЛХ на плитке: guessMaf/guessCiv/guessVice → make_guess_maf/civ/vice",
   ),
   tileButtonsByMode: re(
-    /return"guessRoles"===this\.\$store\.state\.playerAction\?[^;]{0,200}?return\["guessCiv","guessMaf"\]\.includes\(\w+\)\}\)\):"guessVice"===this\.\$store\.state\.playerAction\?[^;]{0,200}?return"guessVice"===\w+\}/,
+    /return"guessRoles"===this\.\$store\.state\.playerAction\?[^;]{0,200}?return\["guessCiv","guessMaf"\]\.includes\([\w$]+\)\}\)\):"guessVice"===this\.\$store\.state\.playerAction\?[^;]{0,200}?return"guessVice"===[\w$]+\}/,
     "режим guessRoles — на плитке пистолет и сердце, guessVice — корона",
   ),
   modesFromActions: re(
-    /\["guessMaf","guessCiv"\]\.includes\((\w+)\)&&\(\1="guessRoles"\)/,
+    /\["guessMaf","guessCiv"\]\.includes\(([\w$]+)\)&&\(\1="guessRoles"\)/,
     "режимы ЛХ сайта — guessRoles (из guessMaf/guessCiv) и guessVice",
   ),
   modeToggleRepeatClears: re(
-    /togglePlayerAction:function\((\w+),(\w+)\)\{\1\.playerAction===\2\?\1\.playerAction=null:\1\.playerAction=\2\}/,
+    /togglePlayerAction:function\(([\w$]+),([\w$]+)\)\{\1\.playerAction===\2\?\1\.playerAction=null:\1\.playerAction=\2\}/,
     "повторный клик по активному режиму СНИМАЕТ его — активный не кликаем",
   ),
   modeToggleMarkup: re(
-    /co\(\w+,\{class:\w+\(\{activated:(\w+)===\w+\.\$store\.state\.playerAction,"not-activated":\1!==\w+\.\$store\.state\.playerAction\}\)[\s\S]{0,300}onClick:function\(\)\{\w+\.onPlayerActionToggle\(\1\)\}\},\{default:\w+\(\(function\(\)\{return\[\w+\(\w+\(\w+\.\$root\.Loc\["action_"\.concat\(\1\)\]\)/,
+    /[\w$]+\([\w$]+,\{class:[\w$]+\(\{activated:([\w$]+)===[\w$]+\.\$store\.state\.playerAction,"not-activated":\1!==[\w$]+\.\$store\.state\.playerAction\}\)[\s\S]{0,300}onClick:function\(\)\{[\w$]+\.onPlayerActionToggle\(\1\)\}\},\{default:[\w$]+\(\(function\(\)\{return\[[\w$]+\([\w$]+\([\w$]+\.\$root\.Loc\["action_"\.concat\(\1\)\]\)/,
     "переключатель режима — кнопка контролов с классом activated и подписью Loc.action_<режим>",
   ),
 };
@@ -816,7 +816,7 @@ export const enBestMoveProbes: Record<string, Probe> = {
  */
 export const searchCardProbes: Record<string, Probe> = {
   profileButtonInMain: re(
-    /t\("div",\{staticClass:"p-play__profile-main"\},\[t\("div",\{staticClass:"p-play__profile-info"\}[\s\S]{0,4000}?\]\),\w+\._v\(" "\),t\("button",\{staticClass:"p-play__profile-btn[^"]*",attrs:\{type:"button"\},on:\{click:\w+\.goToProfile\}\}/,
+    /t\("div",\{staticClass:"p-play__profile-main"\},\[t\("div",\{staticClass:"p-play__profile-info"\}[\s\S]{0,4000}?\]\),[\w$]+\._v\(" "\),t\("button",\{staticClass:"p-play__profile-btn[^"]*",attrs:\{type:"button"\},on:\{click:[\w$]+\.goToProfile\}\}/,
     "«Профиль» — button.p-play__profile-btn прямым ребёнком карточки, после блока инфо",
   ),
 };
