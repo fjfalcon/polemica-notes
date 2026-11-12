@@ -34,14 +34,14 @@ vi.mock("@core/messaging", () => ({
 }));
 vi.mock("@core/toast", () => ({ showToast: vi.fn(), clearToasts: vi.fn() }));
 
-import { peekOnce } from "@content/features/queue-peek";
+import { peekOnce, readCredentials } from "@content/features/queue-peek";
 
 const NS = "/search";
 const HARD_TIMEOUT_MS = 8000;
 const STOP_CONFIRM_MS = 1500;
 
-/** Креды с URL-безопасным authKey: CONNECT-кадр сверяется точной строкой. */
-const CREDS = { id: 777001, authKey: "test-auth-key", pro: true, prime: false };
+/** Креды без authKey: с 12.11.2026 сервер узнаёт игрока по куке сессии. */
+const CREDS = { id: 777001, pro: true, prime: false };
 
 type Listener = (e: unknown) => void;
 
@@ -170,13 +170,13 @@ describe("QP-T: транскрипт протокола разведки", () =>
     expect(ws.url.startsWith("wss://game.polemicagame.com/socket.io/?")).toBe(true);
     expect(ws.url).toContain("EIO=3&transport=websocket");
     expect(ws.url).toContain("userId=777001");
-    expect(ws.url).toContain("authKey=test-auth-key");
+    expect(ws.url, "сайт 12.11.2026 не шлёт authKey").not.toContain("authKey");
     expect(ws.url).toContain("intention=game_search");
 
     handshake(ws);
     // CONNECT-кадр неймспейса — точная строка, креды приклеены второй раз.
     expect(ws.sent[0]).toBe(
-      "40/search?userId=777001&authKey=test-auth-key&intention=game_search",
+      "40/search?userId=777001&intention=game_search",
     );
 
     serverEvent(ws, "session_initialized", {});
@@ -189,7 +189,6 @@ describe("QP-T: транскрипт протокола разведки", () =>
         gameMode: "league",
         role: "player",
         userId: 777001,
-        authKey: "test-auth-key",
         censorship: ["standard"],
       },
     ]);
@@ -330,5 +329,30 @@ describe("QP-T: транскрипт протокола разведки", () =>
     const err = (await caught) as Error;
     expect(err.name).toBe("PeekError");
     expect(err.message).toContain("собралась игра");
+  });
+});
+
+describe("QP-C: данные аккаунта со страницы поиска (сайт 12.11.2026)", () => {
+  const page = (user: string) =>
+    `<game-search game-search-service-url="https://het1.polemicagame.com:4242" current-user='${user}' game-search-disabled=""></game-search>`;
+  const serve = (html: string) =>
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, text: async () => html }) as Response));
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("authKey в разметке больше нет — креды собираются по id, ключ не нужен", async () => {
+    serve(page('{"id":777001,"username":"fj","subscription":{"type":2,"duration":30},"prime_member":true}'));
+    expect(await readCredentials()).toEqual({ id: 777001, pro: true, prime: true });
+  });
+
+  test("старая разметка с authKey и &quot; — ключ в креды не попадает", async () => {
+    serve(page("{&quot;id&quot;:5,&quot;authKey&quot;:&quot;old&quot;}"));
+    const creds = await readCredentials();
+    expect(creds).toEqual({ id: 5, pro: false, prime: false });
+    expect(JSON.stringify(creds)).not.toContain("old");
+  });
+
+  test.each(["null", '{"id":0}', '{"id":"x"}', '{"name":"fj"}'])("гость или битые данные %s — null", async (user) => {
+    serve(page(user));
+    expect(await readCredentials()).toBeNull();
   });
 });

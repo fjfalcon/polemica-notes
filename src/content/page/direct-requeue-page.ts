@@ -95,21 +95,26 @@ async function prepare(value: Run): Promise<void> {
   later(value, () => controller.abort(), 8000);
   try {
     const response = await fetch("/game-search", { credentials: "same-origin", signal: controller.signal });
-    if (!response.ok || !current(value)) throw new Error("unavailable");
+    if (!current(value)) return;
+    if (!response.ok) { report(value, "unavailable", { reason: `page-http-${response.status}` }); return; }
     const html = await response.text();
     if (!current(value) || html.length > 5_000_000) return;
     let modes: string | null = null;
     try { modes = localStorage.getItem("searchCensorshipModes"); } catch { /* site's default */ }
     const bootstrap = parseSearchBootstrap(html, modes);
-    if (!bootstrap) { report(value, "unavailable"); return; }
+    // Гость, неверифицирован, бан, отключённый поиск или сменилась разметка.
+    if (!bootstrap) { report(value, "unavailable", { reason: "bootstrap" }); return; }
     // Read availability exactly as the normal page does, without executing its
     // lifecycle (which may start a search). Complete this before declaring ready.
+    // Как checkIfUserInSearch сайта с 12.11.2026: кука сессии, пустое тело.
     const status = await fetch(bootstrap.stateEndpoint, {
-      method: "POST", headers: { "Content-Type": "application/json;charset=utf-8" },
-      body: JSON.stringify({ userId: bootstrap.request.userId, authKey: bootstrap.request.authKey }),
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json;charset=utf-8" },
+      body: JSON.stringify({}),
       signal: controller.signal,
     });
-    if (!status.ok || !current(value)) throw new Error("unavailable");
+    if (!current(value)) return;
+    // 401/403 здесь — первый признак, что кука сессии больше не принимается.
+    if (!status.ok) { report(value, "unavailable", { reason: `state-http-${status.status}` }); return; }
     const state: unknown = await status.json();
     if (!current(value)) return;
     // Как страница поиска сайта (checkIfUserInSearch): сокет поиска уже
@@ -120,14 +125,14 @@ async function prepare(value: Run): Promise<void> {
       return;
     }
     const config = applySearchAvailability(bootstrap, state);
-    if (!config) { report(value, "unavailable"); return; }
+    if (!config) { report(value, "unavailable", { reason: "state-shape" }); return; }
     value.config = config;
     const search = new DirectSearch(config, settings => connectSearchSocket(settings.endpoint, {
-      query: { userId: settings.request.userId, authKey: settings.request.authKey, intention: "game_search" },
+      query: { userId: settings.request.userId, intention: "game_search" },
     }), (state: SearchOutcome) => report(value, state));
     value.search = search;
     search.prepare();
-  } catch { if (current(value)) report(value, "unavailable"); }
+  } catch { if (current(value)) report(value, "unavailable", { reason: "network" }); }
 }
 /** A failed exit response is ambiguous: the server may have completed the quit.
  * The content owner records that boundary before granting permission. Only an
@@ -144,8 +149,8 @@ async function quitAndStart(value: Run): Promise<void> {
   try {
     value.quitSentAt = Date.now();
     const response = await fetch(value.config.stateEndpoint.replace(/\/api\/search\/me$/, "/api/games/quit"), {
-      method: "POST", headers: { "Content-Type": "application/json;charset=utf-8" },
-      body: JSON.stringify({ userId: value.config.request.userId, authKey: value.config.request.authKey }),
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json;charset=utf-8" },
+      body: JSON.stringify({}),
       signal: controller.signal,
     });
     if (!current(value)) return;

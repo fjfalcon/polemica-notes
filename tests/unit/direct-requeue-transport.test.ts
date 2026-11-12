@@ -123,3 +123,15 @@ test("истёкшее до клика соединение освобождае
   expect(postgame.start(123), "готовности больше нет").toBe(false);
   await prepare(postgame); expect(postgame.start(123)).toBe(true);
 });
+
+test("причина недоступности (сайт 12.11.2026) попадает в лог только коротким кодом", async () => {
+  const { log } = await import("@core/log");
+  await prepare(queue);
+  const epoch = commands.at(-1)!.epoch;
+  pagePort!.postMessage({ source: "pn-direct-requeue", epoch, state: "unavailable", reason: "state-http-401", signalAt: 123, at: 200 });
+  expect(log.warn).toHaveBeenCalledWith(expect.any(String), "прямой поиск недоступен, причина:", "state-http-401");
+  vi.mocked(log.warn).mockClear();
+  await prepare(queue);
+  pagePort!.postMessage({ source: "pn-direct-requeue", epoch: commands.at(-1)!.epoch, state: "unavailable", reason: "authKey=SECRET value", signalAt: 123, at: 200 });
+  expect(vi.mocked(log.warn).mock.calls.flat().join(" ")).not.toContain("SECRET");
+});

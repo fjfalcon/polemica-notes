@@ -2,7 +2,7 @@
 import { expect, test } from "vitest";
 import { parseSearchBootstrap, applySearchAvailability } from "@content/page/search-bootstrap";
 import fixture from "../fixtures/search-start-methods.json";
-export function html(user: unknown = { id: 7, authKey: "fake-key", mmr: { value: 1200 } }, options: { endpoint?: string; verified?: boolean; disabled?: string; service?: unknown } = {}): string {
+export function html(user: unknown = { id: 7, mmr: { value: 1200 } }, options: { endpoint?: string; verified?: boolean; disabled?: string; service?: unknown } = {}): string {
   const attr = (value: unknown) => JSON.stringify(value).replaceAll("&", "&amp;").replaceAll("'", "&#39;");
   return `<meta name="csrf-param" content="_csrf-test"><meta name="csrf-token" content="fake-csrf">
     <game-search current-user='${attr(user)}' :verification-statuses='${attr({ isVerified: options.verified ?? true })}'
@@ -12,7 +12,7 @@ export function html(user: unknown = { id: 7, authKey: "fake-key", mmr: { value:
 }
 test("параметры точного рейтингового namespace и payload", () => {
   expect(parseSearchBootstrap(html(), '["prime","standard"]')).toEqual({ endpoint: "https://game.polemicagame.com/search",
-    request: { gameMode: "league", role: "player", userId: 7, authKey: "fake-key", censorship: ["prime", "standard"] }, csrfParam: "_csrf-test", csrfToken: "fake-csrf", stateEndpoint: "https://game.polemicagame.com/api/search/me" });
+    request: { gameMode: "league", role: "player", userId: 7, censorship: ["prime", "standard"] }, csrfParam: "_csrf-test", csrfToken: "fake-csrf", stateEndpoint: "https://game.polemicagame.com/api/search/me" });
 });
 test("чтение HTML не выполняет beforeMount, script или загрузку iframe", () => {
   const markup = html() + '<script>globalThis.__pnUnwantedSearch=true</script><iframe src="/game-search"></iframe>';
@@ -20,26 +20,32 @@ test("чтение HTML не выполняет beforeMount, script или за�
   expect((globalThis as any).__pnUnwantedSearch).toBeUndefined(); expect(document.querySelector("iframe")).toBeNull();
 });
 test("JSON entities разбираются ровно один раз", () => {
-  const key = "key&quota='test'";
-  expect(parseSearchBootstrap(html({ id: 7, authKey: key }), null)?.request.authKey).toBe(key);
+  const nick = "key&quota='test'";
+  expect(parseSearchBootstrap(html({ id: 7, username: nick, mmr: { value: 1200 } }), null)?.request).toMatchObject({ userId: 7, censorship: ["standard"] });
+});
+test("сайт 12.11.2026: authKey не нужен, а если остался в разметке — в запрос не попадает", () => {
+  const config = parseSearchBootstrap(html({ id: 7, authKey: "old-key", mmr: { value: 1200 } }), null);
+  expect(config).not.toBeNull();
+  expect(Object.keys(config!.request).sort()).toEqual(["censorship", "gameMode", "role", "userId"]);
+  expect(JSON.stringify(config)).not.toContain("old-key");
 });
 test.each(["garbage", "[]", '["evil"]', '["standard",null]', '{}'])("невалидный список %s даёт штатный default", saved => {
   expect(parseSearchBootstrap(html(), saved)?.request.censorship).toEqual(["standard"]);
 });
 test("штатный default для 1000 MMR и отсутствия MMR — polite", () => {
-  expect(parseSearchBootstrap(html({ id: 7, authKey: "fake", mmr: { value: 1000 } }), null)?.request.censorship).toEqual(["polite"]);
-  expect(parseSearchBootstrap(html({ id: 7, authKey: "fake" }), null)?.request.censorship).toEqual(["polite"]);
+  expect(parseSearchBootstrap(html({ id: 7, mmr: { value: 1000 } }), null)?.request.censorship).toEqual(["polite"]);
+  expect(parseSearchBootstrap(html({ id: 7 }), null)?.request.censorship).toEqual(["polite"]);
 });
 test.each(["https://polemicagame.com.evil.test/search", "https://evil.test/search", "http://game.polemicagame.com/search", "https://a:b@game.polemicagame.com/search", "javascript:alert(1)"])("не передаёт auth на неподходящий endpoint %s", endpoint => {
   expect(parseSearchBootstrap(html(undefined, { endpoint }), null)).toBeNull();
 });
-test.each([null, { id: "7", authKey: "fake" }, { id: 7 }, { id: 0, authKey: "fake" }])("не создаёт конфиг для неавторизованного пользователя", user => {
+test.each([null, { id: "7" }, { id: 0 }, { id: -3 }, { name: "x" }])("не создаёт конфиг для неавторизованного пользователя", user => {
   expect(parseSearchBootstrap(html(user), null)).toBeNull();
 });
 test("verification, bans и отключённый поиск соблюдаются", () => {
   expect(parseSearchBootstrap(html(undefined, { verified: false }), null)).toBeNull();
   expect(parseSearchBootstrap(html(undefined, { disabled: "maintenance" }), null)).toBeNull();
-  expect(parseSearchBootstrap(html({ id: 7, authKey: "fake", restriction: { gameModeBans: { league: { time_to_end: 15 } } } }), null)).toBeNull();
+  expect(parseSearchBootstrap(html({ id: 7, restriction: { gameModeBans: { league: { time_to_end: 15 } } } }), null)).toBeNull();
 });
 
 test.each([
@@ -62,7 +68,7 @@ test("expired Prime eligibility removes saved Prime and applies the site's stand
   const result = applySearchAvailability(original, queueState(true, false, false));
   expect(result?.request.censorship).toEqual(["standard"]);
   expect(original.request.censorship).toEqual(["prime"]);
-  expect(result?.request.authKey).toBe(original.request.authKey);
+  expect(result?.request.userId).toBe(original.request.userId);
 });
 test("preserves other eligible selections without broadening the player's queues", () => {
   const original = parseSearchBootstrap(html(), '["prime","polite"]')!;

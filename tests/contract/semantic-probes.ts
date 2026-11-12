@@ -83,6 +83,41 @@ export const gameSearchProbes: Record<string, Probe> = {
     /"game_not_accepted"===[\w$]+\.reason\?window\.location\.reload\(\)/,
     "on_stop_game_search(game_not_accepted) → window.location.reload()",
   ),
+  // ── Авторизация поиска (сборка 12.11.2026): authKey убран, всё на куке ──
+  /**
+   * Сокет рейтингового поиска: в query только userId и intention, кука —
+   * через withCredentials. queue-peek и direct-requeue повторяют ровно это;
+   * вернись authKey (или появись новое поле) — проба покраснеет раньше жалоб.
+   */
+  searchSocketCookieAuth: re(
+    /this\.socket=[\w$]+\(\)\(this\.searchServiceUrl,\{[^{}]*withCredentials:!0,query:\{userId:this\.user\.id,intention:"game_search"\}\}/,
+    "connectSocketAndStartSearch: withCredentials, query = {userId, intention}",
+  ),
+  /** /api/search/me и /api/games/quit: кука сессии и пустое тело (direct-requeue-page). */
+  searchApiCookieAuth: re(
+    /"\/api\/search\/me",\{method:"POST",credentials:"include",headers:\{"Content-Type":"application\/json;charset=utf-8"\},body:JSON\.stringify\(\{\}\)\}/,
+    "POST /api/search/me: credentials include, тело {}",
+  ),
+  quitApiCookieAuth: re(
+    /"\/api\/games\/quit",\{method:"POST",credentials:"include",headers:\{"Content-Type":"application\/json;charset=utf-8"\},body:JSON\.stringify\(\{\}\)\}/,
+    "POST /api/games/quit: credentials include, тело {}",
+  ),
+  /** Тело заявки поиска — ровно эти четыре поля (queue-peek и DirectSearch шлют их же). */
+  startSearchPayload: re(
+    /emit\("start_game_search",\{gameMode:[\w$]+\.gameType,role:[\w$]+\.role,userId:[\w$]+\.user\.id,censorship:[\w$]+\.selectedCensorshipModes\}\)/,
+    "start_game_search {gameMode, role, userId, censorship} — без authKey и новых полей",
+  ),
+  /**
+   * Обрыв сокета до session_initialized → одна перезагрузка страницы по флагу
+   * в sessionStorage. ResumeSearch читает этот флаг, чтобы не повторять
+   * попытку поверх уходящей страницы.
+   */
+  siteReloadOnEarlyDrop: (text) => {
+    const flag = /([\w$]+)="polemica-client-reload";function [\w$]+\(\)\{try\{sessionStorage\.removeItem\(\1\)\}catch\([\w$]+\)\{\}\}function ([\w$]+)\(\)\{try\{if\("1"===sessionStorage\.getItem\(\1\)\)return sessionStorage\.removeItem\(\1\),!1;sessionStorage\.setItem\(\1,"1"\)\}catch\([\w$]+\)\{return!1\}return window\.location\.reload\(\),!0\}/.exec(text);
+    const reloader = flag?.[2].replace(/\$/g, "\\$");
+    const ok = !!reloader && new RegExp(`notifyServerIsDown:function\\(\\)\\{!this\\.sessionAccepted&&${reloader}\\(\\)\\|\\|`).test(text);
+    return { ok, detail: "флаг polemica-client-reload: «1» = перезагрузка запущена; notifyServerIsDown зовёт её до принятия сессии" };
+  },
   /** Подпись непринятой карточки. */
   acceptLabel: has("Принять игру", "текст «Принять игру» в ветке непринятой карточки"),
   /**

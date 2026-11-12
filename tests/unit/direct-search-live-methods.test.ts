@@ -4,9 +4,10 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { DirectSearch, type PreparedConfig, type SearchSocket } from "@content/page/direct-search";
 import fixture from "../fixtures/search-start-methods.json";
+import { SITE_STATE_REQUEST } from "./site-search-request";
 
 const config: PreparedConfig = { endpoint: "https://game.polemicagame.com/search", request: {
-  gameMode: "league", role: "player", userId: 7, authKey: "test-only", censorship: ["standard"],
+  gameMode: "league", role: "player", userId: 7, censorship: ["standard"],
 } };
 const print = console.log.bind(console);
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_800_000_000_000); vi.spyOn(console, "log").mockImplementation(() => {}); });
@@ -33,10 +34,11 @@ function server(name: string, request: (name: string, payload: unknown) => void,
 function actualSite(name: string, request: (name: string, payload: unknown) => void, restoredTime?: number) {
   const transport = server(name, request, restoredTime);
   const io = () => () => transport.connect();
-  const connect = new Function("vr", `return (${fixture.methods.connectSocketAndStartSearch})`)(io);
+  // br — socket.io сайта, _r — его сброс флага «перезагрузить при обрыве» (сборка 12.11.2026).
+  const connect = new Function("br", "_r", `return (${fixture.methods.connectSocketAndStartSearch})`)(io, () => {});
   const start = new Function(`return (${fixture.methods.startSearch})`)();
   const p: any = {
-    user: { id: config.request.userId, authKey: config.request.authKey }, $root: { isUserLogin: () => true, showModal: vi.fn() },
+    user: { id: config.request.userId }, $root: { isUserLogin: () => true, showModal: vi.fn() },
     searchServiceUrl: config.endpoint, gameType: "league", role: "player", isVerified: true, isBanned: false,
     isIniSearch: false, isSearching: false, selectedCensorshipModes: ["standard"], acceptingPhase: { processing: false },
     toggleViewSearching(value: boolean) { p.isSearching = value; }, setIsShowQuiz: vi.fn(), startStopwatch: vi.fn(),
@@ -73,7 +75,7 @@ test("DIRECT_RACE: controlled preconnection versus the site's real manual-start 
   expect(acknowledgments).toEqual([{ name: "direct", at: 40 }, { name: "manual-0ms", at: 190 }, { name: "manual-200ms", at: 390 }]);
   // This equality is against the payload constructed by the actual site's method.
   expect(requests[0].payload).toEqual(requests[1].payload);
-  expect(Object.keys(requests[0].payload as object).sort()).toEqual(["authKey", "censorship", "gameMode", "role", "userId"]);
+  expect(Object.keys(requests[0].payload as object).sort()).toEqual(["censorship", "gameMode", "role", "userId"]);
   expect(result).toHaveBeenCalledWith("queued");
 
   direct.dispose(); ideal.p.disconnectSocket(); manual.p.disconnectSocket();
@@ -113,7 +115,7 @@ function asyncHelpers() {
 test("the real API connected:false startup can enqueue, while direct preparation never executes that lifecycle", async () => {
   const requests: unknown[] = [];
   const site = actualSite("ordinary-site", (_name, payload) => requests.push(payload));
-  const fetchSearch = vi.fn(async () => ({ json: async () => ({ connected: false }) }));
+  const fetchSearch = vi.fn(async (_url: string, _init: unknown) => ({ json: async () => ({ connected: false }) }));
   const { runtime, helper } = asyncHelpers();
   site.p.newGameService = { httpUrl: "https://game.polemicagame.com" };
   const actualCheck = new Function("s", "o", "fetch", `return (${fixture.methods.checkIfUserInSearch})`)(helper, runtime, fetchSearch);
@@ -127,6 +129,9 @@ test("the real API connected:false startup can enqueue, while direct preparation
   // Positive control: execute the downloaded method, as ordinary beforeMount does.
   await beforeMountRecovery(); vi.advanceTimersByTime(150);
   expect(fetchSearch).toHaveBeenCalledTimes(1); expect(requests).toHaveLength(1);
+  // С 12.11.2026 сайт узнаёт игрока по куке: пустое тело и credentials:"include".
+  // direct-requeue-page.test.ts сверяет свой запрос с этим же образцом.
+  expect(fetchSearch.mock.calls[0]).toEqual(["https://game.polemicagame.com/api/search/me", SITE_STATE_REQUEST]);
   expect(requests[0]).toEqual(config.request);
   expect(direct.ready()).toBe(true); // independent warm protocol still did not enqueue
   direct.dispose(); site.p.disconnectSocket();

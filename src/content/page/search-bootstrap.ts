@@ -13,8 +13,9 @@ export function parseSearchBootstrap(html: string, savedModes: string | null): S
     verification = JSON.parse(node.getAttribute(":verification-statuses") ?? "{}");
     service = JSON.parse(node.getAttribute(":new-game-service") ?? "null");
   } catch { return null; }
-  if (!Number.isSafeInteger(user?.id) || user.id <= 0 || typeof user.authKey !== "string" ||
-      !user.authKey || user.authKey.length > 4096 || verification?.isVerified !== true) return null;
+  // С 12.11.2026 сайт не кладёт authKey ни в запросы, ни в сокет: сервер поиска
+  // узнаёт игрока по куке (fetch credentials:"include", сокет withCredentials).
+  if (!Number.isSafeInteger(user?.id) || user.id <= 0 || verification?.isVerified !== true) return null;
   const bans = user.restriction?.gameModeBans;
   // Values are seconds in SSR; preparing must respect the same league/common bans.
   if (bans?.common?.time_to_end > 0 || bans?.league?.time_to_end > 0) return null;
@@ -36,7 +37,7 @@ export function parseSearchBootstrap(html: string, savedModes: string | null): S
     if (Array.isArray(value) && value.length > 0 && value.length <= MODES.length && value.every(mode => typeof mode === "string" && MODES.includes(mode)))
       censorship = [...new Set(value)];
   } catch { /* site's default */ }
-  return { endpoint: endpoint.href, request: { gameMode: "league", role: "player", userId: user.id, authKey: user.authKey, censorship }, csrfParam, csrfToken, stateEndpoint };
+  return { endpoint: endpoint.href, request: { gameMode: "league", role: "player", userId: user.id, censorship }, csrfParam, csrfToken, stateEndpoint };
 }
 
 /** Apply the authenticated /api/search/me availability in the same order as

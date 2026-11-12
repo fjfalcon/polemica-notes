@@ -36,7 +36,7 @@ class FakeWs {
 }
 const Impl = FakeWs as unknown as { new (url: string): WebSocket };
 const ENDPOINT = "https://game.polemicagame.com/search";
-const QUERY = { userId: 7, authKey: "k", intention: "game_search" };
+const QUERY = { userId: 7, intention: "game_search" };
 
 beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
@@ -57,7 +57,7 @@ describe("адрес и разбор", () => {
     const url = new URL(t.url);
     expect(url.protocol).toBe("wss:");
     expect(url.pathname).toBe("/socket.io/");
-    expect(Object.fromEntries(url.searchParams)).toEqual({ userId: "7", authKey: "k", intention: "game_search", EIO: "3", transport: "websocket" });
+    expect(Object.fromEntries(url.searchParams)).toEqual({ userId: "7", intention: "game_search", EIO: "3", transport: "websocket" });
     expect(socketTarget("https://h.polemicagame.com/", {}).nsp).toBe("/");
   });
 
@@ -80,7 +80,7 @@ describe("жизнь соединения", () => {
     socket.on("session_initialized", (v) => got.push(["init", v]));
     ws.open();
     ws.recv(`0${JSON.stringify({ sid: "s", pingInterval: 1000, pingTimeout: 500 })}`);
-    expect(ws.sent).toEqual(["40/search?userId=7&authKey=k&intention=game_search,"]);
+    expect(ws.sent).toEqual(["40/search?userId=7&intention=game_search,"]);
     expect(socket.connected).toBe(false);
     socket.emit("start_game_search", { a: 1 });
     expect(ws.sent, "до подключения пространства имён ничего не шлём").toHaveLength(1);

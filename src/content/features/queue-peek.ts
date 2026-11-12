@@ -51,15 +51,18 @@ import type { Settings } from "@shared/types";
 const SCOPE = "queue-peek";
 const SEARCH_API = "https://game.polemicagame.com/api/search";
 /**
- * Креды идут И в URL подключения, И в кадре неймспейса — так делает клиент
+ * Query идёт И в URL подключения, И в кадре неймспейса — так делает клиент
  * сайта: socket.io v2 передаёт `opts.query` в engine.io (то есть в URL) и
  * отдельно приклеивает её к CONNECT-пакету (`40/search?...`). Без query в
  * URL сервер закрывал соединение сразу после установки.
+ *
+ * С 12.11.2026 сайт не шлёт authKey: в query только userId и intention, а
+ * игрока сервер узнаёт по куке сессии (socket.io withCredentials). Куку
+ * браузер прикладывает к рукопожатию WebSocket сам — поддомен того же сайта.
  */
-function socketUrl(creds: { id: number; authKey: string }): string {
+function socketUrl(creds: { id: number }): string {
   const q = new URLSearchParams({
     userId: String(creds.id),
-    authKey: creds.authKey,
     intention: "game_search",
     EIO: "3",
     transport: "websocket",
@@ -197,15 +200,14 @@ async function fetchWithTimeout(url: string): Promise<Response> {
 
 interface Credentials {
   id: number;
-  authKey: string;
   /** Pro-подписка: без неё «Рейтинг» недоступен, а состав приходит числом. */
   pro: boolean;
   /** Отдельное членство Prime — Pro его НЕ включает. */
   prime: boolean;
 }
 
-/** Креды из SSR-разметки страницы поиска: Vue снимает атрибут при монтировании. */
-async function readCredentials(): Promise<Credentials | null> {
+/** Креды из SSR-разметки страницы поиска: Vue снимает атрибут при монтировании. Экспорт — тестовый шов. */
+export async function readCredentials(): Promise<Credentials | null> {
   try {
     const html = await (await fetchWithTimeout("/game-search")).text();
     const m = html.match(/current-user='([^']+)'/);
@@ -217,13 +219,14 @@ async function readCredentials(): Promise<Credentials | null> {
       return null;
     }
     const user = JSON.parse(m[1].replace(/&quot;/g, '"'));
-    if (!user?.id || !user?.authKey) {
-      log.warn(SCOPE, "разведка очереди невозможна: в данных пользователя нет id или ключа");
+    // authKey не требуем: с 12.11.2026 сайт его не использует (кука сессии).
+    const id = Number(user?.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      log.warn(SCOPE, "разведка очереди невозможна: в данных пользователя нет id");
       return null;
     }
     return {
-      id: Number(user.id),
-      authKey: String(user.authKey),
+      id,
       // Сайт считает Pro активной ТОЛЬКО при type>=2 И ненулевом duration
       // (game-search: show-pro-purchase-link). Без второй проверки истёкшая
       // подписка лезла в закрытый режим и получала отказ сервера вместо
@@ -371,7 +374,7 @@ export function peekOnce(creds: Credentials, mode: string): Promise<Record<strin
     ws.addEventListener("close", (e) => {
       if (!failure && !result) {
         // Код и причина закрытия — единственная подсказка, если сервер
-        // отверг подключение (неверная форма запроса, протухший authKey).
+        // отверг подключение (неверная форма запроса, нет куки сессии).
         failure = new PeekError(
           `соединение закрыто раньше времени (code=${e.code}${e.reason ? `, ${e.reason}` : ""}${
             handshakeSeen ? ", рукопожатие было" : ", рукопожатия не было"
@@ -388,7 +391,7 @@ export function peekOnce(creds: Credentials, mode: string): Promise<Record<strin
         handshakeSeen = true;
         log.debug(SCOPE, "handshake", data.slice(0, 120));
         ws.send(
-          `40${NS}?userId=${creds.id}&authKey=${encodeURIComponent(creds.authKey)}&intention=game_search`,
+          `40${NS}?userId=${creds.id}&intention=game_search`,
         );
         return;
       }
@@ -415,7 +418,6 @@ export function peekOnce(creds: Credentials, mode: string): Promise<Record<strin
               gameMode: "league",
               role: "player",
               userId: creds.id,
-              authKey: creds.authKey,
               censorship: [mode],
             },
           ])}`,

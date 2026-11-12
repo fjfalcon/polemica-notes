@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { ResumeSearch, type ResumeClient, type ResumeResult, type ResumeSocket } from "../../src/content/page/resume-search";
+import { ResumeSearch, SITE_RELOAD_FLAG, type ResumeClient, type ResumeResult, type ResumeSocket } from "../../src/content/page/resume-search";
 
 function socket() {
   const handlers = new Map<string, Set<(value: unknown) => void>>();
@@ -197,6 +197,41 @@ describe("ResumeSearch reconnect budget", () => {
     expect(authorize).toHaveBeenCalledTimes(2); expect(client.startSearch).toHaveBeenCalledTimes(2);
     transport.fire("session_initialized", { timeInSearch: 1000 });
     expect(result).toHaveBeenCalledExactlyOnceWith({ state: "restored", timeInSearch: 1000 });
+  });
+
+  describe("сайт 12.11.2026 сам перезагружает страницу при обрыве до session_initialized", () => {
+    const store = new Map<string, string>();
+    beforeEach(() => {
+      store.clear();
+      vi.stubGlobal("sessionStorage", { getItem: (k: string) => store.get(k) ?? null });
+    });
+    afterEach(() => vi.unstubAllGlobals());
+
+    test("флаг перезагрузки поднят — не повторяем поверх уходящей страницы", async () => {
+      await begin();
+      store.set(SITE_RELOAD_FLAG, "1"); // сайтовый обработчик стоит раньше нашего
+      transport.fire("connect_error");
+      await vi.advanceTimersByTimeAsync(250);
+      expect(client.startSearch).toHaveBeenCalledTimes(1);
+      expect(result).toHaveBeenCalledExactlyOnceWith({ state: "refused", reason: "connection" });
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    test("сессия уже была принята — флаг не наш случай, обычный повтор", async () => {
+      await begin();
+      client.sessionAccepted = true;
+      store.set(SITE_RELOAD_FLAG, "1");
+      transport.fire("disconnect");
+      await vi.advanceTimersByTimeAsync(250);
+      expect(client.startSearch).toHaveBeenCalledTimes(2);
+    });
+
+    test("второй обрыв после перезагрузки (сайт снял флаг) — обычный повтор", async () => {
+      await begin();
+      transport.fire("connect_error");
+      await vi.advanceTimersByTimeAsync(250);
+      expect(client.startSearch).toHaveBeenCalledTimes(2);
+    });
   });
 
   test("repeated network failures stop after one reconnect", async () => {

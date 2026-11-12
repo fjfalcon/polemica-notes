@@ -5,11 +5,12 @@ let created: any, events = new Map<string, Set<(value: any) => void>>();
 const makeSocket = vi.hoisted(() => vi.fn());
 vi.mock("@content/page/search-socket", () => ({ connectSearchSocket: makeSocket }));
 import { HANDOFF_TTL_MS, bindPort, gameForm, listenForInit } from "@content/page/direct-requeue-page";
+import { SITE_STATE_REQUEST } from "./site-search-request";
 /** Приватный порт к контент-скрипту — синхронный двойник (транспорт сам — MessageChannel). */
 const pagePort = { postMessage: vi.fn(), onmessage: null as ((event: MessageEvent) => void) | null };
 function answer(id: unknown, epochOf: unknown, ok: boolean) { pagePort.onmessage!({ data: { authority: true, id, epoch: epochOf, ok } } as MessageEvent); }
 let reports: any[], epoch = 0;
-const markup = `<meta name="csrf-param" content="_csrf-test"><meta name="csrf-token" content="fake-csrf"><game-search current-user='{"id":7,"authKey":"fake-key","mmr":{"value":1200}}' :verification-statuses='{"isVerified":true}' rating-game-search-service-url="https://game.polemicagame.com/search" :new-game-service='{"httpUrl":"https://game.polemicagame.com"}'></game-search>`;
+const markup = `<meta name="csrf-param" content="_csrf-test"><meta name="csrf-token" content="fake-csrf"><game-search current-user='{"id":7,"mmr":{"value":1200}}' :verification-statuses='{"isVerified":true}' rating-game-search-service-url="https://game.polemicagame.com/search" :new-game-service='{"httpUrl":"https://game.polemicagame.com"}'></game-search>`;
 function command(op: string, signalAt = Date.now(), queued = false) {
   pagePort.onmessage!({ data: { op, signalAt, epoch, queued } } as MessageEvent);
 }
@@ -125,9 +126,9 @@ test("availability lookup fixes stale prime selection before preparing the socke
   localStorage.setItem("searchCensorshipModes", JSON.stringify(["prime"]));
   try {
     command("prepare"); await vi.advanceTimersByTimeAsync(1);
-    expect(fetch).toHaveBeenNthCalledWith(2, "https://game.polemicagame.com/api/search/me", expect.objectContaining({
-      method: "POST", body: JSON.stringify({ userId: 7, authKey: "fake-key" }),
-    }));
+    // Ровно как сайт с 12.11.2026: кука сессии, пустое тело (образец сверен с методом сайта).
+    expect(fetch).toHaveBeenNthCalledWith(2, "https://game.polemicagame.com/api/search/me", expect.objectContaining(SITE_STATE_REQUEST));
+    expect(makeSocket.mock.calls[0][1]).toEqual({ query: { userId: 7, intention: "game_search" } });
     fire("session_initialized", null); expect(created.emit).not.toHaveBeenCalled();
     command("start"); expect(created.emit).toHaveBeenCalledWith("start_game_search", expect.objectContaining({ censorship: ["standard"] }));
   } finally { localStorage.removeItem("searchCensorshipModes"); }
@@ -142,9 +143,11 @@ test("cancel during availability lookup cannot create a late socket", async () =
 });
 test("unavailable status lookup falls back without sending a stale queue selection", async () => {
   vi.mocked(fetch).mockImplementationOnce(async () => ({ ok: true, text: async () => markup }) as Response)
-    .mockImplementationOnce(async () => ({ ok: false }) as Response);
+    .mockImplementationOnce(async () => ({ ok: false, status: 401 }) as Response);
   command("prepare"); await vi.advanceTimersByTimeAsync(1);
-  expect(makeSocket).not.toHaveBeenCalled(); expect(reports.some(x => x.state === "unavailable")).toBe(true);
+  expect(makeSocket).not.toHaveBeenCalled();
+  // Отказ куки сессии различим в логе, а не тонет в общем «недоступно».
+  expect(reports.find(x => x.state === "unavailable")?.reason).toBe("state-http-401");
 });
 
 async function preparedPostgame() {
@@ -156,9 +159,7 @@ test("postgame waits for exactly one successful HTTP quit before the search requ
   await preparedPostgame(); let release!: (value: Response) => void;
   vi.mocked(fetch).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
   const click = Date.now(); command("quit-start", click); await vi.advanceTimersByTimeAsync(0);
-  expect(fetch).toHaveBeenLastCalledWith("https://game.polemicagame.com/api/games/quit", expect.objectContaining({
-    method: "POST", body: JSON.stringify({ userId: 7, authKey: "fake-key" }),
-  }));
+  expect(fetch).toHaveBeenLastCalledWith("https://game.polemicagame.com/api/games/quit", expect.objectContaining(SITE_STATE_REQUEST));
   command("quit-start", click); command("start", click);
   expect(fetch).toHaveBeenCalledTimes(3); expect(starts()).toHaveLength(0);
   release({ ok: true } as Response); await vi.advanceTimersByTimeAsync(1);

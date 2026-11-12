@@ -31,3 +31,15 @@ t("label",{staticClass:"p-play__profile-modes-item",on:{click:function(t){return
 ants-items"},e._l(e.participants,(function(n){return t("a",{key:n.username+"_participant",staticClass:"participants-item",attrs:{href:"/profile/".concat(n.id),target:"_blank"},on:{click:function(e){e.stopPropagation()}}},[t("img",{staticClass:"participants-image",attrs:{src:e.getUserAvatarUrl(n.avatar_url,"100x"),alt:"avatar"}}),e._v(" "),t("UsernameLabel",{attrs:{username:n.use
 /*—SNIPPET—*/
 ;function J(){var e=arguments.length>0&&void 0!==arguments[0]?arguments[0]:null,t=arguments.length>1&&void 0!==arguments[1]?arguments[1]:null,n=new URLSearchParams;return e&&n.append("file_name",e),t&&n.append("size",t),"/image/user-avatar?".concat(n.toString())}var X={install:f
+/*—SNIPPET—*/
+this.socket=br()(this.searchServiceUrl,{transports:["websocket"],forceNew:!0,reconnection:!1,withCredentials:!0,query:{userId:this.user.id,intention:"game_search"}}),this.socket.o
+/*—SNIPPET—*/
+,t.next=5,fetch(e.newGameService.httpUrl+"/api/search/me",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json;charset=utf-8"},body:JSON.stringify({})});case 5:ret
+/*—SNIPPET—*/
+n.next=11,fetch(t.newGameService.httpUrl+"/api/games/quit",{method:"POST",credentials:"include",headers:{"Content-Type":"application/json;charset=utf-8"},body:JSON.stringify({})});case 11:if
+/*—SNIPPET—*/
+emit("start_game_search",{gameMode:e.gameType,role:e.role,userId:e.user.id,censorship:e.selectedCensorshipModes})})),this.sock
+/*—SNIPPET—*/
+fr="polemica-client-reload";function _r(){try{sessionStorage.removeItem(fr)}catch(e){}}function vr(){try{if("1"===sessionStorage.getItem(fr))return sessionStorage.removeItem(fr),!1;sessionStorage.setItem(fr,"1")}catch(e){return!1}return window.location.reload(),!0}
+/*—SNIPPET—*/
+notifyServerIsDown:function(){!this.sessionAccepted&&vr()||(this.socketConnectionRefused=!0,this.isIniSearch=!1,this.toggleViewSearching(!1))},playSta

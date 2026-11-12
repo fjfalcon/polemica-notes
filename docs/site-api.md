@@ -83,8 +83,16 @@ Vue-компонента `<game-search>` в SSR-HTML страницы:
 `game-search-service-url="https://het1.polemicagame.com:4242"`,
 `rating-game-search-service-url="https://game.polemicagame.com/search"`,
 плюс `:new-game-service='{"httpUrl":"https://game.polemicagame.com"}'`.
-Там же лежит `current-user` с **authKey текущего пользователя** — в логи и
-экспорт не тащить.
+Там же лежит `current-user` (id, подписка, prime, mmr, баны). До 12.11.2026
+в нём был **authKey** — в логи и экспорт данные пользователя не тащить
+по-прежнему.
+
+**С 12.11.2026 поиск авторизуется кукой, authKey убран.** Сокет:
+`query:{userId, intention:"game_search"}` + `withCredentials:!0`; REST
+`/api/search/me` и `/api/games/quit` — `credentials:"include"` и тело `{}`.
+Если сокет рвётся до `session_initialized`, сайт один раз перезагружает
+страницу (флаг `polemica-client-reload` в sessionStorage). Сторожат пробы
+`searchSocketCookieAuth`, `searchApiCookieAuth`, `quitApiCookieAuth`.
 
 Три галочки — это censorship-режимы (из кода):
 `standard` = «Обычный», `polite` = «Рейтинг» (только Pro-подписка),
@@ -118,12 +126,12 @@ GET https://game.polemicagame.com/api/search
 очереди. Анонимный `/api/search` отдаёт голые числа.
 
 События поискового сокета: клиент→сервер `start_game_search`
-(`{gameMode, role, userId, authKey, censorship:[...]}`), `stop_game_search`,
+(`{gameMode, role, userId, censorship:[...]}`; authKey — до 12.11.2026), `stop_game_search`,
 `update_search_settings` (`{censorship:[...]}`), `accept_game`,
 `check_if_user_is_in_game`; сервер→клиент `on_game_search_state`,
 `on_start_game_search`, `on_stop_game_search`, `on_game_found`,
 `redirect_to_game`, `connection_refused`.
-Ещё REST того же сервиса: `POST /api/search/me` (`{userId, authKey}` —
+Ещё REST того же сервиса: `POST /api/search/me` (кука, тело `{}` —
 своё состояние поиска), `/api/games`, `/api/games/join`, `/api/games/quit`.
 
 ## Аватары и карточка профиля (22.10.2026)

@@ -14,6 +14,8 @@ export interface ResumeClient {
   isIniSearch?: boolean;
   isFoundGame?: boolean;
   userInGame?: boolean;
+  /** Сайт (12.11.2026): сессия сокета принята хотя бы раз на этой загрузке. */
+  sessionAccepted?: boolean;
   startSearch(): void;
   disconnectSocket(): void;
 }
@@ -35,6 +37,18 @@ export interface ResumeOptions {
 }
 
 type Handler = (value: unknown) => void;
+
+/**
+ * Флаг сайта (сборка 12.11.2026): сокет поиска оборвался до
+ * session_initialized — его notifyServerIsDown один раз перезагружает
+ * страницу, отметив это в sessionStorage. Наш обработчик стоит после
+ * сайтового, так что «1» здесь значит: перезагрузка уже запущена.
+ */
+export const SITE_RELOAD_FLAG = "polemica-client-reload";
+function siteReloading(client: ResumeClient): boolean {
+  if (client.sessionAccepted === true) return false;
+  try { return sessionStorage.getItem(SITE_RELOAD_FLAG) === "1"; } catch { return false; }
+}
 
 /** One start, at most one transport reconnect, one terminal result. */
 export class ResumeSearch {
@@ -170,7 +184,10 @@ export class ResumeSearch {
 
   private networkFailure(): void {
     if (this.phase !== "waiting" || this.retryTimer) return;
-    if (this.retried) {
+    // Сайт уже перезагружает страницу: повтор поверх уходящей страницы открыл
+    // бы лишнее соединение и мог бы послать start_game_search, который тут же
+    // оборвётся. Восстановит поиск сам сайт после загрузки (checkIfUserInSearch).
+    if (this.retried || siteReloading(this.client)) {
       this.finish({ state: "refused", reason: "connection" });
       return;
     }

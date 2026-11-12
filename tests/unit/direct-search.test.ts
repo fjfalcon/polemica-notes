@@ -3,7 +3,7 @@ import { DirectSearch, type PreparedConfig, type SearchOutcome, type SearchSocke
 
 const config: PreparedConfig = {
   endpoint: "https://game.polemicagame.com/search",
-  request: { gameMode: "league", role: "player", userId: 7, authKey: "test-only", censorship: ["standard"] },
+  request: { gameMode: "league", role: "player", userId: 7, censorship: ["standard"] },
 };
 let handlers: Map<string, Set<(value: unknown) => void>>;
 let socket: SearchSocket;
@@ -244,7 +244,7 @@ test("готовое соединение без запуска живёт не 
     const handlers = new Map<string, (v: unknown) => void>();
     const sock = { connected: true, emit: vi.fn(), on: (n: string, h: (v: unknown) => void) => handlers.set(n, h), removeListener: vi.fn(), disconnect: vi.fn() };
     const states: string[] = [];
-    const search = new DirectSearch({ endpoint: "https://x.polemicagame.com/search", request: { gameMode: "league", role: "player", userId: 1, authKey: "k", censorship: ["standard"] } }, () => sock, s => states.push(s));
+    const search = new DirectSearch({ endpoint: "https://x.polemicagame.com/search", request: { gameMode: "league", role: "player", userId: 1, censorship: ["standard"] } }, () => sock, s => states.push(s));
     search.prepare();
     handlers.get("session_initialized")!(null);
     expect(search.ready()).toBe(true);
@@ -259,7 +259,7 @@ describe("stop(): снимаем только свой поиск", () => {
     const { DirectSearch } = await import("@content/page/direct-search");
     const handlers = new Map<string, (v: unknown) => void>();
     const sock = { connected: true, emit: vi.fn(), on: (n: string, h: (v: unknown) => void) => handlers.set(n, h), removeListener: vi.fn(), disconnect: vi.fn() };
-    const search = new DirectSearch({ endpoint: "https://x.polemicagame.com/search", request: { gameMode: "league", role: "player", userId: 1, authKey: "k", censorship: ["standard"] } }, () => sock, () => {});
+    const search = new DirectSearch({ endpoint: "https://x.polemicagame.com/search", request: { gameMode: "league", role: "player", userId: 1, censorship: ["standard"] } }, () => sock, () => {});
     search.prepare(); handlers.get("session_initialized")!(null); search.start();
     sock.emit.mockClear();
     return { search, sock, handlers };

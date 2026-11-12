@@ -87,10 +87,10 @@ test.each([false, true])("real EIO3 /search wire: existing queue = %s", async ex
     if (!address || typeof address === "string") throw new Error("Expected a loopback TCP server address");
     const config: PreparedConfig = {
       endpoint: `http://127.0.0.1:${address.port}/search`,
-      request: { gameMode: "league", role: "player", userId: 7, authKey: "wire-test-only", censorship: ["standard", "prime"] },
+      request: { gameMode: "league", role: "player", userId: 7, censorship: ["standard", "prime"] },
     };
     search = new DirectSearch(config, settings => connectSearchSocket(settings.endpoint, {
-      query: { userId: settings.request.userId, authKey: settings.request.authKey, intention: "game_search" },
+      query: { userId: settings.request.userId, intention: "game_search" },
       WebSocketImpl,
     }), state => {
       outcomes.push(state);
@@ -110,11 +110,11 @@ test.each([false, true])("real EIO3 /search wire: existing queue = %s", async ex
     expect(urls[0].searchParams.get("EIO")).toBe("3");
     expect(urls[0].searchParams.get("transport")).toBe("websocket");
     expect(urls[0].searchParams.get("userId")).toBe("7");
-    expect(urls[0].searchParams.get("authKey")).toBe("wire-test-only");
+    expect(urls[0].searchParams.has("authKey"), "сайт 12.11.2026 не шлёт authKey").toBe(false);
     expect(urls[0].searchParams.get("intention")).toBe("game_search");
     expect(connectPackets).toHaveLength(1);
     // Как socket.io-client 2.x: query — и в пакете подключения пространства имён.
-    expect(connectPackets[0]).toBe("40/search?userId=7&authKey=wire-test-only&intention=game_search,");
+    expect(connectPackets[0]).toBe("40/search?userId=7&intention=game_search,");
     expect(requests).toEqual([]);
 
     if (existing) {

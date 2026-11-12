@@ -12,7 +12,7 @@ export interface SearchRequest {
   gameMode: "league";
   role: "player";
   userId: number;
-  authKey: string;
+  // authKey больше нет (сайт 12.11.2026): сервер узнаёт игрока по куке сессии.
   censorship: string[];
 }
 export interface PreparedConfig { endpoint: string; request: SearchRequest }

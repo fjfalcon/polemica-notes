@@ -156,6 +156,10 @@ export function setupDirectRequeue(): void {
       return;
     }
     if (["unavailable", "existing-search", "refused", "quit-unknown", "deferred"].includes(data.state)) ready = false;
+    // Причина недоступности — короткий код без данных аккаунта (12.11.2026:
+    // поломка авторизации сайта иначе выглядела бы просто тишиной).
+    if (data.state === "unavailable" && typeof data.reason === "string" && /^[a-z0-9-]{1,32}$/.test(data.reason))
+      log.warn(logger, "прямой поиск недоступен, причина:", data.reason);
     if (data.state === "found") found = true;
     if (scope === "postgame") {
       if (data.state === "quit-confirmed") log.info(logger, "выход подтверждён, от нажатия до запроса / ответ сервера, мс:",
