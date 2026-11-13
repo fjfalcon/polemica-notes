@@ -273,6 +273,8 @@ try {
   // читаются с 9.x. Разовая уборка — та же вежливость, что и строкой выше.
   localStorage.removeItem("twitch-chat-position");
   localStorage.removeItem("twitch-chat-size");
+  // Положение удалённой панели вероятностей ролей (10.1.0).
+  localStorage.removeItem("fp:pn_roles_predictor_panel");
 } catch {
   /* приватный режим — чистить нечего */
 }
