@@ -1185,6 +1185,8 @@ async function runUpgradeMigrations(): Promise<void> {
       "spotify_playlist_url",
       "player_type",
       "modulesDisabled",
+      // Панель вероятностей ролей удалена (13.11.2026, решение владельца).
+      "roles_predictor_enabled",
     ]);
     await browser.storage.local.remove(["savedAvatarUrl", "playerVolumes"]);
     // SEAM-08 (29.08.2026): рантайм ищет ники в lowercase, а старые импорты

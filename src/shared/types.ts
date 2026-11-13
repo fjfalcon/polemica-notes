@@ -108,11 +108,6 @@ export interface Settings {
   note_indicator_enabled: boolean;
   /** Квадратик-метка роли у игрока (мой read, сбрасывается за игру). */
   role_marker_enabled: boolean;
-  /**
-   * Панель вероятностей ролей: точный пересчёт P(место чёрное) по составу
-   * стола и уже раскрытой информации + проверенные поправки из research.
-   */
-  roles_predictor_enabled: boolean;
   /** В метке — иконка роли из спрайта сайта; false — прежние «Мир/Шер/Дон». */
   role_marker_icons_enabled: boolean;
   /** Управлять раскладкой кнопок действий в игре. */

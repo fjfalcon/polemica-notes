@@ -95,8 +95,6 @@ const EXEMPT: Record<string, { count: number; reason: string }> = {
     { count: 1, reason: "гейты: существование кнопки, позиция у якоря, сравнение style.display перед записью" },
   "src/content/features/queue-requeue.ts":
     { count: 1, reason: "подписчик детектит развал лобби и кликает; единственный свой узел — <script type=speculationrules> предзагрузки поиска, вставляется под гейтом существования (querySelector перед вставкой)" },
-  "src/content/features/roles-predictor.ts":
-    { count: 1, reason: "пишет только в СВОЮ плавающую панель и только при смене подписи стола (lastSignature-гейт), пересчёт задросселен 300 мс" },
   "src/content/features/role-faker.ts":
     { count: 1, reason: "оверлей ролей ключуется маркером и пересоздаётся только при смене состояния" },
   "src/content/features/role-marker.ts":

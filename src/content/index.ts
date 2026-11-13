@@ -36,7 +36,6 @@ import { roleFakerFeature } from "./features/role-faker";
 import { pauseHotkeyFeature } from "./features/pause-hotkey";
 import { f5RefreshFeature } from "./features/f5-refresh";
 import { roleMarkerFeature } from "./features/role-marker";
-import { rolesPredictorFeature } from "./features/roles-predictor";
 import { protocolEmojiFeature } from "./features/protocol-emoji";
 import { updateNotifyFeature } from "./features/update-notify";
 import { connectionDiagFeature, syncConnectionDiagRoute } from "./features/connection-diag";
@@ -94,7 +93,6 @@ const manager = new FeatureManager().register(
   freezeWatchFeature,
   f5RefreshFeature,
   roleMarkerFeature,
-  rolesPredictorFeature,
   protocolEmojiFeature,
   updateNotifyFeature,
   connectionDiagFeature,
