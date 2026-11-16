@@ -149,6 +149,7 @@ import type {
   ExtMessage,
 } from "@shared/types";
 import type { NickLengths } from "../content/nickname-lengths";
+import { installSettingsSearch } from "./settings-search";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
@@ -640,10 +641,16 @@ document.addEventListener("DOMContentLoaded", () => {
       /* ignore */
     }
   };
+  // Поиск по настройкам: клик по вкладке или «Тильту» выходит из поиска.
+  const settingsSearch = installSettingsSearch(document, { activateTab });
   tabs.forEach((t) =>
-    t.addEventListener("click", () => activateTab(t.dataset.tab || "game")),
+    t.addEventListener("click", () => {
+      settingsSearch.clear();
+      activateTab(t.dataset.tab || "game");
+    }),
   );
   $("tilt_open")?.addEventListener("click", () => {
+    settingsSearch.clear();
     activateTab("tilt");
     document.querySelector('.panel[data-panel="tilt"]')?.scrollIntoView({ block: "start" });
   });
