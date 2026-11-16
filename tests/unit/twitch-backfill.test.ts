@@ -250,7 +250,100 @@ describe("догрузка после входа в канал", () => {
   });
 });
 
+describe("находки ревью", () => {
+  test("полное окно + полный буфер реле без пропусков — ничего не дорисовывается", async () => {
+    // Бойкий канал: панель держит 200 строк, реле — 200 сообщений и достаёт
+    // дальше окна. Раньше id вытесненной строки забывался, старое сообщение
+    // дорисовывалось как «пропущенное» и по цепочке переигрывало весь буфер.
+    backlogReply = () => ({ messages: [] });
+    let ws = enableFeature();
+    ws.emitOpen();
+    ws.emitJoined();
+    await settle();
+    for (let i = 1; i <= 260; i++) ws.chat(i, `m${i}`);
+    const before = texts();
+    expect(before.at(-1)).toBe("m260");
+    // Реконнект той же страницы: реле отдаёт последние 200 (m61…m260).
+    backlogReply = () => ({ messages: Array.from({ length: 200 }, (_, k) => relayMsg(61 + k, `m${61 + k}`)) });
+    ws.readyState = FakeWebSocket.CLOSED;
+    ws.onclose?.({ code: 1006 });
+    vi.advanceTimersByTime(5000);
+    ws = FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+    ws.emitOpen();
+    ws.emitJoined();
+    await settle();
+    expect(texts().filter((t) => /^m\d+$/.test(t)).at(-1)).toBe("m260");
+    expect(new Set(texts()).size, "ни одного повтора").toBe(texts().length);
+    expect(texts().slice(-3)).toEqual(before.slice(-3));
+  });
+
+  test("после перезагрузки страницы: старше последнего виденного — не «пропущенное»", async () => {
+    backlogReply = () => ({ messages: [] });
+    let ws = enableFeature();
+    ws.emitOpen();
+    ws.emitJoined();
+    await settle();
+    for (let i = 1; i <= 230; i++) ws.chat(i, `m${i}`);
+    window.dispatchEvent(new Event("pagehide"));
+    twitchPanelFeature.disable();
+    // Новая страница восстанавливает 199 строк (m32…m230), а реле помнит 200
+    // и достаёт на сообщение глубже: m31 страница видела, но в истории его
+    // уже нет. Пропущенных нет — дорисовывать нечего.
+    backlogReply = () => ({ messages: Array.from({ length: 200 }, (_, k) => relayMsg(31 + k, `m${31 + k}`)) });
+    ws = enableFeature();
+    ws.emitOpen();
+    ws.emitJoined();
+    await settle();
+    expect(texts()).not.toContain("m31");
+    expect(texts().at(-1)).toBe("m230");
+    twitchPanelFeature.disable();
+
+    // То же, но два сообщения действительно пропущены при переходе.
+    backlogReply = () => ({ messages: Array.from({ length: 200 }, (_, k) => relayMsg(33 + k, `m${33 + k}`)) });
+    ws = enableFeature();
+    ws.emitOpen();
+    ws.emitJoined();
+    await settle();
+    const shown = texts();
+    expect(shown.slice(-2), "дорисованы ровно пропущенные").toEqual(["m231", "m232"]);
+    expect(new Set(shown).size).toBe(shown.length);
+  });
+
+  test("смена канала во время ожидания: придержанное старого канала в новый не попадает", async () => {
+    backlogReply = () => new Promise(() => undefined); // фон молчит
+    const ws = enableFeature();
+    ws.emitOpen();
+    ws.emitJoined();
+    ws.chat(1, "из старого канала");
+    twitchPanelFeature.update!({
+      settings: { twitch_chat_enabled: true, twitch_channel_name: "another" },
+    } as unknown as FeatureContext);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(texts()).toEqual([]);
+    window.dispatchEvent(new Event("pagehide"));
+    expect(sessionStorage.getItem("fp:twitch-panel:history") || "").not.toContain("из старого канала");
+  });
+
+  test("часы Twitch спешат — метка догруженного не уходит в будущее и переживает восстановление", async () => {
+    backlogReply = () => ({ messages: [relayMsg(1, "из будущего", Date.now() + 5 * 60_000)] });
+    const ws = enableFeature();
+    ws.emitOpen();
+    ws.emitJoined();
+    await settle();
+    window.dispatchEvent(new Event("pagehide"));
+    const restored = parseChatHistory(sessionStorage.getItem("fp:twitch-panel:history"), "streamer");
+    expect(restored.map((m) => m.message)).toEqual(["из будущего"]);
+    expect(restored[0].timestamp.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+});
+
 describe("«нужно» для реле", () => {
+  test("реле общее: «Отключиться» одной вкладки и откат без сокета его не гасят", () => {
+    // Вкладка без подключения (откат enable, чат «только в игре» вне игры).
+    twitchPanelFeature.disable();
+    expect(count("twitch_relay_release")).toBe(0);
+  });
+
   test("при подключении, раз в 20 с при живом сокете и на уходе со страницы", () => {
     const ws = enableFeature();
     expect(count("twitch_relay_want"), "реле поднимаем вместе со своим сокетом").toBe(1);

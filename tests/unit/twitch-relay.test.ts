@@ -14,6 +14,7 @@ import {
   BUFFER_MAX_AGE_MS,
   GRACE_MS,
   TICK_MS,
+  handleRelayMessage,
   relayBacklog,
   relayRelease,
   relayStateForTest,
@@ -244,5 +245,55 @@ describe("жизнь реле", () => {
     expect(relayStateForTest()).toEqual({ channel: "", joined: false, buffered: 0, running: false });
     expect(relayBacklog("streamer")).toEqual([]);
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("находки ревью", () => {
+  test("сообщение без id в буфер не идёт: дедупить его нечем", () => {
+    relayWant("streamer");
+    last().open();
+    last().join();
+    last().onmessage?.({ data: "@display-name=V :v!v@v.tmi.twitch.tv PRIVMSG #streamer :без id\r\n" });
+    last().onmessage?.({ data: ":v!v@v.tmi.twitch.tv PRIVMSG #streamer :без тегов\r\n" });
+    expect(relayBacklog("streamer")).toEqual([]);
+  });
+
+  test("сокет, зависший в CONNECTING, заменяется на следующем тике", () => {
+    relayWant("streamer");
+    const stuck = last();
+    expect(stuck.readyState).toBe(FakeWebSocket.CONNECTING);
+    vi.advanceTimersByTime(TICK_MS);
+    expect(sockets(), "20 с > 15 с ожидания рукопожатия").toHaveLength(2);
+    expect(stuck.readyState).toBe(FakeWebSocket.CLOSED);
+    // Свежий CONNECTING не трогаем раньше срока.
+    relayWant("streamer");
+    vi.advanceTimersByTime(1000);
+    expect(sockets()).toHaveLength(2);
+  });
+});
+
+describe("сообщения вкладок", () => {
+  test("«нужно» и «отпустить» — только от вкладки; буфер отдаётся в поле messages", async () => {
+    expect(handleRelayMessage({ type: "obs_command" }, true)).toEqual({ handled: false });
+    expect(handleRelayMessage(null, true)).toEqual({ handled: false });
+
+    // Попап (не вкладка): реле не поднимается, буфер не отдаётся.
+    expect(handleRelayMessage({ type: "twitch_relay_want", channel: "streamer" }, false).handled).toBe(true);
+    expect(sockets()).toHaveLength(0);
+
+    handleRelayMessage({ type: "twitch_relay_want", channel: "Streamer" }, true);
+    expect(sockets()).toHaveLength(1);
+    last().open();
+    last().join();
+    last().chat(1, "привет");
+    const forTab = await handleRelayMessage({ type: "twitch_relay_backlog", channel: "streamer" }, true).reply;
+    expect(forTab?.messages.map((m) => m.message)).toEqual(["привет"]);
+    const forPopup = await handleRelayMessage({ type: "twitch_relay_backlog", channel: "streamer" }, false).reply;
+    expect(forPopup).toEqual({ messages: [] });
+
+    handleRelayMessage({ type: "twitch_relay_release" }, false);
+    expect(relayStateForTest().running, "чужой «отпустить» реле не гасит").toBe(true);
+    handleRelayMessage({ type: "twitch_relay_release" }, true);
+    expect(relayStateForTest().running).toBe(false);
   });
 });

@@ -21,7 +21,10 @@
  * Сервис-воркер Chrome засыпает через 30 с без активности: тик раз в 20 с
  * шлёт PING в IRC (обмен по сокету продлевает жизнь воркера, Chrome ≥116;
  * заодно это детектор молча умершего соединения) и дёргает лёгкий API
- * расширения — тем же способом живёт event page Firefox. Если фон всё же
+ * расширения. Для event page Firefox это страховка НЕПРОВЕРЕННАЯ (ревью
+ * 16.11.2026): надёжно его будят сообщения вкладок («нужно» раз в 20 с и на
+ * pagehide), а переход между страницами — секунды. Худший случай в Firefox —
+ * фон уснёт через ~30 с без вкладок вместо двух минут грейса. Если фон
  * перезапустился, буфер пуст и догружать нечего — поведение как до реле.
  *
  * В логи — только факты (подключились/оборвалось/счётчики), без ников и
@@ -45,6 +48,8 @@ export const GRACE_MS = 120_000;
 export const TICK_MS = 20_000;
 /** Тишина дольше этого при открытом сокете (PING шлём каждые 20 с) — сокет мёртв. */
 const DEAD_AFTER_MS = 50_000;
+/** Сокет не открылся за это время — рукопожатие зависло, заменяем. */
+const CONNECT_TIMEOUT_MS = 15_000;
 /** Потолок буфера и возраста сообщений в нём. */
 export const BUFFER_MAX = 200;
 export const BUFFER_MAX_AGE_MS = 10 * 60_000;
@@ -219,7 +224,15 @@ function tick(): void {
     if (!reconnectTimer) connect();
     return;
   }
-  if (socket.readyState !== WebSocket.OPEN) return;
+  if (socket.readyState !== WebSocket.OPEN) {
+    // Завис в CONNECTING: браузер сам сдаётся минутами, а буфер всё это время пуст.
+    if (Date.now() - lastActivityAt > CONNECT_TIMEOUT_MS) {
+      log.warn(SCOPE, "реле: сокет не открылся — пробуем заново");
+      dropSocket();
+      connect();
+    }
+    return;
+  }
   if (Date.now() - lastActivityAt > DEAD_AFTER_MS) {
     log.warn(SCOPE, "реле: сокет молчит — переподключаемся");
     dropSocket();
@@ -262,6 +275,30 @@ export function relayBacklog(rawChannel: unknown): RelayChatMessage[] {
   if (!asked || asked !== channel) return [];
   const since = Date.now() - BUFFER_MAX_AGE_MS;
   return buffer.filter((e) => e.at >= since).map((e) => e.msg);
+}
+
+/**
+ * Разбор сообщений вкладок. `fromTab` — отправитель content-скрипт вкладки:
+ * у попапа вкладки нет, и реле «ни для кого» подниматься не должно.
+ * Не наше сообщение — handled:false, фон идёт дальше по своим обработчикам.
+ */
+export function handleRelayMessage(
+  msg: unknown,
+  fromTab: boolean,
+): { handled: boolean; reply?: Promise<{ messages: RelayChatMessage[] }> } {
+  const m = msg as { type?: unknown; channel?: unknown } | null;
+  switch (m?.type) {
+    case "twitch_relay_want":
+      if (fromTab) relayWant(m.channel);
+      return { handled: true };
+    case "twitch_relay_backlog":
+      return { handled: true, reply: Promise.resolve({ messages: fromTab ? relayBacklog(m.channel) : [] }) };
+    case "twitch_relay_release":
+      if (fromTab) relayRelease();
+      return { handled: true };
+    default:
+      return { handled: false };
+  }
 }
 
 /** Тестовый шов: состояние реле. */

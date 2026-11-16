@@ -63,6 +63,8 @@ const SCOPE = "twitch";
 
 /** Максимум хранимых сообщений. */
 const MAX_MESSAGES = 200;
+/** Сколько id сообщений помнит дедуп — с запасом над буфером панели и реле. */
+const SEEN_IDS_MAX = 1000;
 /** Базовая задержка переподключения. */
 const RECONNECT_DELAY = 5000;
 /** Потолок попыток: опечатка в имени канала не должна долбить IRC вечно. */
@@ -386,15 +388,36 @@ const POINTER_HOLD_MAX_MS = 10_000;
 class TwitchChatPanel extends FloatingPanel {
   private messagesEl: HTMLElement | null = null;
   private messages: ChatMessage[] = [];
-  /** id показанных сообщений чата — дедуп живого потока, истории и реле. */
+  /**
+   * id показанных сообщений чата — дедуп живого потока, истории и реле.
+   *
+   * Память id ДЛИННЕЕ буфера строк (SEEN_IDS_MAX против MAX_MESSAGES) и от
+   * него не зависит. Иначе на бойком канале буфер реле доставал дальше окна
+   * панели: id вытесненной строки забывался, старое сообщение дорисовывалось
+   * как «пропущенное», вытесняло следующую строку — и так по цепочке весь
+   * буфер заново (ревью 16.11.2026).
+   */
   private seenIds = new Set<string>();
+  private seenOrder: string[] = [];
 
-  /** Держать буфер в потолке; id ушедшего сообщения из дедупа снимается. */
-  private trimBuffer(): void {
-    while (this.messages.length > MAX_MESSAGES) {
-      const gone = this.messages.shift();
-      if (gone?.id) this.seenIds.delete(gone.id);
+  private rememberId(id: string): void {
+    if (this.seenIds.has(id)) return;
+    this.seenIds.add(id);
+    this.seenOrder.push(id);
+    while (this.seenOrder.length > SEEN_IDS_MAX) {
+      const gone = this.seenOrder.shift();
+      if (gone) this.seenIds.delete(gone);
     }
+  }
+
+  /** Снимок показанных id — «что было видно до этого подключения». */
+  seenSnapshot(): Set<string> {
+    return new Set(this.seenIds);
+  }
+
+  /** Держать буфер строк в потолке. */
+  private trimBuffer(): void {
+    while (this.messages.length > MAX_MESSAGES) this.messages.shift();
   }
   private prefs: PanelPrefs = loadPrefs();
   /** Пользователь у нижнего края чата (автоскролл включён). */
@@ -447,11 +470,12 @@ class TwitchChatPanel extends FloatingPanel {
    */
   seedHistory(restored: ChatMessage[]): void {
     if (restored.length === 0 || this.messages.length > 0) return;
-    for (const m of restored) if (m.id) this.seenIds.add(m.id);
+    // Вместе с разделителем — ровно MAX_MESSAGES: буфер в 201 строку
+    // навсегда ломал инвариант размера (shift снимает по одному).
+    const kept = restored.slice(-(MAX_MESSAGES - 1));
+    for (const m of kept) if (m.id) this.rememberId(m.id);
     this.messages = [
-      // Вместе с разделителем — ровно MAX_MESSAGES: буфер в 201 строку
-      // навсегда ломал инвариант размера (shift снимает по одному).
-      ...restored.slice(-(MAX_MESSAGES - 1)),
+      ...kept,
       { message: "⟲ история восстановлена", timestamp: new Date(), type: "system" },
     ];
     this.renderMessages();
@@ -464,6 +488,7 @@ class TwitchChatPanel extends FloatingPanel {
   resetForChannel(): void {
     this.messages = [];
     this.seenIds.clear();
+    this.seenOrder = [];
     this.unseen = 0;
     this.atBottom = true;
     this.renderMessages();
@@ -610,7 +635,7 @@ class TwitchChatPanel extends FloatingPanel {
   ): boolean {
     if (extra?.id) {
       if (this.seenIds.has(extra.id)) return false;
-      this.seenIds.add(extra.id);
+      this.rememberId(extra.id);
     }
     // Граница слова обязательна: `@foo` не должен подсвечиваться в `@foobar`
     // (ники твича — [a-z0-9_], поэтому проверка следующего символа достаточна).
@@ -634,7 +659,9 @@ class TwitchChatPanel extends FloatingPanel {
       color: extra?.color,
       badges: extra?.badges,
       mention,
-      timestamp: extra?.ts ? new Date(extra.ts) : new Date(),
+      // Часы Twitch могут спешить относительно наших: метка из будущего при
+      // восстановлении истории считается битой (parseChatHistory) — не дальше «сейчас».
+      timestamp: extra?.ts ? new Date(Math.min(extra.ts, Date.now())) : new Date(),
       type: "chat",
     });
     this.trimBuffer();
@@ -1226,6 +1253,8 @@ let backfillGen = 0;
 let backfillTimer: ReturnType<typeof setTimeout> | null = null;
 /** Живые сообщения, придержанные до ответа фона; null — догрузка не идёт. */
 let held: ParsedChat[] | null = null;
+/** id, показанные до текущего подключения (см. onlyMissed). */
+let seenAtConnect: ReadonlySet<string> = new Set();
 
 function relayWant(): void {
   if (channelName) void sendRuntime({ type: "twitch_relay_want", channel: channelName });
@@ -1247,12 +1276,54 @@ function stopRelayBeat(): void {
 }
 
 function showChat(chat: ParsedChat, backfilled = false): void {
-  panel?.addChatMessage(chat.username, chat.message, {
-    color: chat.color,
-    badges: chat.badges,
-    id: chat.id,
-    ts: backfilled ? chat.ts : undefined,
-  });
+  // Под try: вызывается и из закрытия сокета — сбой отрисовки одной строки
+  // не должен оборвать разбор состояния соединения на полпути.
+  try {
+    panel?.addChatMessage(chat.username, chat.message, {
+      color: chat.color,
+      badges: chat.badges,
+      id: chat.id,
+      ts: backfilled ? chat.ts : undefined,
+    });
+  } catch (e) {
+    log.error(SCOPE, "failed to render chat message", e);
+  }
+}
+
+/**
+ * Что из буфера реле действительно пропущено. Пропущенное — это то, что
+ * пришло ПОСЛЕ последнего сообщения, показанного ДО этого подключения: всё,
+ * что в буфере раньше него, страница видела (даже если строка давно ушла за
+ * потолок окна и в сохранённую историю не попала). Ни одного знакомого
+ * сообщения в буфере нет — пропущено всё.
+ *
+ * Сверяемся со снимком «до подключения», а не с текущим состоянием: живые
+ * сообщения этого же подключения тоже есть в буфере реле, и опоздавший ответ
+ * фона иначе счёл бы пропущенное перед ними «уже виденным».
+ */
+function onlyMissed(backlog: ParsedChat[], seenBefore: ReadonlySet<string>): ParsedChat[] {
+  let lastSeen = -1;
+  for (let i = backlog.length - 1; i >= 0; i--) {
+    const id = backlog[i].id;
+    if (id && seenBefore.has(id)) {
+      lastSeen = i;
+      break;
+    }
+  }
+  return backlog.slice(lastSeen + 1);
+}
+
+/**
+ * Бросить догрузку БЕЗ показа придержанного: канал сменился, придержанные
+ * сообщения — старого канала и в новую панель и её историю попасть не должны.
+ */
+function dropBackfill(): void {
+  backfillGen++;
+  if (backfillTimer) {
+    clearTimeout(backfillTimer);
+    backfillTimer = null;
+  }
+  held = null;
 }
 
 /** Показать придержанное и выйти из режима догрузки. */
@@ -1297,7 +1368,7 @@ function startBackfill(): void {
     if (gen !== backfillGen || channel !== channelName) return;
     // Опоздавший ответ (таймаут уже показал придержанное) всё равно
     // дорисовываем: порядок чуть нарушится, но сообщение не потеряется.
-    for (const chat of missed) showChat(chat, true);
+    for (const chat of onlyMissed(missed, seenAtConnect)) showChat(chat, true);
     flushHeld();
   })();
 }
@@ -1393,6 +1464,7 @@ function connectToTwitch(): void {
   intentionalClose = false;
   // Прежнее подключение сменилось: его догрузка не к месту, придержанное — показать.
   cancelBackfill();
+  seenAtConnect = panel?.seenSnapshot() ?? new Set();
   // Фоновое реле поднимаем параллельно со своим сокетом — к следующему
   // переходу страницы у него уже будет буфер.
   startRelayBeat();
@@ -1582,6 +1654,7 @@ function handleControlMessage(msg: TwitchControlMsg): void {
       const next = msg.channel ? normalizeChannel(msg.channel) : channelName;
       if (next !== channelName) {
         channelName = next;
+        dropBackfill();
         panel?.resetForChannel();
         if (!panel) clearChatHistory();
       }
@@ -1590,9 +1663,10 @@ function handleControlMessage(msg: TwitchControlMsg): void {
       break;
     }
     case "twitch_disconnect":
+      // Реле не трогаем: команда приходит ОДНОЙ вкладке, а реле общее — в
+      // режиме «только в игре» другая вкладка может сидеть в игре с живым
+      // чатом. Без «нужно» реле погаснет само через грейс.
       disconnect();
-      // Явное «Отключиться» — фоновое реле тоже гасим сразу, не по грейсу.
-      void sendRuntime({ type: "twitch_relay_release" });
       break;
     case "twitch_get_status":
       // Правда для попапа — подтверждённый вход в канал, а не живой сокет.
@@ -1682,6 +1756,7 @@ export const twitchPanelFeature: TwitchFeature = {
     if (next !== channelName) {
       channelName = next;
       // Историю старого канала не тащим под новый ключ — буфер с нуля.
+      dropBackfill();
       panel?.resetForChannel();
       if (!panel) clearChatHistory();
       reconnectAttempts = 0; // сменили канал — свежий лимит попыток
@@ -1699,10 +1774,12 @@ export const twitchPanelFeature: TwitchFeature = {
   },
 
   disable() {
-    const hadChat = channelName !== "";
+    // Реле отпускает только вкладка, у которой чат действительно был
+    // подключён: выключение настройки приходит во все вкладки разом, а откат
+    // неудачного enable (сокета ещё нет) чужое реле гасить не должен.
+    const hadSocket = socket !== null || reconnectTimer !== null;
     disconnect();
-    // Чат выключен — фоновому реле слушать больше не для кого.
-    if (hadChat) void sendRuntime({ type: "twitch_relay_release" });
+    if (hadSocket) void sendRuntime({ type: "twitch_relay_release" });
 
     // Сохранить до unmount: выключение фичи не должно стирать историю —
     // повторное включение в той же вкладке восстановит разговор.
