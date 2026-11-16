@@ -21,3 +21,7 @@ amo.env
 
 # Экспорты сессий агентов — не артефакт проекта
 session-*.md
+
+# Архив бандлов сайта (npm run site:snapshot): чужой код, в публичный
+# репозиторий не кладём — в git только журнал docs/site-history.json
+site-history/

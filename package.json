@@ -25,7 +25,8 @@
     "chrome:auth": "node scripts/chrome-auth.mjs",
     "publish:chrome": "node scripts/verify-dist.mjs chrome-zip && node scripts/publish-chrome.mjs",
     "release:check": "node scripts/verify-dist.mjs release",
-    "smoke:direct": "node scripts/smoke-direct-bundle.mjs"
+    "smoke:direct": "node scripts/smoke-direct-bundle.mjs",
+    "site:snapshot": "node scripts/site-snapshot.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.270",

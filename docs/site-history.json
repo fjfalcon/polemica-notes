@@ -1,0 +1,206 @@
+{
+  "schemaVersion": 1,
+  "files": {
+    "gameSearch": {
+      "url": "https://polemicagame.com/bundle/game-search.js",
+      "versions": [
+        {
+          "sha256": "57238ece03a6f583cbb5cfff1c54d0d3360b89d1c3e736a5b7a06c6f883b98d4",
+          "seen": "2026-08-01",
+          "note": "из фикстуры контракта, файл не сохранён"
+        },
+        {
+          "sha256": "ce5f2df95993f7bb968c52d3d719558076a7e230414a89f963b606182b74bce7",
+          "bytes": 960961,
+          "lastModified": "2026-11-13T05:48:33.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "roomMain": {
+      "url": "https://polemicagame.com/room/bundle/main.js",
+      "versions": [
+        {
+          "sha256": "92b45577b8a2be9638f4cd7b2b44413a017939077960be448ecf0f125873a4b0",
+          "seen": "2026-08-01",
+          "note": "из фикстуры контракта, файл не сохранён"
+        },
+        {
+          "sha256": "43fb77c81a8b8c39089f6ec63d6190c30bdaaca9aa8d3e5d1dc874307061fb73",
+          "bytes": 1543892,
+          "lastModified": "2026-11-12T10:36:33.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "profile": {
+      "url": "https://polemicagame.com/bundle/profile.js",
+      "versions": [
+        {
+          "sha256": "58e2aa8dded8f2a3123bcad60300536b6626550411b75d5a00ce60db236c8f43",
+          "seen": "2026-08-01",
+          "note": "из фикстуры контракта, файл не сохранён"
+        },
+        {
+          "sha256": "9a99239d11b4a764c275d064b020d50d5850e7ec92ac0e4a203196a19230819a",
+          "bytes": 727172,
+          "lastModified": "2026-11-03T05:33:39.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "localeRu": {
+      "url": "https://polemicagame.com/room/bundle/locales/RU.js",
+      "versions": [
+        {
+          "sha256": "b5ce5268540d7fa5b4daa954618e4c48939e27510f46feaf1a5f2a730aaa6cec",
+          "seen": "2026-08-01",
+          "note": "из фикстуры контракта, файл не сохранён"
+        },
+        {
+          "sha256": "3de756f64f94a4847f666f07830aa3780dbe6b11c7de602aa7923b143ab23fd6",
+          "bytes": 42054,
+          "lastModified": "2026-10-20T06:42:24.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "localeEn": {
+      "url": "https://polemicagame.com/room/bundle/locales/EN.js",
+      "versions": [
+        {
+          "sha256": "6c11dcdb847e840f46abf4727d91c5acca87b0f75d632312dca25dc01206d16c",
+          "seen": "2026-08-06",
+          "note": "из фикстуры контракта, файл не сохранён"
+        },
+        {
+          "sha256": "3e484fc3021bca540433bfd0b2316b0ba5c503d513bf504b8e666f9a22ba389a",
+          "bytes": 28348,
+          "lastModified": "2026-10-20T06:42:24.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "ratingPage": {
+      "url": "https://polemicagame.com/bundle/rating.js",
+      "versions": [
+        {
+          "sha256": "e49c7d18cb81d0603eeafed466ac902f64673e37de9c84818a4d77ec6015c8b7",
+          "bytes": 261072,
+          "lastModified": "2026-11-03T05:33:39.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "mainCss": {
+      "url": "https://polemicagame.com/bundle/main.css",
+      "versions": [
+        {
+          "sha256": "277c793d0b3ee4cc077b56958e1e136146984d1bb57becfe5c8894cbb8e27f65",
+          "bytes": 649589,
+          "lastModified": "2026-11-12T10:36:22.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "roomCss": {
+      "url": "https://polemicagame.com/room/bundle/style.css",
+      "versions": [
+        {
+          "sha256": "b2efa2ab99a2ed064a88a061981635f2ad3b37a6b5fc9bf84935ce8841e3adaa",
+          "bytes": 144788,
+          "lastModified": "2026-11-12T10:36:33.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "siteMain": {
+      "url": "https://polemicagame.com/bundle/main.js",
+      "versions": [
+        {
+          "sha256": "71d517e370e6e6c483701fd3454561215cb193a8081b3ba041f370bdc7e7923b",
+          "bytes": 1958440,
+          "lastModified": "2026-11-12T10:36:22.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "lobby": {
+      "url": "https://polemicagame.com/bundle/lobby.js",
+      "versions": [
+        {
+          "sha256": "3ce33bacfd42d624c94d99431dce836e8273ea3f4e4848a15b81ac5a68cb0fb2",
+          "bytes": 941884,
+          "lastModified": "2026-11-12T10:36:22.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "games": {
+      "url": "https://polemicagame.com/bundle/games.js",
+      "versions": [
+        {
+          "sha256": "2910ddb39bc2f1c825b72a6c9f3f713a616db304b96cdadaa4022935767b5ab3",
+          "bytes": 676420,
+          "lastModified": "2026-11-03T05:33:39.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "home": {
+      "url": "https://polemicagame.com/bundle/home.js",
+      "versions": [
+        {
+          "sha256": "2b698d26d8428f0505c89b24848082ebab9368a43bd94d7487836941917e1e47",
+          "bytes": 402335,
+          "lastModified": "2026-11-12T10:36:22.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "gameSearchCss": {
+      "url": "https://polemicagame.com/bundle/game-search.css",
+      "versions": [
+        {
+          "sha256": "8e10de4c7cbe1970404d54f114899ba15d1c96568174126a2d18cf30300ef693",
+          "bytes": 197574,
+          "lastModified": "2026-11-03T05:33:39.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "ratingCss": {
+      "url": "https://polemicagame.com/bundle/rating.css",
+      "versions": [
+        {
+          "sha256": "851e59a1f564089b98d19d45a675675635e2184f537bd821cd6efd40f82ba1b9",
+          "bytes": 82713,
+          "lastModified": "2026-11-03T05:33:39.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "profileCss": {
+      "url": "https://polemicagame.com/bundle/profile.css",
+      "versions": [
+        {
+          "sha256": "293e026f872042d609fbf477b2ab16aea82de00d01fb4f02d2495c3a99402ecd",
+          "bytes": 155139,
+          "lastModified": "2026-11-03T05:33:39.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    },
+    "lobbyCss": {
+      "url": "https://polemicagame.com/bundle/lobby.css",
+      "versions": [
+        {
+          "sha256": "f46d52d29d54ace04f71e462ee6fbc2769b54143060ad7c87d07eb786c4c29d3",
+          "bytes": 359349,
+          "lastModified": "2026-11-12T10:36:22.000Z",
+          "seen": "2026-11-16"
+        }
+      ]
+    }
+  }
+}
