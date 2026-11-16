@@ -335,6 +335,17 @@ export interface TwitchControlMsg {
   channel?: string;
 }
 
+/**
+ * content → background: реле Twitch-чата (background/twitch-relay).
+ *  • want    — на этой странице чат подключён, держи своё подключение и буфер;
+ *  • backlog — отдай буфер последних сообщений канала (ответ {messages});
+ *  • release — чат выключен пользователем, реле больше не нужно.
+ */
+export interface TwitchRelayMsg {
+  type: "twitch_relay_want" | "twitch_relay_backlog" | "twitch_relay_release";
+  channel?: string;
+}
+
 /** content → popup: фактическое состояние Twitch IRC. */
 export interface TwitchStatusMsg {
   type: "twitch_status";
@@ -555,6 +566,7 @@ export type ExtMessage =
   | ObsEventMsg
   | UpdateNotesSettingsMsg
   | TwitchControlMsg
+  | TwitchRelayMsg
   | TwitchStatusMsg
   | GetNicknameLengthsMsg
   | OpenNickColorsMsg

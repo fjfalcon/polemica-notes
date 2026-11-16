@@ -46,12 +46,21 @@ import { log } from "@core/log";
 import { onMessage, sendRuntime } from "@core/messaging";
 import { SITE } from "@core/selectors";
 import { isGameRoomPath } from "@shared/routes";
+import {
+  KNOWN_BADGES,
+  TWITCH_IRC_URL,
+  ircCommandOf,
+  isMessageId,
+  normalizeChannel,
+  parsePrivMsgLine,
+  sanitizeRelayMessages,
+  type ParsedChat,
+} from "@shared/twitch-irc";
 import type { Feature, FeatureContext } from "@core/feature";
 import type { TwitchControlMsg } from "@shared/types";
 
 const SCOPE = "twitch";
 
-const IRC_URL = "wss://irc-ws.chat.twitch.tv:443";
 /** Максимум хранимых сообщений. */
 const MAX_MESSAGES = 200;
 /** Базовая задержка переподключения. */
@@ -69,6 +78,12 @@ interface ChatMessage {
   message: string;
   timestamp: Date;
   type: "chat" | "system";
+  /**
+   * Идентификатор сообщения Twitch (тег id). Ключ дедупа: одно и то же
+   * сообщение может прийти вживую, из сохранённой истории и из буфера реле
+   * (background/twitch-relay) — показать его нужно один раз.
+   */
+  id?: string;
   /** Сообщение упоминает @канал — подсветить. */
   mention?: boolean;
   /**
@@ -159,18 +174,6 @@ const HISTORY_RAW_MAX = 400_000;
 /** Дроссель записи: чат строчит часто, диск дёргаем не чаще раза в 2 с. */
 const HISTORY_SAVE_MS = 2000;
 
-/** Бейджи → наши эмодзи-префиксы (константы, в HTML попадают только они). */
-const BADGE_ICONS: Record<string, string> = {
-  broadcaster: "🎥",
-  moderator: "🛡",
-  vip: "💎",
-  subscriber: "★",
-  founder: "★",
-};
-
-/** Известные значки бейджей — единственные строки, допущенные в HTML. */
-const KNOWN_BADGES = new Set(Object.values(BADGE_ICONS));
-
 /**
  * Сериализация буфера. Системные строки («Подключились…») не сохраняем:
  * после восстановления они врали бы о состоянии соединения — шов истории
@@ -181,6 +184,7 @@ export function serializeChatHistory(channel: string, messages: ChatMessage[]): 
     .filter((m) => m.type === "chat")
     .slice(-MAX_MESSAGES)
     .map((m) => ({
+      id: m.id,
       username: (m.username ?? "").slice(0, 100),
       color: m.color,
       badges: m.badges?.filter((b) => KNOWN_BADGES.has(b)).slice(0, 5),
@@ -235,7 +239,9 @@ export function parseChatHistory(raw: string | null, channel: string): ChatMessa
     if (timestamp <= 0 || timestamp > now + 60_000) continue;
     const rawColor = own(item, "color");
     const rawBadges = own(item, "badges");
+    const rawId = own(item, "id");
     out.push({
+      id: isMessageId(rawId) ? rawId : undefined,
       username,
       message,
       color: typeof rawColor === "string" && /^#[0-9a-fA-F]{6}$/.test(rawColor) ? rawColor : undefined,
@@ -380,6 +386,16 @@ const POINTER_HOLD_MAX_MS = 10_000;
 class TwitchChatPanel extends FloatingPanel {
   private messagesEl: HTMLElement | null = null;
   private messages: ChatMessage[] = [];
+  /** id показанных сообщений чата — дедуп живого потока, истории и реле. */
+  private seenIds = new Set<string>();
+
+  /** Держать буфер в потолке; id ушедшего сообщения из дедупа снимается. */
+  private trimBuffer(): void {
+    while (this.messages.length > MAX_MESSAGES) {
+      const gone = this.messages.shift();
+      if (gone?.id) this.seenIds.delete(gone.id);
+    }
+  }
   private prefs: PanelPrefs = loadPrefs();
   /** Пользователь у нижнего края чата (автоскролл включён). */
   private atBottom = true;
@@ -431,6 +447,7 @@ class TwitchChatPanel extends FloatingPanel {
    */
   seedHistory(restored: ChatMessage[]): void {
     if (restored.length === 0 || this.messages.length > 0) return;
+    for (const m of restored) if (m.id) this.seenIds.add(m.id);
     this.messages = [
       // Вместе с разделителем — ровно MAX_MESSAGES: буфер в 201 строку
       // навсегда ломал инвариант размера (shift снимает по одному).
@@ -446,6 +463,7 @@ class TwitchChatPanel extends FloatingPanel {
    */
   resetForChannel(): void {
     this.messages = [];
+    this.seenIds.clear();
     this.unseen = 0;
     this.atBottom = true;
     this.renderMessages();
@@ -580,11 +598,20 @@ class TwitchChatPanel extends FloatingPanel {
 
   // ── добавление сообщений ──
 
+  /**
+   * Сообщение чата. `id` — дедуп: уже показанное не дублируется (false).
+   * `ts` передаётся только для ДОГРУЖЕННЫХ из реле — у них время отправки,
+   * а не момент, когда мы их дорисовали.
+   */
   addChatMessage(
     username: string,
     message: string,
-    extra?: { color?: string; badges?: string[] },
-  ): void {
+    extra?: { color?: string; badges?: string[]; id?: string; ts?: number },
+  ): boolean {
+    if (extra?.id) {
+      if (this.seenIds.has(extra.id)) return false;
+      this.seenIds.add(extra.id);
+    }
     // Граница слова обязательна: `@foo` не должен подсвечиваться в `@foobar`
     // (ники твича — [a-z0-9_], поэтому проверка следующего символа достаточна).
     const lower = message.toLowerCase();
@@ -601,18 +628,20 @@ class TwitchChatPanel extends FloatingPanel {
       }
     }
     this.messages.push({
+      id: extra?.id,
       username,
       message,
       color: extra?.color,
       badges: extra?.badges,
       mention,
-      timestamp: new Date(),
+      timestamp: extra?.ts ? new Date(extra.ts) : new Date(),
       type: "chat",
     });
-    if (this.messages.length > MAX_MESSAGES) this.messages.shift();
+    this.trimBuffer();
     if (!this.atBottom) this.bumpUnseen();
     this.appendLastMessage();
     this.scheduleHistorySave();
+    return true;
   }
 
   /**
@@ -633,7 +662,7 @@ class TwitchChatPanel extends FloatingPanel {
       return;
     }
     this.messages.push({ message, timestamp: new Date(), type: "system", systemKey: key });
-    if (this.messages.length > MAX_MESSAGES) this.messages.shift();
+    this.trimBuffer();
     // Тоже «непрочитанное»: иначе системная строка сдвигала окно рендера,
     // не увеличив его (находка ревью №7).
     if (!this.atBottom) this.bumpUnseen();
@@ -1059,16 +1088,6 @@ function stopIdleWatchdog(): void {
   }
 }
 
-/**
- * Пользователи вставляют URL канала или имя с #/пробелами — Twitch на такой
- * JOIN молча не отвечает, а панель писала «Подключились к чату».
- */
-function normalizeChannel(raw: string): string {
-  let name = raw.trim().toLowerCase();
-  const m = name.match(/(?:twitch\.tv\/)([a-z0-9_]+)/);
-  if (m) name = m[1];
-  return name.replace(/^#+/, "").replace(/[^a-z0-9_]/g, "");
-}
 /** Последнее известное состояние игрового интерфейса (для дебаунса смены). */
 let gameUiVisible = false;
 /**
@@ -1181,6 +1200,119 @@ function persistPanelWanted(value: boolean): void {
   void browser.storage.sync.set({ twitch_floating_panel_enabled: value });
 }
 
+// ── реле в фоне: догрузка пропущенного при переходах ──
+
+/**
+ * Сайт между поиском, лобби и игрой переходит полной загрузкой страницы —
+ * наш сокет умирает вместе с ней, а анонимный IRC пропущенное не досылает
+ * (жалоба владельца 16.11.2026: «пока открывалась новая страница, кто-то
+ * написал — сообщение потерялось»). Фон держит своё подключение к тому же
+ * каналу (background/twitch-relay); после входа в канал забираем у него
+ * буфер и дорисовываем то, чего у нас нет. Дедуп — по id сообщения.
+ *
+ * Реле живёт, пока страницы подтверждают, что чат нужен: «нужно» шлём при
+ * подключении, раз в 20 с при живом сокете и на pagehide (чтобы пережить
+ * сам переход). Не ответил фон — чат работает как раньше, без догрузки.
+ */
+const RELAY_BEAT_MS = 20_000;
+/** Сколько ждём буфер от фона, придерживая живые сообщения ради порядка. */
+const BACKFILL_WAIT_MS = 1500;
+/** Потолок придержанных живых сообщений: больше — показываем сразу. */
+const HELD_MAX = 200;
+
+let relayBeat: ReturnType<typeof setInterval> | null = null;
+/** Поколение догрузки: ответ фона к прежнему подключению не применяется. */
+let backfillGen = 0;
+let backfillTimer: ReturnType<typeof setTimeout> | null = null;
+/** Живые сообщения, придержанные до ответа фона; null — догрузка не идёт. */
+let held: ParsedChat[] | null = null;
+
+function relayWant(): void {
+  if (channelName) void sendRuntime({ type: "twitch_relay_want", channel: channelName });
+}
+
+function startRelayBeat(): void {
+  relayWant();
+  if (relayBeat) return;
+  relayBeat = setInterval(() => {
+    if (hasLiveSocket()) relayWant();
+  }, RELAY_BEAT_MS);
+}
+
+function stopRelayBeat(): void {
+  if (relayBeat) {
+    clearInterval(relayBeat);
+    relayBeat = null;
+  }
+}
+
+function showChat(chat: ParsedChat, backfilled = false): void {
+  panel?.addChatMessage(chat.username, chat.message, {
+    color: chat.color,
+    badges: chat.badges,
+    id: chat.id,
+    ts: backfilled ? chat.ts : undefined,
+  });
+}
+
+/** Показать придержанное и выйти из режима догрузки. */
+function flushHeld(): void {
+  if (backfillTimer) {
+    clearTimeout(backfillTimer);
+    backfillTimer = null;
+  }
+  const live = held;
+  held = null;
+  if (live) for (const chat of live) showChat(chat);
+}
+
+/** Прервать догрузку: подключение сменилось или закрыто. Придержанное не теряем. */
+function cancelBackfill(): void {
+  backfillGen++;
+  flushHeld();
+}
+
+/**
+ * Вошли в канал — забрать у реле пропущенное. Живые сообщения до ответа
+ * придерживаются: догруженные старше них и должны встать выше.
+ */
+function startBackfill(): void {
+  cancelBackfill();
+  const gen = backfillGen;
+  const channel = channelName;
+  held = [];
+  // Фон не ответил вовремя — показываем придержанное, чат не ждёт.
+  backfillTimer = setTimeout(() => {
+    backfillTimer = null;
+    if (gen === backfillGen) flushHeld();
+  }, BACKFILL_WAIT_MS);
+  void (async () => {
+    let missed: ParsedChat[] = [];
+    try {
+      const res = await sendRuntime<{ messages?: unknown }>({ type: "twitch_relay_backlog", channel });
+      missed = sanitizeRelayMessages(res?.messages, MAX_MESSAGES).sort((a, b) => a.ts - b.ts);
+    } catch {
+      /* фон недоступен — догружать нечего */
+    }
+    if (gen !== backfillGen || channel !== channelName) return;
+    // Опоздавший ответ (таймаут уже показал придержанное) всё равно
+    // дорисовываем: порядок чуть нарушится, но сообщение не потеряется.
+    for (const chat of missed) showChat(chat, true);
+    flushHeld();
+  })();
+}
+
+function onChatLine(line: string): void {
+  try {
+    const chat = parsePrivMsgLine(line);
+    if (!chat) return;
+    if (held && held.length < HELD_MAX) held.push(chat);
+    else showChat(chat);
+  } catch (e) {
+    log.error(SCOPE, "failed to parse PRIVMSG", e);
+  }
+}
+
 // ── IRC ──
 
 function clearReconnect(): void {
@@ -1259,6 +1391,11 @@ function connectToTwitch(): void {
     socket = null;
   }
   intentionalClose = false;
+  // Прежнее подключение сменилось: его догрузка не к месту, придержанное — показать.
+  cancelBackfill();
+  // Фоновое реле поднимаем параллельно со своим сокетом — к следующему
+  // переходу страницы у него уже будет буфер.
+  startRelayBeat();
   // Таймер подтверждения входа от ПРЕЖНЕГО подключения: onclose заменяемого
   // сокета мы намеренно отвязываем, поэтому там он не погаснет и выстрелил бы
   // «Канал не отвечает» уже про исправленное имя (ревью 02.08.2026).
@@ -1267,7 +1404,7 @@ function connectToTwitch(): void {
   log.info(SCOPE, "connecting to channel", channelName);
 
   try {
-    const ws = new WebSocket(IRC_URL);
+    const ws = new WebSocket(TWITCH_IRC_URL);
     socket = ws;
 
     ws.onopen = () => {
@@ -1319,6 +1456,7 @@ function connectToTwitch(): void {
       const wasReady = ircReady;
       ircReady = false;
       clearJoinWatchdog();
+      cancelBackfill();
       isConnected = false;
       socket = null;
       sendTwitchStatus(false);
@@ -1359,6 +1497,8 @@ function disconnect(): void {
   clearReconnect();
   stopIdleWatchdog();
   clearJoinWatchdog();
+  stopRelayBeat();
+  cancelBackfill();
   if (socket) {
     // Полная отвязка: висящие onopen/onerror старого сокета после
     // намеренного отключения давали ложные статусы.
@@ -1376,13 +1516,6 @@ function disconnect(): void {
   // швов 29.08.2026, SEAM-05).
   ircReady = false;
   if (hadConnection) sendTwitchStatus(false);
-}
-
-/** Команда IRC-строки (PRIVMSG/NOTICE/366/…) без её содержимого. */
-function ircCommandOf(line: string): string {
-  const noTags = line.startsWith("@") ? line.slice(line.indexOf(" ") + 1) : line;
-  const parts = noTags.startsWith(":") ? noTags.split(" ") : ["", ...noTags.split(" ")];
-  return /^[A-Z0-9]{2,12}$/.test(parts[1] || "") ? parts[1] : "?";
 }
 
 function handleTwitchData(data: string): void {
@@ -1411,6 +1544,7 @@ function handleTwitchData(data: string): void {
       // Тот же ключ: строка «подключаемся» превращается в «подключились», а
       // не повисает над ней второй.
       panel?.addSystemMessage("Подключились к чату", SYS_CONNECT);
+      startBackfill();
     }
     // Отказ входа: канала нет, он в бане и т.п. Само сообщение не пишем —
     // это текст сервиса, а нам нужен факт.
@@ -1418,64 +1552,7 @@ function handleTwitchData(data: string): void {
       log.warn(SCOPE, "twitch: сервис отклонил вход в канал");
     }
 
-    if (line.includes("PRIVMSG")) parsePrivMsg(line);
-  }
-}
-
-/** Экранирование значений IRC-тегов (IRCv3): \s → пробел, \: → «;» и т.д. */
-function unescapeTag(value: string): string {
-  return value.replace(/\\(.)/g, (_, c: string) => {
-    if (c === "s") return " ";
-    if (c === ":") return ";";
-    if (c === "r") return "\r";
-    if (c === "n") return "\n";
-    return c;
-  });
-}
-
-function parseTags(raw: string | undefined): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!raw) return out;
-  for (const pair of raw.split(";")) {
-    const eq = pair.indexOf("=");
-    if (eq === -1) out[pair] = "";
-    else out[pair.slice(0, eq)] = unescapeTag(pair.slice(eq + 1));
-  }
-  return out;
-}
-
-function parseBadges(raw: string | undefined): string[] {
-  if (!raw) return [];
-  const out: string[] = [];
-  for (const item of raw.split(",")) {
-    const name = item.split("/")[0];
-    const icon = BADGE_ICONS[name];
-    if (icon && !out.includes(icon)) out.push(icon);
-  }
-  return out;
-}
-
-function parsePrivMsg(line: string): void {
-  try {
-    // С CAP tags строка может начинаться с @key=value;…, дальше как раньше:
-    // :username!username@username.tmi.twitch.tv PRIVMSG #channel :message
-    const match = line.match(/^(?:@(\S+) )?:([^!]+)![^@]+@[^\s]+ PRIVMSG #[^\s]+ :(.+)/);
-    if (!match) return;
-    const tags = parseTags(match[1]);
-    // display-name сохраняет регистр и юникод; пустой (или из одних пробелов
-    // после \s-unescape) у части аккаунтов — тогда логин.
-    const username = (tags["display-name"] || "").trim() || match[2];
-    let message = match[3];
-    // /me приходит как \x01ACTION текст\x01 — управляющие байты в чат не пускаем.
-    if (message.startsWith("\u0001ACTION ")) {
-      message = message.slice(8).replace(/\u0001$/, "").trim();
-    }
-    // Цвет уходит в inline-style — принимаем СТРОГО #rrggbb, ничего больше.
-    const rawColor = tags["color"] || "";
-    const color = /^#[0-9a-fA-F]{6}$/.test(rawColor) ? rawColor : undefined;
-    panel?.addChatMessage(username, message, { color, badges: parseBadges(tags["badges"]) });
-  } catch (e) {
-    log.error(SCOPE, "failed to parse PRIVMSG", e);
+    if (line.includes("PRIVMSG")) onChatLine(line);
   }
 }
 
@@ -1514,6 +1591,8 @@ function handleControlMessage(msg: TwitchControlMsg): void {
     }
     case "twitch_disconnect":
       disconnect();
+      // Явное «Отключиться» — фоновое реле тоже гасим сразу, не по грейсу.
+      void sendRuntime({ type: "twitch_relay_release" });
       break;
     case "twitch_get_status":
       // Правда для попапа — подтверждённый вход в канал, а не живой сокет.
@@ -1551,7 +1630,14 @@ export const twitchPanelFeature: TwitchFeature = {
 
     // Дроссель записи истории может не дожить до конца страницы — флаш на
     // pagehide (тот же урок, что log.flushNow у freeze-watch).
-    onPageHideFlush = () => panel?.flushHistoryNow();
+    onPageHideFlush = () => {
+      // Придержанное догрузкой — в буфер до записи, иначе не переживёт переход.
+      flushHeld();
+      panel?.flushHistoryNow();
+      // Страница уходит: продлить реле на время перехода (грейс считается
+      // от последнего «нужно»).
+      if (hasLiveSocket()) relayWant();
+    };
     window.addEventListener("pagehide", onPageHideFlush);
 
     // Слежение за игровым интерфейсом (порт MutationObserver-логики).
@@ -1613,7 +1699,10 @@ export const twitchPanelFeature: TwitchFeature = {
   },
 
   disable() {
+    const hadChat = channelName !== "";
     disconnect();
+    // Чат выключен — фоновому реле слушать больше не для кого.
+    if (hadChat) void sendRuntime({ type: "twitch_relay_release" });
 
     // Сохранить до unmount: выключение фичи не должно стирать историю —
     // повторное включение в той же вкладке восстановит разговор.

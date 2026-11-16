@@ -25,6 +25,9 @@ describe("CSP страниц расширения", () => {
         "https://polemicagame.com",
         "ws://localhost:*",
         "wss://localhost:*",
+        // Реле Twitch-чата в фоне (16.11.2026): фон держит своё подключение к
+        // чату, чтобы страница после перехода догрузила пропущенное.
+        "wss://irc-ws.chat.twitch.tv",
       ].sort(),
     );
     expect(csp, "скрипты — только свои").toMatch(/script-src 'self';/);

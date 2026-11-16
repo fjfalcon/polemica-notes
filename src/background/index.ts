@@ -8,6 +8,7 @@ import { log } from "@core/log";
 import { installErrorCapture } from "@core/errors";
 import { handleInstalled } from "./onboarding";
 import { installStoreUpdate, requestStoreUpdate } from "./store-update";
+import { relayBacklog, relayRelease, relayWant } from "./twitch-relay";
 import { onMessage, sendToTab } from "@core/messaging";
 import { isGameRoomPath } from "@shared/routes";
 import { getSettings, getSetting, onSettingsChanged } from "@core/settings";
@@ -836,6 +837,19 @@ async function handleObsQuery(
 onMessage((msg: ExtMessage, sender) => {
   if ("type" in msg && msg.type === "apply_store_update") {
     return requestStoreUpdate();
+  }
+  // Реле Twitch-чата: только от content-скрипта вкладки (у попапа и чужих
+  // отправителей вкладки нет) — чтобы реле не поднималось «ни для кого».
+  if ("type" in msg && msg.type === "twitch_relay_want") {
+    if (sender.tab?.id != null) relayWant(msg.channel);
+    return;
+  }
+  if ("type" in msg && msg.type === "twitch_relay_backlog") {
+    return Promise.resolve({ messages: sender.tab?.id != null ? relayBacklog(msg.channel) : [] });
+  }
+  if ("type" in msg && msg.type === "twitch_relay_release") {
+    if (sender.tab?.id != null) relayRelease();
+    return;
   }
   if ("type" in msg && msg.type === "obs_command") {
     return handleObsQuery(msg.command, msg.data, sender.tab?.id)
