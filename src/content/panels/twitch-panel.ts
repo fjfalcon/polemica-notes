@@ -1300,6 +1300,11 @@ function showChat(chat: ParsedChat, backfilled = false): void {
  * Сверяемся со снимком «до подключения», а не с текущим состоянием: живые
  * сообщения этого же подключения тоже есть в буфере реле, и опоздавший ответ
  * фона иначе счёл бы пропущенное перед ними «уже виденным».
+ *
+ * Принятая цена (контрольное ревью 16.11.2026): в узких гонках — два обрыва
+ * подряд за доли секунды, реле ответило раньше, чем само получило сообщение
+ * — пропущенное, оказавшееся «раньше последнего виденного», не дорисуется
+ * вовсе. Это плата за то, что уже показанное никогда не рисуется заново.
  */
 function onlyMissed(backlog: ParsedChat[], seenBefore: ReadonlySet<string>): ParsedChat[] {
   let lastSeen = -1;
@@ -1814,7 +1819,11 @@ export const twitchPanelFeature: TwitchFeature = {
 
   requestClose() {
     hidePanel();
+    // «×» на панели — чат выключают. Реле отпускаем здесь: после disconnect()
+    // у disable() сокета уже нет, и он решил бы, что отпускать нечего.
+    const hadSocket = socket !== null || reconnectTimer !== null;
     disconnect();
+    if (hadSocket) void sendRuntime({ type: "twitch_relay_release" });
     // Выключаем тумблер — FeatureManager затем вызовет disable().
     void browser.storage.sync.set({ twitch_chat_enabled: false });
   },

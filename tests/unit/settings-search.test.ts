@@ -232,6 +232,68 @@ describe("поиск по настоящему меню", () => {
   });
 });
 
+describe("контрольное ревью 16.11.2026", () => {
+  const css = /<style>([\s\S]*?)<\/style>/.exec(html)![1];
+  const shownOnPage = (el: Element) => getComputedStyle(el).display !== "none";
+
+  test("«Поиск игрока» работает и внутри результатов: его строки и статус не прячутся и в индекс не идут", () => {
+    const style = document.createElement("style");
+    style.textContent = css;
+    document.head.appendChild(style);
+    try {
+      installSettingsSearch(document, { activateTab: vi.fn() });
+      type("ник");
+      const field = rowOf("player_search_input");
+      expect(field.classList.contains(HIT_CLASS)).toBe(true);
+      // Игрок нажал «Найти»: появились статус и строки найденных.
+      $("player_search_status").textContent = "Найдено: 1";
+      $("player_search_results").innerHTML =
+        '<a class="row search-hit" href="#"><span>Vasya<span class="hint">id 7</span></span><span class="search-mmr">MMR 1500</span></a>';
+      const result = document.querySelector<HTMLElement>("#player_search_results .row")!;
+      expect(shownOnPage(result), "строка найденного игрока видна").toBe(true);
+      expect(shownOnPage($("player_search_status")), "статус поиска виден").toBe(true);
+      // Чужие статусы (OBS/Twitch) в результатах по-прежнему скрыты.
+      $("obs_settings").style.display = "";
+      expect(shownOnPage($("obs_status"))).toBe(false);
+      // Строка игрока — не настройка: запрос «mmr» её не помечает.
+      type("mmr");
+      expect(result.classList.contains(HIT_CLASS)).toBe(false);
+      expect(buildIndex(document).some((u) => u.el === result)).toBe(false);
+      // Поле не подошло под запрос — уходит вместе со своим содержимым.
+      type("обс");
+      expect(shownOnPage(field)).toBe(false);
+    } finally {
+      style.remove();
+    }
+  });
+
+  test("первое слово подсказки находится: подпись и подсказка не склеиваются", () => {
+    const units = buildIndex(document);
+    applySearch(document, units, "цвет кнопок");
+    expect(rowOf("stats_button_theme").classList.contains(HIT_CLASS)).toBe(true);
+    applySearch(document, units, "метки");
+    expect(rowOf("unicorn_hearts_enabled").classList.contains(HIT_CLASS)).toBe(true);
+  });
+
+  test("«смена ролей» находит «Автосмену»", () => {
+    const units = buildIndex(document);
+    applySearch(document, units, "смена ролей");
+    expect(rowOf("role_phase_auto_switch_enabled").classList.contains(HIT_CLASS)).toBe(true);
+    applySearch(document, units, "смена");
+    expect(rowOf("role_phase_auto_switch_enabled").classList.contains(HIT_CLASS)).toBe(true);
+  });
+
+  test("Esc при открытой модалке длины ников поиск не трогает", () => {
+    installSettingsSearch(document, { activateTab: vi.fn() });
+    type("очередь");
+    $("nicklen_overlay").classList.add("show");
+    const esc = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    document.body.dispatchEvent(esc);
+    expect(esc.defaultPrevented).toBe(false);
+    expect($<HTMLInputElement>("settings_search").value).toBe("очередь");
+  });
+});
+
 describe("подключение к попапу", () => {
   test("ввод ищет, «ничего не нашлось» честное, Esc и clear() возвращают вкладки", () => {
     const activateTab = vi.fn();

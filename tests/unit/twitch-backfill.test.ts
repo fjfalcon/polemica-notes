@@ -344,6 +344,14 @@ describe("«нужно» для реле", () => {
     expect(count("twitch_relay_release")).toBe(0);
   });
 
+  test("«×» на панели отпускает реле (disconnect до disable не должен это съесть)", () => {
+    const ws = enableFeature();
+    ws.emitOpen();
+    (twitchPanelFeature as unknown as { requestClose(): void }).requestClose();
+    twitchPanelFeature.disable(); // FeatureManager зовёт его следом за выключением настройки
+    expect(count("twitch_relay_release")).toBe(1);
+  });
+
   test("при подключении, раз в 20 с при живом сокете и на уходе со страницы", () => {
     const ws = enableFeature();
     expect(count("twitch_relay_want"), "реле поднимаем вместе со своим сокетом").toBe(1);

@@ -202,10 +202,10 @@
         body.searching .panel[data-panel="tilt"], body.searching .panel.settings-empty { display: none; }
         body.searching .search-title { display: block; }
         body.searching .panel.settings-first > .search-title { margin-top: 0; }
-        body.searching .panel .row:not(.settings-hit):not(.settings-owner):not(.settings-ctx),
+        body.searching .panel .row:not(.settings-hit):not(.settings-owner):not(.settings-ctx):not(.field .row),
         body.searching .panel .field:not(.settings-hit),
         body.searching .panel .note-box,
-        body.searching .panel .status,
+        body.searching .panel .status:not(.field .status),
         body.searching .panel .sub,
         body.searching .panel .emoji-palette,
         body.searching .panel > p,
@@ -213,7 +213,7 @@
         /* Строка, которая открывает скрытый блок с найденным: приглушена. */
         body.searching .row.settings-owner:not(.settings-hit) { border-style: dashed; }
         body.searching .row.settings-owner:not(.settings-hit)::after {
-            content: "найденное скрыто — открывается здесь"; flex: 0 0 auto; order: 3;
+            content: "найдено внутри"; flex: 0 0 auto; order: 3;
             font-size: 10px; color: var(--muted); max-width: 84px; text-align: right;
         }
 
@@ -634,7 +634,7 @@
             <div class="row" data-kw="скрыть роль спрятать"><span>Автоотключение ролей<span class="hint">скрывает роли сразу при входе в игру и держит скрытыми</span></span>
                 <label class="switch"><input type="checkbox" id="auto_hide_roles_enabled" checked><span class="slider"></span></label>
             </div>
-            <div class="row"><span>Автосмена ролей днём/ночью<span class="hint">днём скрыты, ночью показаны. Работает и без «Автоотключения»</span></span>
+            <div class="row" data-kw="смена день ночь фаза"><span>Автосмена ролей днём/ночью<span class="hint">днём скрыты, ночью показаны. Работает и без «Автоотключения»</span></span>
                 <label class="switch"><input type="checkbox" id="role_phase_auto_switch_enabled" checked><span class="slider"></span></label>
             </div>
             <div class="row"><span>Открывать роли в конце игры<span class="hint">победа мафии или мирных — скрытие снимается само, и видны роли, которые сайт раскрывает в конце (шериф и чёрные). Пауза и промах не считаются. Новая игра — скрытие снова по настройкам</span></span>

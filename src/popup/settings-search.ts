@@ -8,14 +8,14 @@
  * вкладках: тумблер из результатов работает на месте, ничего не клонируется.
  *
  * Правило записи в DOM: поиск управляет ТОЛЬКО своими классами
- * (search-hit/search-owner/search-empty на строках и панелях, searching на
- * body). Инлайновый style.display строк не трогаем — им владеют sync-функции
+ * (settings-hit/-owner/-ctx на строках, settings-empty/-first на панелях,
+ * searching на body). Инлайновый style.display строк не трогаем — им владеют sync-функции
  * попапа (OBS выключен → блок настроек скрыт и т.п.), и после очистки поиска
  * всё возвращается как было без единого восстановления «вручную».
  *
  * Подопции (.row.child) зависят от строки над ними и без неё непонятны
  * («Клавиша» — чего?). Поэтому подопция ищется и по подписи родителя, а
- * найденная подопция приводит родителя с собой (search-ctx).
+ * найденная подопция приводит родителя с собой (settings-ctx).
  *
  * Формы слов. Человек набирает «камера», а в меню «камеры», «камерам» —
  * у слова запроса срезается окончание, и основа ищется в НАЧАЛЕ слов строки
@@ -65,8 +65,8 @@ const ENDINGS = [
 ];
 /** Короче этого основу не делаем: «ник» остаётся «ник». */
 const STEM_MIN = 3;
-/** С этой длины основа ищется и внутри слова («запис» в «автозапись»). */
-const INFIX_MIN = 5;
+/** С этой длины основа ищется и внутри слова («запис» в «автозапись», «смен» в «автосмена»). */
+const INFIX_MIN = 4;
 
 /** Основа русского слова запроса; латиница и цифры — как есть. */
 export function stem(word: string): string {
@@ -104,6 +104,23 @@ interface Unit {
   parent: HTMLElement | null;
 }
 
+/**
+ * Весь текст узла, куски через пробел. textContent склеил бы подпись с
+ * подсказкой («Тема кнопокцвет иконок…») — и первое слово подсказки при
+ * поиске по началу слова не находилось бы (контрольное ревью 16.11.2026).
+ */
+function textOf(el: Element): string {
+  const parts: string[] = [];
+  const walk = (node: Node): void => {
+    for (const child of Array.from(node.childNodes)) {
+      if (child.nodeType === Node.TEXT_NODE) parts.push(child.textContent || "");
+      else if (child.nodeType === Node.ELEMENT_NODE) walk(child);
+    }
+  };
+  walk(el);
+  return parts.join(" ");
+}
+
 /** Собрать индекс: текст строки + слова-синонимы + подпись родителя у подопций. */
 export function buildIndex(root: ParentNode): Unit[] {
   const units: Unit[] = [];
@@ -112,10 +129,13 @@ export function buildIndex(root: ParentNode): Unit[] {
     let parent: HTMLElement | null = null;
     for (const el of Array.from(panel.querySelectorAll<HTMLElement>(UNIT_SELECTOR))) {
       if (el.dataset.search === "off") continue;
+      // Строки ВНУТРИ поля (найденные игроки в «Поиске игрока») — содержимое
+      // этого поля, а не настройки: в индекс не идут и живут вместе с полем.
+      if (el.parentElement?.closest(".field")) continue;
       const isChild = el.classList.contains(CHILD_CLASS);
       // Родителем бывает только строка-настройка, не поле ввода между ними.
       if (!isChild && el.matches(".row")) parent = el;
-      const parts = [el.textContent || "", el.dataset.kw || ""];
+      const parts = [textOf(el), el.dataset.kw || ""];
       if (isChild && parent) parts.push(unitLabel(parent), parent.dataset.kw || "");
       if (el.querySelector(".btn-key")) parts.push(HOTKEY_WORDS);
       units.push({ el, panel, haystack: normalize(parts.join(" ")), parent: isChild ? parent : null });
@@ -261,6 +281,8 @@ export function installSettingsSearch(doc: Document, opts: SettingsSearchOptions
   // Esc с текстом — очистить поиск, а не закрыть попап. На документе, а не
   // на поле: после клика по тумблеру в результатах фокус уже не в строке.
   doc.addEventListener("keydown", (e) => {
+    // Открыта модалка длины ников — Esc её, а не поиска.
+    if (doc.querySelector("#nicklen_overlay.show")) return;
     if (e.key === "Escape" && input.value) {
       e.preventDefault();
       clear();
