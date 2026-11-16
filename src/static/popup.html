@@ -67,7 +67,7 @@
             background: var(--bg);
         }
         .tab {
-            flex: 1; padding: 8px 4px; text-align: center;
+            flex: 1; padding: 8px 2px; text-align: center; white-space: nowrap;
             background: transparent; border: none; color: var(--muted);
             font: 600 12px/1 system-ui, sans-serif; cursor: pointer;
             border-radius: 8px 8px 0 0; transition: all .15s;
@@ -91,10 +91,13 @@
         .row > span:first-child { flex: 1; }
         .row .hint { display: block; font-size: 10px; color: var(--muted); margin-top: 2px; }
 
-        /* Подзаголовок секции (внутри вкладки «Стрим») */
+        /* Подопция: строка зависит от настройки над ней. Отступ вместо «—». */
+        .row.child { margin-left: 14px; }
+
+        /* Подзаголовок секции внутри вкладки */
         .sub {
             display: flex; align-items: center; gap: 6px;
-            margin: 14px 0 8px; font-size: 12px; font-weight: 700;
+            margin: 14px 0 8px; font-size: 12px; font-weight: 700; color: var(--muted);
         }
         .sub:first-child, .search-title + .sub { margin-top: 0; }
         .sub.obs { color: var(--accent); }
@@ -199,7 +202,7 @@
         body.searching .panel[data-panel="tilt"], body.searching .panel.search-empty { display: none; }
         body.searching .search-title { display: block; }
         body.searching .panel:not(.search-empty) > .search-title:first-child { margin-top: 0; }
-        body.searching .panel .row:not(.search-hit):not(.search-owner),
+        body.searching .panel .row:not(.search-hit):not(.search-owner):not(.search-ctx),
         body.searching .panel .field:not(.search-hit),
         body.searching .panel .note-box,
         body.searching .panel .sub,
@@ -258,7 +261,7 @@
 <body>
     <div class="hdr">
         <span class="hdr-title">Polemica Notes</span>
-        <a class="hdr-ver" id="popup_version" href="https://github.com/fjfalcon/polemicagame_phil_extension/releases/latest" target="_blank" rel="noopener" title="Открыть страницу последнего релиза на GitHub"></a>
+        <a class="hdr-ver" id="popup_version" href="https://github.com/fjfalcon/polemica-notes/releases/latest" target="_blank" rel="noopener" title="Открыть страницу последнего релиза на GitHub"></a>
         <button type="button" class="hdr-tilt" id="tilt_open" title="Упражнения для успокоения: дыхание, заземление, пауза">Тильт</button>
         <label class="switch" title="Выключить всё расширение разом (заметки не пропадут)">
             <input type="checkbox" id="extension_enabled" checked><span class="slider"></span>
@@ -272,9 +275,9 @@
     <div class="tabs">
         <button class="tab active" data-tab="game">Игра</button>
         <button class="tab" data-tab="lobby">Лобби</button>
-        <button class="tab" data-tab="icons">Иконки</button>
+        <button class="tab" data-tab="icons">Плитка</button>
+        <button class="tab" data-tab="players">Игроки</button>
         <button class="tab" data-tab="stats">Стата</button>
-        <button class="tab" data-tab="match">Матч</button>
         <button class="tab" data-tab="roles">Роли</button>
         <button class="tab" data-tab="stream">Стрим</button>
         <button class="tab" data-tab="misc">Ещё</button>
@@ -284,13 +287,14 @@
         <div id="settings_search_empty" class="status" hidden>Ничего не нашлось. Попробуйте одно слово: «роль», «ник», «OBS».</div>
         <!-- ── Лобби (поиск игры и предигровой экран) ── -->
         <div class="panel" data-panel="lobby">
-            <div class="row" data-kw="автоприём принять accept"><span>Автопринятие игр</span>
+            <div class="sub">Автоматика</div>
+            <div class="row" data-kw="автоприём принять accept"><span>Автопринятие игр<span class="hint">игра нашлась — «Принять» нажимается само</span></span>
                 <label class="switch"><input type="checkbox" id="auto_accept_enabled" checked><span class="slider"></span></label>
             </div>
             <div class="row"><span>Автонажатие «Готов» в лобби<span class="hint">после захода в лобби кнопка «Готов» нажимается сама (один раз; если вы сняли готовность — не вмешивается). Вместе с автовозвратом после развала даёт полный автомат: развалилось — снова в очередь</span></span>
                 <label class="switch"><input type="checkbox" id="auto_ready_enabled"><span class="slider"></span></label>
             </div>
-            <div class="row"><span>Скип чёрных экранов «Начать игру»</span>
+            <div class="row"><span>Скип чёрных экранов «Начать игру»<span class="hint">приветственный экран перед столом закрывается сам</span></span>
                 <label class="switch"><input type="checkbox" id="skip_start_screen_enabled" checked><span class="slider"></span></label>
             </div>
             <div class="row"><span>Предупреждать о вылете из очереди<span class="hint">свёрнутую вкладку сервер выкидывает из поиска примерно через 100 секунд — уведомление приходит заранее</span></span>
@@ -302,15 +306,10 @@
             <div class="row" data-kw="автовозврат снова играть"><span>Кнопка «В поиск» после игры<span class="hint">после конца игры (и у зрителя/умершего) — одна кнопка: выйти из завершённой игры и снова нажать «Играть», без модалок сайта. Работает только по вашему клику</span></span>
                 <label class="switch"><input type="checkbox" id="postgame_requeue_enabled" checked><span class="slider"></span></label>
             </div>
-            <div class="row"><span>— пропускать «Покинуть лобби»<span class="hint">подтверждать модалку выхода из игры автоматически. Выключите — расширение остановится на модалке и продолжит после вашего подтверждения</span></span>
+            <div class="row child"><span>Пропускать «Покинуть лобби»<span class="hint">подтверждать модалку выхода из игры автоматически. Выключите — расширение остановится на модалке и продолжит после вашего подтверждения</span></span>
                 <label class="switch"><input type="checkbox" id="postgame_skip_confirm_enabled" checked><span class="slider"></span></label>
             </div>
-            <div class="row" data-kw="фото"><span>Аватарки в списке «Участники»<span class="hint">сайт показывает всем ищущим одну заглушку — расширение подставляет настоящие фото игроков. Видно только вам</span></span>
-                <label class="switch"><input type="checkbox" id="search_avatars_enabled" checked><span class="slider"></span></label>
-            </div>
-            <div class="row" data-kw="аватар аватарка фото"><span>Картинка в карточке поиска<span class="hint">слева от ника, где раньше стоял 3D-аватар. Что именно показывать — «Стата» → «Моя картинка». Видно только вам</span></span>
-                <label class="switch"><input type="checkbox" id="search_card_avatar_enabled" checked><span class="slider"></span></label>
-            </div>
+            <div class="sub">Очередь</div>
             <div class="row"><span>Кнопка «↻ Обновить» счётчиков<span class="hint">на странице поиска рядом с «Играть»: перечитывает, сколько человек за столами («Обычный 8/10»…). Сайт сам обновляет их только во время поиска</span></span>
                 <label class="switch"><input type="checkbox" id="queue_counts_refresh_enabled" checked><span class="slider"></span></label>
             </div>
@@ -320,64 +319,67 @@
             <div class="row" data-kw="разведка состав участники"><span>Кнопка «Кто в очереди»<span class="hint">на странице поиска: на секунду заходит в самую пустую очередь, показывает состав и выходит. Нужна Pro-подписка, иначе только счётчики</span></span>
                 <label class="switch"><input type="checkbox" id="queue_peek_enabled"><span class="slider"></span></label>
             </div>
-            <div class="row"><span>Смотреть сразу при открытии<span class="hint">без нажатия кнопки, один раз на открытие страницы поиска (и при включении фичи). В занятую очередь автопросмотр не заходит — только покажет счётчики</span></span>
+            <div class="row child"><span>Смотреть сразу при открытии<span class="hint">без нажатия кнопки, один раз на открытие страницы поиска (и при включении фичи). В занятую очередь автопросмотр не заходит — только покажет счётчики</span></span>
                 <label class="switch"><input type="checkbox" id="queue_peek_auto"><span class="slider"></span></label>
             </div>
-            <div class="row" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">Очереди для разведки<span class="hint">берётся самая пустая из отмеченных; при 6+ игроках спросим подтверждение — игра может собраться</span></span>
+            <div class="row child" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">Очереди для разведки<span class="hint">берётся самая пустая из отмеченных; при 6+ игроках спросим подтверждение — игра может собраться</span></span>
                 <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="queue_peek_standard" checked> Обычный</label>
                 <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="queue_peek_polite" checked> Рейтинг</label>
                 <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="queue_peek_prime" checked> Prime</label>
+            </div>
+            <div class="sub">Картинки</div>
+            <div class="row" data-kw="фото"><span>Аватарки в списке «Участники»<span class="hint">сайт показывает всем ищущим одну заглушку — расширение подставляет настоящие фото игроков. Видно только вам</span></span>
+                <label class="switch"><input type="checkbox" id="search_avatars_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row" data-kw="аватар аватарка фото"><span>Картинка в карточке поиска<span class="hint">слева от ника, где раньше стоял 3D-аватар. Что именно показывать — «Моя картинка» ниже. Видно только вам</span></span>
+                <label class="switch"><input type="checkbox" id="search_card_avatar_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row" data-kw="аватар аватарка"><span>Моя картинка<span class="hint">что показывать в карточке на странице поиска и большим фото своего профиля. Видно только вам</span></span>
+                <select id="own_avatar_source" class="sel">
+                    <option value="site">Фото с сайта</option>
+                    <option value="custom">Своя картинка</option>
+                </select>
+            </div>
+            <div class="row child" style="gap:10px">
+                <img id="own_avatar_preview" alt="" hidden style="width:42px;height:42px;object-fit:cover;border-radius:8px;border:1px solid var(--border)">
+                <span id="own_avatar_empty" style="flex:1;color:var(--muted);font-size:11px">Своя картинка не выбрана — показывается фото с сайта</span>
+                <span style="flex:1" aria-hidden="true" id="own_avatar_spacer"></span>
+                <button id="own_avatar_clear" class="btn" type="button" hidden style="flex:0 0 auto">Убрать</button>
+                <button id="own_avatar_pick" class="btn btn-primary" type="button" style="flex:0 0 auto">Выбрать…</button>
             </div>
         </div>
 
         <!-- ── Игра ── -->
         <div class="panel active" data-panel="game">
-            <div class="row" data-kw="хоткей"><span>Быстрая пауза</span>
+            <div class="sub">Клавиши</div>
+            <div class="row" data-kw="хоткей"><span>Быстрая пауза<span class="hint">одна клавиша вместо меню сайта: открывает настройки, жмёт паузу и закрывает</span></span>
                 <label class="switch"><input type="checkbox" id="pause_hotkey_enabled" checked><span class="slider"></span></label>
             </div>
-            <div class="row"><span>Клавиша паузы</span>
+            <div class="row child"><span>Клавиша</span>
                 <button id="pause_hotkey_capture" class="btn-key" title="Нажми, затем нужную клавишу">F8</button>
-            </div>
-            <div class="row"><span>Спрашивать перед ППК<span class="hint">перед запуском ППК и голосом «Да» за ППК — короткое напоминание: после решённого исхода модерация банит за ППК, а мат и крик по правилам — технический фол. Работает с русским интерфейсом сайта</span></span>
-                <label class="switch"><input type="checkbox" id="ppk_confirm_enabled" checked><span class="slider"></span></label>
-            </div>
-            <div class="row" data-kw="вебка видео камера"><span>Блокировать клики по веб-камерам<span class="hint">⚠ глушит ВСЕ клики по плиткам с видео — в том числе выстрел, проверку и голосование кликом по игроку. Включайте, только если точно знаете, зачем</span></span>
-                <label class="switch"><input type="checkbox" id="disable_webcam_clicks"><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>Раскладка кнопок в игре<span class="hint">кнопка «Завершите речь» подменяется «Выкрикнуть» на том же месте — разведи их по краям, чтобы не попасть случайно</span></span>
-                <label class="switch"><input type="checkbox" id="safe_controls_layout_enabled" checked><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>— Завершите речь</span>
-                <select id="ctl_pos_finish" class="sel"><option value="left">слева</option><option value="center">по центру</option><option value="right" selected>справа</option></select>
-            </div>
-            <div class="row"><span>— Выкрикнуть</span>
-                <select id="ctl_pos_outcry" class="sel"><option value="left">слева</option><option value="center" selected>по центру</option><option value="right">справа</option></select>
-            </div>
-            <div class="row"><span>— Лучший ход</span>
-                <select id="ctl_pos_guess" class="sel"><option value="left" selected>слева</option><option value="center">по центру</option><option value="right">справа</option></select>
             </div>
             <div class="row"><span>Выкрик с клавиши<span class="hint">нажал — выкрикнул. Работает только в игре и только когда кнопка выкрика доступна. Выключено по умолчанию: выкрик расходуемый, лишний стоит фола</span></span>
                 <label class="switch"><input type="checkbox" id="outcry_hotkey_enabled"><span class="slider"></span></label>
             </div>
-            <div class="row"><span>— Клавиша выкрика</span>
+            <div class="row child"><span>Клавиша</span>
                 <button id="outcry_hotkey_code" class="btn-key">C</button>
             </div>
             <div class="row"><span>«Завершите речь» с клавиши<span class="hint">нажал — твоя речь закончилась досрочно. Работает только в твою речь, когда кнопка есть. Можно поставить на ту же клавишу, что и выкрик: в свою речь она завершит речь, в чужую — выкрикнет. Выключено по умолчанию: речь не вернуть</span></span>
                 <label class="switch"><input type="checkbox" id="finish_speech_hotkey_enabled"><span class="slider"></span></label>
             </div>
-            <div class="row"><span>— Клавиша конца речи</span>
+            <div class="row child"><span>Клавиша</span>
                 <button id="finish_speech_hotkey_code" class="btn-key">S</button>
             </div>
             <div class="row"><span>Действия по цифрам<span class="hint">клавиша места жмёт кнопку действия на плитке игрока — как клик мышью. Работает только в игре и только когда кнопка есть. Лучший ход — отдельной галочкой «ЛХ по клавишам» ниже. Выключено по умолчанию: выстрел и голос не отменить</span></span>
                 <label class="switch"><input type="checkbox" id="player_action_keys_enabled"><span class="slider"></span></label>
             </div>
-            <div class="row" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">— Что нажимать<span class="hint">выстрел и проверку включайте сами: промах клавишей на выстреле — несострел</span></span>
+            <div class="row child" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">Что нажимать<span class="hint">выстрел и проверку включайте сами: промах клавишей на выстреле — несострел</span></span>
                 <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="player_action_nominate" checked> Выставление</label>
                 <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="player_action_vote" checked> Голосование</label>
                 <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="player_action_shot"> Выстрел</label>
                 <label style="display:flex;align-items:center;gap:5px;font-size:11px"><input type="checkbox" id="player_action_check"> Проверка</label>
             </div>
-            <div class="row" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">— Клавиши игроков<span class="hint">нажми на клавишу места, затем новую. Клавиши сайта (V, M, L, G, D, K, R, F1–F10) не назначаются</span></span>
+            <div class="row child" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">Клавиши игроков<span class="hint">нажми на клавишу места, затем новую. Клавиши сайта (V, M, L, G, D, K, R, F1–F10) не назначаются</span></span>
                 <label style="display:flex;align-items:center;gap:3px;font-size:11px">1<button id="player_action_key_1" class="btn-key" title="Игрок 1: нажми, затем нужную клавишу">1</button></label>
                 <label style="display:flex;align-items:center;gap:3px;font-size:11px">2<button id="player_action_key_2" class="btn-key" title="Игрок 2: нажми, затем нужную клавишу">2</button></label>
                 <label style="display:flex;align-items:center;gap:3px;font-size:11px">3<button id="player_action_key_3" class="btn-key" title="Игрок 3: нажми, затем нужную клавишу">3</button></label>
@@ -389,13 +391,13 @@
                 <label style="display:flex;align-items:center;gap:3px;font-size:11px">9<button id="player_action_key_9" class="btn-key" title="Игрок 9: нажми, затем нужную клавишу">9</button></label>
                 <label style="display:flex;align-items:center;gap:3px;font-size:11px">10<button id="player_action_key_10" class="btn-key" title="Игрок 10: нажми, затем нужную клавишу">0</button></label>
             </div>
-            <div class="row"><span>— И цифры нумпада<span class="hint">Num 1…9 — игроки 1…9, Num 0 — игрок 10</span></span>
+            <div class="row child"><span>И цифры нумпада<span class="hint">Num 1…9 — игроки 1…9, Num 0 — игрок 10</span></span>
                 <label class="switch"><input type="checkbox" id="player_action_numpad" checked><span class="slider"></span></label>
             </div>
-            <div class="row"><span>— ЛХ по клавишам<span class="hint">во время твоего лучшего хода сверху панель режима: пистолет (мафия), сердце (мирный), корона (главный). Клавиша режима переключает, цифры отмечают игроков. «Оставить ЛХ» жмёшь сам. Включено вместе с «Действиями по цифрам» — не нужно, выключи</span></span>
+            <div class="row child"><span>ЛХ по клавишам<span class="hint">во время твоего лучшего хода сверху панель режима: пистолет (мафия), сердце (мирный), корона (главный). Клавиша режима переключает, цифры отмечают игроков. «Оставить ЛХ» жмёшь сам. Включено вместе с «Действиями по цифрам» — не нужно, выключи</span></span>
                 <label class="switch"><input type="checkbox" id="player_action_guess" checked><span class="slider"></span></label>
             </div>
-            <div class="row" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">— Клавиши режимов ЛХ</span>
+            <div class="row child" style="flex-wrap:wrap;gap:6px"><span style="flex:1 0 100%">Клавиши режимов ЛХ</span>
                 <label style="display:flex;align-items:center;gap:3px;font-size:11px">🔫 Мафия<button id="guess_key_maf" class="btn-key">Q</button></label>
                 <label style="display:flex;align-items:center;gap:3px;font-size:11px">❤️ Мирный<button id="guess_key_civ" class="btn-key">W</button></label>
                 <label style="display:flex;align-items:center;gap:3px;font-size:11px">👑 Главный<button id="guess_key_vice" class="btn-key">A</button></label>
@@ -406,10 +408,46 @@
             <div class="row"><span>F5 обновляет страницу<span class="hint">а не открывает настройки игры</span></span>
                 <label class="switch"><input type="checkbox" id="f5_refresh_fix_enabled" checked><span class="slider"></span></label>
             </div>
+            <div class="sub">Защита от промахов</div>
+            <div class="row"><span>Спрашивать перед ППК<span class="hint">перед запуском ППК и голосом «Да» за ППК — короткое напоминание: после решённого исхода модерация банит за ППК, а мат и крик по правилам — технический фол. Работает с русским интерфейсом сайта</span></span>
+                <label class="switch"><input type="checkbox" id="ppk_confirm_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>Раскладка кнопок в игре<span class="hint">кнопка «Завершите речь» подменяется «Выкрикнуть» на том же месте — разведи их по краям, чтобы не попасть случайно</span></span>
+                <label class="switch"><input type="checkbox" id="safe_controls_layout_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row child"><span>Завершите речь</span>
+                <select id="ctl_pos_finish" class="sel"><option value="left">слева</option><option value="center">по центру</option><option value="right" selected>справа</option></select>
+            </div>
+            <div class="row child"><span>Выкрикнуть</span>
+                <select id="ctl_pos_outcry" class="sel"><option value="left">слева</option><option value="center" selected>по центру</option><option value="right">справа</option></select>
+            </div>
+            <div class="row child"><span>Лучший ход</span>
+                <select id="ctl_pos_guess" class="sel"><option value="left" selected>слева</option><option value="center">по центру</option><option value="right">справа</option></select>
+            </div>
+            <div class="row" data-kw="вебка видео камера"><span>Блокировать клики по веб-камерам<span class="hint">⚠ глушит ВСЕ клики по плиткам с видео — в том числе выстрел, проверку и голосование кликом по игроку. Включайте, только если точно знаете, зачем</span></span>
+                <label class="switch"><input type="checkbox" id="disable_webcam_clicks"><span class="slider"></span></label>
+            </div>
+            <div class="sub">Камеры и звук</div>
+            <div class="row" data-kw="обновить камеры вебка видео"><span>Кнопка «Обновить камеры»<span class="hint">в игре, в ряду кнопок справа внизу: запускает восстановление видео без F5 — чат и журнал не теряются. Чинит зависшие квадраты</span></span>
+                <label class="switch"><input type="checkbox" id="camera_reload_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row" data-kw="вебка камера связь"><span>Метка обрыва видео<span class="hint">значок по центру камеры игрока, чей видеопоток перестал приходить — сразу видно, у кого упала связь</span></span>
+                <label class="switch"><input type="checkbox" id="stream_lost_icon_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row" data-kw="вебка перевернуть"><span>Кнопка поворота камеры<span class="hint">добавляет к игроку кнопку переворота видео на 180°</span></span>
+                <label class="switch"><input type="checkbox" id="camera_rotate_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row" data-kw="мут звук заглушить"><span>Кнопка мьюта игрока<span class="hint">глушит его звук только у тебя; помнит выбор в следующих играх</span></span>
+                <label class="switch"><input type="checkbox" id="player_mute_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row" data-kw="звук"><span>Запоминать громкость игрока<span class="hint">сайт сбрасывает «Громкость игрока» с каждой игрой — расширение помнит, как ты выставил ползунок, и возвращает в следующих играх</span></span>
+                <label class="switch"><input type="checkbox" id="player_volume_memory_enabled" checked><span class="slider"></span></label>
+            </div>
         </div>
 
-        <!-- ── Иконки и плашка игрока ── -->
+        <!-- ── Плитка игрока: кнопки, плашка, протокол (data-tab остался icons — запомненная вкладка у пользователей) ── -->
         <div class="panel" data-panel="icons">
+            <div class="sub">Кнопки на плитке</div>
             <div class="row"><span>Тема кнопок<span class="hint">цвет иконок на плитке игрока</span></span>
                 <select id="stats_button_theme" class="sel">
                     <option value="default">Белая</option>
@@ -423,7 +461,7 @@
                     <option value="custom">Своя тема…</option>
                 </select>
             </div>
-            <div class="row" id="stats_button_color_row" style="display:none;flex-wrap:wrap;gap:8px"><span style="flex:1 0 100%">— Свой цвет<span class="hint">клетка или #rrggbb. Палитра своя: системная пипетка в Firefox закрывает это окно</span></span>
+            <div class="row child" id="stats_button_color_row" style="display:none;flex-wrap:wrap;gap:8px"><span style="flex:1 0 100%">Свой цвет<span class="hint">клетка или #rrggbb. Палитра своя: системная пипетка в Firefox закрывает это окно</span></span>
                 <input type="text" id="stats_button_color_hex" class="inp" style="width:88px;flex:0 0 auto;font-family:monospace" maxlength="7" spellcheck="false" placeholder="#ffd54f">
                 <span id="stats_button_color" style="width:32px;height:32px;border-radius:8px;border:1px solid var(--border);flex:0 0 auto"></span>
                 <div id="stats_button_color_grid" style="flex:1 0 100%;display:grid;grid-template-columns:repeat(12,1fr);gap:4px"></div>
@@ -447,73 +485,7 @@
             <div class="row"><span>Отмечать «ПУ» в последних играх<span class="hint">первый убитый в той игре. Считается по разбору каждого матча — это отдельный запрос на игру, поэтому окно открывается чуть дольше</span></span>
                 <label class="switch"><input type="checkbox" id="last_games_first_killed" checked><span class="slider"></span></label>
             </div>
-            <div class="row" data-kw="обновить камеры вебка видео"><span>Кнопка «Перезагрузить камеры»<span class="hint">в игре, слева снизу: пересоздаёт видеосвязь без F5 — чат и журнал не теряются. Чинит зависшие квадраты</span></span>
-                <label class="switch"><input type="checkbox" id="camera_reload_enabled" checked><span class="slider"></span></label>
-            </div>
-            <div class="row" data-kw="вебка камера связь"><span>Метка обрыва видео<span class="hint">значок по центру камеры игрока, чей видеопоток перестал приходить — сразу видно, у кого упала связь</span></span>
-                <label class="switch"><input type="checkbox" id="stream_lost_icon_enabled" checked><span class="slider"></span></label>
-            </div>
-            <div class="row" data-kw="вебка перевернуть"><span>Кнопка поворота камеры<span class="hint">добавляет к игроку кнопку переворота видео на 180°</span></span>
-                <label class="switch"><input type="checkbox" id="camera_rotate_enabled" checked><span class="slider"></span></label>
-            </div>
-            <div class="row" data-kw="мут звук заглушить"><span>Кнопка мьюта игрока<span class="hint">глушит его звук только у тебя; помнит выбор в следующих играх</span></span>
-                <label class="switch"><input type="checkbox" id="player_mute_enabled" checked><span class="slider"></span></label>
-            </div>
-            <div class="row" data-kw="звук"><span>Запоминать громкость игрока<span class="hint">сайт сбрасывает «Громкость игрока» с каждой игрой — расширение помнит, как ты выставил ползунок, и возвращает в следующих играх</span></span>
-                <label class="switch"><input type="checkbox" id="player_volume_memory_enabled" checked><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>Точка «есть заметка»<span class="hint">жёлтая точка на кнопке заметки у игроков, про которых вы что-то записали</span></span>
-                <label class="switch"><input type="checkbox" id="note_indicator_enabled" checked><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>Метки ролей у игроков<span class="hint">квадратик «мой read», сохраняется на игру (переживает F5)</span></span>
-                <label class="switch"><input type="checkbox" id="role_marker_enabled"><span class="slider"></span></label>
-            </div>
-            <div class="row" id="role_marker_icons_row" style="display:none"><span>— Использовать иконки<span class="hint">в метке — иконка роли с сайта; выключено — подписи «Мир/Шер/Дон»</span></span>
-                <label class="switch"><input type="checkbox" id="role_marker_icons_enabled" checked><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>Эмодзи в протоколе ПУ<span class="hint">метки протокола рисуются выбранными эмодзи — на плитках, в строке протокола и на кнопках у самого ПУ. Видно только вам. Пустое поле = родная иконка сайта</span></span>
-                <label class="switch"><input type="checkbox" id="unicorn_hearts_enabled"><span class="slider"></span></label>
-            </div>
-            <div id="protocol_emoji_rows" style="display:none">
-                <div class="row"><span>— Сердце (мирный)</span>
-                    <input id="protocol_emoji_civ" class="emoji-inp" maxlength="16" autocomplete="off">
-                </div>
-                <div class="row"><span>— Пистолет (мафия)</span>
-                    <input id="protocol_emoji_maf" class="emoji-inp" maxlength="16" autocomplete="off">
-                </div>
-                <div class="row"><span>— Корона</span>
-                    <input id="protocol_emoji_vice" class="emoji-inp" maxlength="16" autocomplete="off">
-                </div>
-                <div class="emoji-palette" id="protocol_emoji_palette"></div>
-            </div>
-            <div class="row"><span>Цветные ники игроков<span class="hint">цвет задаётся в заметке игрока (кнопка ✎ на плитке); палитра — как у рамок</span></span>
-                <label class="switch"><input type="checkbox" id="nick_colors_enabled" checked><span class="slider"></span></label>
-            </div>
-            <div class="row" data-kw="прозвище псевдоним кличка"><span>Показывать свои ники<span class="hint">свой ник задаётся в заметке игрока. В игре он показывается вместо ника сайта (настоящий — по наведению), в «Участниках», профиле, разборе, «Кто в очереди» и «Сводке стола» — «Ник (свой)». Выключите на время эфира — прозвища пропадут со страниц сайта (в окне заметки и попапе останутся)</span></span>
-                <label class="switch"><input type="checkbox" id="nick_aliases_enabled" checked><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>— во время эфира<span class="hint">для стримеров: пока в OBS идёт трансляция, свои ники видны на страницах сайта. Выключите — на эфире не будет ни одного. Эфир определяется через интеграцию OBS (вкладка «Стрим»); пока связи с OBS нет, расширение считает, что эфир может идти, — и свои ники тоже прячет</span></span>
-                <label class="switch"><input type="checkbox" id="nick_aliases_on_stream" checked><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>— не показывать осуждёнку на эфире<span class="hint">свои ники с галочкой «Осуждёнка» (в заметке игрока) прячутся, пока идёт трансляция, — на страницах сайта и в окнах заметок. Вне эфира видны как обычно. Эфир узнаётся через интеграцию OBS (вкладка «Стрим»): без неё осуждёнка видна всегда; если связь с OBS не установлена — прячется на всякий случай. Запись (не трансляция) эфиром не считается</span></span>
-                <label class="switch"><input type="checkbox" id="nick_aliases_hide_condemned_on_stream" checked><span class="slider"></span></label>
-            </div>
-            <div class="row" data-kw="список заметок метки"><span>Заметки и цвета игроков<span class="hint">все ваши записи одним списком: заметка, цвет, id. Можно добавить игрока по нику или id, не дожидаясь встречи в игре. Откроется на активной вкладке полемики</span></span>
-                <button id="open_nick_colors" class="btn btn-primary">Открыть</button>
-            </div>
-            <div class="row"><span>Толщина рамок заметок<span class="hint">цветная рамка вокруг камеры игрока с меткой</span></span>
-                <select id="note_frame_width" class="sel">
-                    <option value="thin">Тонкие</option>
-                    <option value="medium">Средние</option>
-                    <option value="thick" selected>Как раньше</option>
-                </select>
-            </div>
-            <div class="row"><span>Свернуть ники до цифры<span class="hint">задаёт состояние стола: все ники свёрнуты до номера. Клик по номеру сворачивает/разворачивает КОНКРЕТНЫЙ ник в любом случае — тумблер лишь выбирает, с чего начинается стол</span></span>
-                <label class="switch"><input type="checkbox" id="compact_nicknames_enabled"><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>Клик по номеру сворачивает ник<span class="hint">клик по номеру игрока переключает его ник. Выключите, если хотите вернуть сайту его превью игрока по этому клику</span></span>
-                <label class="switch"><input type="checkbox" id="nick_click_toggle_enabled" checked><span class="slider"></span></label>
-            </div>
+            <div class="sub">Ник и плашка</div>
             <div class="row"><span>Положение плашки<span class="hint">плашка с номером, ником и нашими иконками; в верхних углах встаёт под кнопками сайта</span></span>
                 <select id="nick_plate_position" class="sel">
                     <option value="default">Снизу слева</option>
@@ -522,10 +494,32 @@
                     <option value="bottom-right">Снизу справа</option>
                 </select>
             </div>
+            <div class="row"><span>Свернуть ники до цифры<span class="hint">задаёт состояние стола: все ники свёрнуты до номера. Клик по номеру сворачивает/разворачивает КОНКРЕТНЫЙ ник в любом случае — тумблер лишь выбирает, с чего начинается стол</span></span>
+                <label class="switch"><input type="checkbox" id="compact_nicknames_enabled"><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>Клик по номеру сворачивает ник<span class="hint">клик по номеру игрока переключает его ник. Выключите, если хотите вернуть сайту его превью игрока по этому клику</span></span>
+                <label class="switch"><input type="checkbox" id="nick_click_toggle_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="sub">Протокол ПУ</div>
+            <div class="row"><span>Эмодзи в протоколе ПУ<span class="hint">метки протокола рисуются выбранными эмодзи — на плитках, в строке протокола и на кнопках у самого ПУ. Видно только вам. Пустое поле = родная иконка сайта</span></span>
+                <label class="switch"><input type="checkbox" id="unicorn_hearts_enabled"><span class="slider"></span></label>
+            </div>
+            <div id="protocol_emoji_rows" style="display:none">
+                <div class="row child"><span>Сердце (мирный)</span>
+                    <input id="protocol_emoji_civ" class="emoji-inp" maxlength="16" autocomplete="off">
+                </div>
+                <div class="row child"><span>Пистолет (мафия)</span>
+                    <input id="protocol_emoji_maf" class="emoji-inp" maxlength="16" autocomplete="off">
+                </div>
+                <div class="row child"><span>Корона</span>
+                    <input id="protocol_emoji_vice" class="emoji-inp" maxlength="16" autocomplete="off">
+                </div>
+                <div class="emoji-palette" id="protocol_emoji_palette"></div>
+            </div>
         </div>
 
-        <!-- ── Статистика ── -->
-        <div class="panel" data-panel="stats">
+        <!-- ── Игроки: поиск, заметки, ники ── -->
+        <div class="panel" data-panel="players">
             <div class="field">
                 <label>Поиск игрока по нику или id</label>
                 <div class="btn-row">
@@ -535,66 +529,83 @@
                 <div id="player_search_status" class="status" style="text-align:left;margin:6px 0 2px"></div>
                 <div id="player_search_results"></div>
             </div>
+            <div class="sub">Заметки</div>
+            <div class="row" data-kw="список заметок метки"><span>Заметки и цвета игроков<span class="hint">все ваши записи одним списком: заметка, цвет, id. Можно добавить игрока по нику или id, не дожидаясь встречи в игре. Откроется на активной вкладке полемики</span></span>
+                <button id="open_nick_colors" class="btn btn-primary">Открыть</button>
+            </div>
+            <div class="row"><span>Точка «есть заметка»<span class="hint">жёлтая точка на кнопке заметки у игроков, про которых вы что-то записали</span></span>
+                <label class="switch"><input type="checkbox" id="note_indicator_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>Толщина рамок заметок<span class="hint">цветная рамка вокруг камеры игрока с меткой</span></span>
+                <select id="note_frame_width" class="sel">
+                    <option value="thin">Тонкие</option>
+                    <option value="medium">Средние</option>
+                    <option value="thick" selected>Как раньше</option>
+                </select>
+            </div>
+            <div class="sub">Ники</div>
+            <div class="row"><span>Цветные ники игроков<span class="hint">цвет задаётся в заметке игрока (кнопка ✎ на плитке); палитра — как у рамок заметок</span></span>
+                <label class="switch"><input type="checkbox" id="nick_colors_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row" data-kw="прозвище псевдоним кличка"><span>Показывать свои ники<span class="hint">свой ник задаётся в заметке игрока. В игре он показывается вместо ника сайта (настоящий — по наведению), в «Участниках», профиле, разборе, «Кто в очереди» и «Сводке стола» — «Ник (свой)». Выключите на время эфира — прозвища пропадут со страниц сайта (в окне заметки и попапе останутся)</span></span>
+                <label class="switch"><input type="checkbox" id="nick_aliases_enabled" checked><span class="slider"></span></label>
+            </div>
+            <div class="row child"><span>Во время эфира<span class="hint">для стримеров: пока в OBS идёт трансляция, свои ники видны на страницах сайта. Выключите — на эфире не будет ни одного. Эфир определяется через интеграцию OBS (вкладка «Стрим»); пока связи с OBS нет, расширение считает, что эфир может идти, — и свои ники тоже прячет</span></span>
+                <label class="switch"><input type="checkbox" id="nick_aliases_on_stream" checked><span class="slider"></span></label>
+            </div>
+            <div class="row child"><span>Не показывать осуждёнку на эфире<span class="hint">свои ники с галочкой «Осуждёнка» (в заметке игрока) прячутся, пока идёт трансляция, — на страницах сайта и в окнах заметок. Вне эфира видны как обычно. Эфир узнаётся через интеграцию OBS (вкладка «Стрим»): без неё осуждёнка видна всегда; если связь с OBS не установлена — прячется на всякий случай. Запись (не трансляция) эфиром не считается</span></span>
+                <label class="switch"><input type="checkbox" id="nick_aliases_hide_condemned_on_stream" checked><span class="slider"></span></label>
+            </div>
+            <div class="row"><span>Символы в никах<span class="hint">сколько символов в нике каждого игрока за столом — откройте на странице игры</span></span>
+                <button id="show_nickname_lengths" class="btn btn-primary">Показать</button>
+            </div>
+        </div>
+
+        <!-- ── Статистика ── -->
+        <div class="panel" data-panel="stats">
             <div class="row" data-kw="ммр mmr эло"><span>Скрыть рейтинг<span class="hint">ничей MMR, его ± и места в рейтингах не видны нигде: в лобби, в профилях, в истории игр, на странице матча и в окнах расширения. Остаются победы, поражения и баллы матча</span></span>
                 <label class="switch"><input type="checkbox" id="hide_rating"><span class="slider"></span></label>
             </div>
-            <div class="row" data-kw="стата ммр винрейт"><span>Статистика игроков</span>
+            <div class="row" data-kw="стата ммр винрейт"><span>Статистика игроков<span class="hint">кнопка на плитке игрока, по наведению — окно с цифрами. Что в нём показывать — галочки ниже</span></span>
                 <label class="switch"><input type="checkbox" id="statistics_enabled" checked><span class="slider"></span></label>
             </div>
-            <div class="row" data-kw="сессия серия трекер"><span>Окно «Мой вечер» (игры сессии, ±MMR)</span>
+            <div class="row child" data-kw="ммр рейтинг"><span>Показывать MMR</span>
+                <label class="switch"><input type="checkbox" id="show_mmr" checked><span class="slider"></span></label>
+            </div>
+            <div class="row child"><span>Количество игр</span>
+                <label class="switch"><input type="checkbox" id="show_games" checked><span class="slider"></span></label>
+            </div>
+            <div class="row child"><span>ID игрока</span>
+                <label class="switch"><input type="checkbox" id="show_id"><span class="slider"></span></label>
+            </div>
+            <div class="row child"><span>Винрейт</span>
+                <label class="switch"><input type="checkbox" id="show_winrate" checked><span class="slider"></span></label>
+            </div>
+            <div class="row child"><span>Отстрелы</span>
+                <label class="switch"><input type="checkbox" id="show_kills" checked><span class="slider"></span></label>
+            </div>
+            <div class="row child"><span>Статистика по ролям</span>
+                <label class="switch"><input type="checkbox" id="show_roles" checked><span class="slider"></span></label>
+            </div>
+            <div class="sub">Окна в игре</div>
+            <div class="row" data-kw="сессия серия трекер"><span>Окно «Мой вечер»<span class="hint">игры за сегодня: роли, серия и ±MMR. Новая сессия — с 04:00 или по кнопке сброса</span></span>
                 <label class="switch"><input type="checkbox" id="session_stats_enabled"><span class="slider"></span></label>
             </div>
             <div class="row"><span>Окно «Сводка стола»<span class="hint">в игре: место, MMR, игры и винрейт каждого за красных и за чёрных; цвет — тройка самых высоких и тройка самых низких MMR. Сортировка кнопкой в шапке: по месту, «сильные чёрные», «сильные красные»</span></span>
                 <label class="switch"><input type="checkbox" id="table_summary_enabled"><span class="slider"></span></label>
             </div>
-            <div class="row" data-kw="ммр"><span>График «Путь MMR» на своём профиле</span>
+            <div class="sub">Профиль</div>
+            <div class="row" data-kw="ммр"><span>График «Путь MMR»<span class="hint">на своём профиле: последние 120 игр, максимум и минимум — за всю историю</span></span>
                 <label class="switch"><input type="checkbox" id="profile_mmr_chart_enabled" checked><span class="slider"></span></label>
             </div>
-            <div class="row" data-kw="аватар аватарка"><span>Большое фото в профиле<span class="hint">фото игрока в левой карточке профиля, над уровнем и MMR — там, где раньше стоял 3D-аватар. Видно только вам</span></span>
+            <div class="row" data-kw="аватар аватарка"><span>Большое фото в профиле<span class="hint">фото игрока в левой карточке профиля, над уровнем и MMR — там, где раньше стоял 3D-аватар. Свою картинку можно выбрать в «Лобби» → «Моя картинка». Видно только вам</span></span>
                 <label class="switch"><input type="checkbox" id="profile_photo_enabled" checked><span class="slider"></span></label>
             </div>
-            <div class="row" data-kw="аватар аватарка"><span>Моя картинка<span class="hint">что показывать в карточке на странице поиска и большим фото своего профиля. Видно только вам</span></span>
-                <select id="own_avatar_source" class="sel">
-                    <option value="site">Фото с сайта</option>
-                    <option value="custom">Своя картинка</option>
-                </select>
-            </div>
-            <div class="row" style="gap:10px">
-                <img id="own_avatar_preview" alt="" hidden style="width:42px;height:42px;object-fit:cover;border-radius:8px;border:1px solid var(--border)">
-                <span id="own_avatar_empty" style="flex:1;color:var(--muted);font-size:11px">Своя картинка не выбрана — показывается фото с сайта</span>
-                <span style="flex:1" aria-hidden="true" id="own_avatar_spacer"></span>
-                <button id="own_avatar_clear" class="btn" type="button" hidden style="flex:0 0 auto">Убрать</button>
-                <button id="own_avatar_pick" class="btn btn-primary" type="button" style="flex:0 0 auto">Выбрать…</button>
-            </div>
-            <div class="row" data-kw="ммр рейтинг"><span>Показывать MMR</span>
-                <label class="switch"><input type="checkbox" id="show_mmr" checked><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>Количество игр</span>
-                <label class="switch"><input type="checkbox" id="show_games" checked><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>ID игрока</span>
-                <label class="switch"><input type="checkbox" id="show_id"><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>Винрейт</span>
-                <label class="switch"><input type="checkbox" id="show_winrate" checked><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>Отстрелы</span>
-                <label class="switch"><input type="checkbox" id="show_kills" checked><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>Статистика по ролям</span>
-                <label class="switch"><input type="checkbox" id="show_roles" checked><span class="slider"></span></label>
-            </div>
-            <div class="row"><span>Символы в никах</span>
-                <button id="show_nickname_lengths" class="btn btn-primary">Показать</button>
-            </div>
-        </div>
-
-        <!-- ── Страница статистики матча ── -->
-        <div class="panel" data-panel="match">
-            <div class="row" data-kw="разбор матч"><span>Послеигровая статистика</span>
+            <div class="sub">Разбор матча</div>
+            <div class="row" data-kw="разбор матч"><span>Послеигровая статистика<span class="hint">на странице матча: голосования, ночные действия, штрафы</span></span>
                 <label class="switch"><input type="checkbox" id="match_page_stats_enabled" checked><span class="slider"></span></label>
             </div>
-            <div class="row"><span>Вид разбора</span>
+            <div class="row child"><span>Вид разбора</span>
                 <select id="match_stats_view" class="sel">
                     <option value="hints">С подсказками</option>
                     <option value="legend">Только сводка</option>
@@ -608,18 +619,17 @@
 
         <!-- ── Роли ── -->
         <div class="panel" data-panel="roles">
-            <div class="row" data-kw="фейк фальшивая"><span>Подмена роли</span>
+            <div class="sub">Подмена роли</div>
+            <div class="row" data-kw="фейк фальшивая"><span>Подмена роли<span class="hint">на своей плитке показывается другая роль — чтобы не выдать настоящую на эфире. Пока подмена активна, чужие роли скрыты</span></span>
                 <label class="switch"><input type="checkbox" id="enable_role_faker" checked><span class="slider"></span></label>
             </div>
-            <div class="row"><span>Клавиша подмены роли</span>
+            <div class="row child"><span>Клавиша подмены<span class="hint">каждое нажатие — следующая роль</span></span>
                 <button id="hotkey_role_fake" class="btn-key">F</button>
             </div>
-            <div class="row"><span>Клавиша сброса роли</span>
+            <div class="row child"><span>Клавиша сброса<span class="hint">вернуть настоящую роль</span></span>
                 <button id="hotkey_role_reset" class="btn-key">E</button>
             </div>
-            <div class="row"><span>Клавиша скрытия роли</span>
-                <button id="hotkey_role_hide" class="btn-key">D</button>
-            </div>
+            <div class="sub">Скрытие ролей</div>
             <div class="row" data-kw="скрыть роль спрятать"><span>Автоотключение ролей<span class="hint">скрывает роли сразу при входе в игру и держит скрытыми</span></span>
                 <label class="switch"><input type="checkbox" id="auto_hide_roles_enabled" checked><span class="slider"></span></label>
             </div>
@@ -629,10 +639,20 @@
             <div class="row"><span>Открывать роли в конце игры<span class="hint">победа мафии или мирных — скрытие снимается само, и видны роли, которые сайт раскрывает в конце (шериф и чёрные). Пауза и промах не считаются. Новая игра — скрытие снова по настройкам</span></span>
                 <label class="switch"><input type="checkbox" id="roles_reveal_on_game_end" checked><span class="slider"></span></label>
             </div>
+            <div class="row"><span>Клавиша скрытия ролей<span class="hint">спрятать или показать роли вручную</span></span>
+                <button id="hotkey_role_hide" class="btn-key">D</button>
+            </div>
             <div class="row"><span>Подсмотреть роли<span class="hint">пока клавиша зажата — роли видны, отпустил — снова скрыты. Работает при включённом автоотключении</span></span>
                 <button id="hotkey_role_peek" class="btn-key">V</button>
             </div>
             <div class="note-box">Скрытие прячет и ЧУЖИЕ роли — иначе состав мафии или результат проверки утекут в эфир. Чтобы свериться по ходу игры, зажмите эту клавишу.</div>
+            <div class="sub">Метки ролей</div>
+            <div class="row"><span>Метки ролей у игроков<span class="hint">квадратик «мой read», сохраняется на игру (переживает F5)</span></span>
+                <label class="switch"><input type="checkbox" id="role_marker_enabled"><span class="slider"></span></label>
+            </div>
+            <div class="row child" id="role_marker_icons_row" style="display:none"><span>Использовать иконки<span class="hint">в метке — иконка роли с сайта; выключено — подписи «Мир/Шер/Дон»</span></span>
+                <label class="switch"><input type="checkbox" id="role_marker_icons_enabled" checked><span class="slider"></span></label>
+            </div>
         </div>
 
         <!-- ── Стрим (OBS + Twitch) ── -->
@@ -666,7 +686,7 @@
                     <label>Источник микрофона в OBS</label>
                     <select id="mic_sync_input" class="inp"><option value="">Авто: главный микрофон OBS</option></select>
                 </div>
-                <div class="row"><span>Клавиша микрофона<span class="hint">пусто — только клик по плашке</span></span>
+                <div class="row child"><span>Клавиша микрофона<span class="hint">пусто — только клик по плашке</span></span>
                     <span style="display:flex;gap:4px"><button id="mic_sync_hotkey_capture" class="btn-key" title="Нажми, затем нужную клавишу">—</button><button id="mic_sync_hotkey_clear" class="btn-key" title="Убрать клавишу">×</button></span>
                 </div>
                 <div class="row"><span>Плавающая панель на странице</span>
@@ -688,7 +708,7 @@
                         <label>Ночная сцена</label>
                         <select id="obs_night_scene" class="inp"><option value="">Выберите сцену</option></select>
                     </div>
-                    <div class="row"><span>Выбыл — ночью дневная сцена<span class="hint">убили или заголосовали — ночью эфир остаётся на дневной сцене, зрители смотрят игру. Роли стола до конца матча спрятаны. Осторожно: V и D на дневной сцене покажут роли и в эфире</span></span>
+                    <div class="row child"><span>Выбыл — ночью дневная сцена<span class="hint">убили или заголосовали — ночью эфир остаётся на дневной сцене, зрители смотрят игру. Роли стола до конца матча спрятаны. Осторожно: V и D на дневной сцене покажут роли и в эфире</span></span>
                         <label class="switch"><input type="checkbox" id="obs_day_scene_when_out" checked><span class="slider"></span></label>
                     </div>
                     <div class="note-box">🎯 Сцены переключаются автоматически при смене времени суток в игре. Пока ночная сцена не выбрана, роли ночью сами не откроются (показать — D)</div>
@@ -699,10 +719,10 @@
                 <div class="row" data-kw="обс повтор"><span>Клипы (Replay Buffer)<span class="hint">клавиша сохраняет последние N минут эфира в файл. Буфер повторов должен быть включён в настройках вывода OBS</span></span>
                     <label class="switch"><input type="checkbox" id="obs_clip_enabled"><span class="slider"></span></label>
                 </div>
-                <div class="row"><span>— Длина клипа</span>
+                <div class="row child"><span>Длина клипа</span>
                     <select id="obs_clip_minutes" class="sel"><option value="1" selected>1 мин</option><option value="2">2 мин</option><option value="3">3 мин</option><option value="5">5 мин</option><option value="10">10 мин</option></select>
                 </div>
-                <div class="row"><span>— Клавиша клипа</span>
+                <div class="row child"><span>Клавиша</span>
                     <button id="obs_clip_hotkey_code" class="btn-key">F9</button>
                 </div>
                 <div class="btn-row">
@@ -728,14 +748,14 @@
                 <div class="row"><span>Плавающая панель чата</span>
                     <label class="switch"><input type="checkbox" id="twitch_floating_panel_enabled"><span class="slider"></span></label>
                 </div>
-                <div class="row"><span>Чат везде на сайте<span class="hint">и в поиске, и в лобби, и в профиле — не только в игре. Выключено — прежний режим «только в игре»</span></span>
+                <div class="row child"><span>Чат везде на сайте<span class="hint">и в поиске, и в лобби, и в профиле — не только в игре. Выключено — прежний режим «только в игре»</span></span>
                     <label class="switch"><input type="checkbox" id="twitch_chat_everywhere" checked><span class="slider"></span></label>
                 </div>
                 <div class="btn-row">
                     <button id="show_twitch_panel" class="btn btn-twitch">Показать</button>
                     <button id="hide_twitch_panel" class="btn btn-ghost">Скрыть</button>
                 </div>
-                <div class="note-box">💬 Плавающий чат работает только на странице игры</div>
+                <div class="note-box">💬 Где показывать чат — галочка «Чат везде на сайте» выше</div>
             </div>
         </div>
 
@@ -749,7 +769,7 @@
             <div class="row" data-kw="успокоиться дыхание"><span>Режим «Тильт»<span class="hint">упражнения для успокоения: красная кнопка «Тильт» сверху (открывает упражнения) и кнопка «У меня тильт» на сайте. Выключено — всё это пропадает</span></span>
                 <label class="switch"><input type="checkbox" id="tilt_mode_enabled" checked><span class="slider"></span></label>
             </div>
-            <div class="row" id="tilt_button_row" style="padding-left:14px"><span>└ Кнопка «У меня тильт» на сайте<span class="hint">в карточке на странице поиска, под «Профилем». Выключите — кнопка со страницы пропадёт, а упражнения останутся под красной кнопкой «Тильт» сверху</span></span>
+            <div class="row child" id="tilt_button_row"><span>Кнопка «У меня тильт» на сайте<span class="hint">в карточке на странице поиска, под «Профилем». Выключите — кнопка со страницы пропадёт, а упражнения останутся под красной кнопкой «Тильт» сверху</span></span>
                 <label class="switch"><input type="checkbox" id="tilt_button_enabled" checked><span class="slider"></span></label>
             </div>
             <div class="row" data-kw="обновление апдейт" id="update_notify_row"><span>Уведомлять о новой версии<span class="hint">проверка релизов на GitHub раз в час</span></span>
@@ -762,7 +782,7 @@
             <div class="row" data-kw="версия апдейт"><span>Проверить обновление<span class="hint">сейчас, не дожидаясь плановой проверки</span></span>
                 <span class="btn-row">
                     <button id="check_update_now" class="btn btn-primary">Проверить</button>
-                    <a class="btn btn-ghost" href="https://github.com/fjfalcon/polemicagame_phil_extension/releases/latest" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;align-items:center;">GitHub</a>
+                    <a class="btn btn-ghost" href="https://github.com/fjfalcon/polemica-notes/releases/latest" target="_blank" rel="noopener" style="text-decoration:none;display:inline-flex;align-items:center;">GitHub</a>
                 </span>
             </div>
             <div class="row" data-kw="экспорт импорт сохранить перенос резервная копия"><span>Бэкап настроек и заметок</span>

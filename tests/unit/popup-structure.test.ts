@@ -74,7 +74,11 @@ describe("вкладки и панели согласованы", () => {
     );
     // «Тильт» — панель без вкладки: её открывает красная кнопка в шапке.
     expect(tabs.filter(Boolean).sort()).toEqual(panels.filter((p) => p && p !== "tilt").sort());
-    expect(tabs, "вкладка «Иконки» появилась после перекройки меню").toContain("icons");
+    // Перекройка 16.11.2026: «Иконки» стали «Плиткой» (имя data-tab прежнее —
+    // по нему у пользователей запомнена вкладка), заметки и ники ушли в
+    // «Игроков», «Матч» из двух строк влился в «Стату».
+    expect(tabs).toEqual(["game", "lobby", "icons", "players", "stats", "roles", "stream", "misc"]);
+    expect(d.querySelector('.tab[data-tab="icons"]')?.textContent).toBe("Плитка");
   });
 
   test("ровно одна вкладка и одна панель активны при открытии", () => {
@@ -204,41 +208,125 @@ describe("режим «Тильт» отключается целиком", () =
   });
 });
 
-describe("вкладка «Иконки» собрала всё про плитку игрока", () => {
-  test("настройки плитки живут в одной вкладке, а не разбросаны", () => {
-    const d = doc();
-    const icons = d.querySelector('.panel[data-panel="icons"]') as HTMLElement;
-    expect(icons).not.toBeNull();
-    for (const id of [
+describe("раскладка настроек по вкладкам (перекройка 16.11.2026)", () => {
+  /** Где что лежит. Перенос строки в другую вкладку — осознанная правка этой таблицы. */
+  const PLACES: Record<string, string[]> = {
+    lobby: [
+      "auto_accept_enabled",
+      "requeue_after_lobby_fail_enabled",
+      "queue_counts_refresh_enabled",
+      "room_queue_counts_enabled",
+      "queue_peek_enabled",
+      "search_avatars_enabled",
+      "search_card_avatar_enabled",
+      "own_avatar_source",
+    ],
+    game: [
+      "pause_hotkey_enabled",
+      "player_action_keys_enabled",
+      "f5_refresh_fix_enabled",
+      "ppk_confirm_enabled",
+      "safe_controls_layout_enabled",
+      "disable_webcam_clicks",
+      "camera_reload_enabled",
+      "stream_lost_icon_enabled",
+      "camera_rotate_enabled",
+      "player_mute_enabled",
+      "player_volume_memory_enabled",
+    ],
+    icons: [
       "stats_button_theme",
       "btn_stats_enabled",
       "btn_note_enabled",
       "btn_last_games_enabled",
       "btn_crossover_enabled",
       "btn_hide_video_enabled",
-      "camera_rotate_enabled",
-      "player_mute_enabled",
-      "player_volume_memory_enabled",
-      "role_marker_enabled",
-      "nick_colors_enabled",
-      "note_frame_width",
-      "compact_nicknames_enabled",
+      "tile_buttons_collapsed",
+      "last_games_count",
       "nick_plate_position",
+      "compact_nicknames_enabled",
+      "unicorn_hearts_enabled",
+    ],
+    players: [
+      "player_search_input",
       "open_nick_colors",
-    ]) {
-      expect(icons.querySelector(`#${id}`), `${id} должен быть во вкладке «Иконки»`).not.toBeNull();
+      "note_indicator_enabled",
+      "note_frame_width",
+      "nick_colors_enabled",
+      "nick_aliases_enabled",
+      "show_nickname_lengths",
+    ],
+    stats: [
+      "hide_rating",
+      "statistics_enabled",
+      "show_mmr",
+      "session_stats_enabled",
+      "table_summary_enabled",
+      "profile_mmr_chart_enabled",
+      "profile_photo_enabled",
+      "match_page_stats_enabled",
+      "match_stats_view",
+    ],
+    roles: ["enable_role_faker", "auto_hide_roles_enabled", "hotkey_role_peek", "role_marker_enabled"],
+  };
+
+  test("каждая настройка лежит в своей вкладке", () => {
+    const d = doc();
+    for (const [panel, ids] of Object.entries(PLACES)) {
+      const el = d.querySelector(`.panel[data-panel="${panel}"]`) as HTMLElement;
+      expect(el, `панель ${panel}`).not.toBeNull();
+      for (const id of ids) {
+        expect(el.querySelector(`#${id}`), `${id} должен быть во вкладке ${panel}`).not.toBeNull();
+      }
     }
   });
 
-  test("во вкладке «Игра» осталось только про саму игру", () => {
+  test("подопция стоит сразу под своей настройкой, а не через чужие строки", () => {
     const d = doc();
-    const game = d.querySelector('.panel[data-panel="game"]') as HTMLElement;
-    for (const id of ["pause_hotkey_enabled", "disable_webcam_clicks", "f5_refresh_fix_enabled"]) {
-      expect(game.querySelector(`#${id}`), `${id} остаётся в «Игре»`).not.toBeNull();
+    // Родитель → подопции, которые обязаны идти следом (порядок в разметке).
+    const FAMILIES: Record<string, string[]> = {
+      statistics_enabled: ["show_mmr", "show_games", "show_id", "show_winrate", "show_kills", "show_roles"],
+      postgame_requeue_enabled: ["postgame_skip_confirm_enabled"],
+      queue_peek_enabled: ["queue_peek_auto", "queue_peek_standard"],
+      pause_hotkey_enabled: ["pause_hotkey_capture"],
+      safe_controls_layout_enabled: ["ctl_pos_finish", "ctl_pos_outcry", "ctl_pos_guess"],
+      nick_aliases_enabled: ["nick_aliases_on_stream", "nick_aliases_hide_condemned_on_stream"],
+      role_marker_enabled: ["role_marker_icons_enabled"],
+      match_page_stats_enabled: ["match_stats_view"],
+      tilt_mode_enabled: ["tilt_button_enabled"],
+    };
+    const rowOf = (id: string) => d.getElementById(id)?.closest(".row") as HTMLElement;
+    for (const [parentId, kids] of Object.entries(FAMILIES)) {
+      let cursor = rowOf(parentId);
+      expect(cursor, parentId).not.toBeNull();
+      expect(cursor.classList.contains("child"), `${parentId} — не подопция`).toBe(false);
+      for (const kid of kids) {
+        const row = rowOf(kid);
+        expect(row.classList.contains("child"), `${kid} оформлен подопцией`).toBe(true);
+        expect(cursor.nextElementSibling, `${kid} идёт сразу за ${cursor.querySelector("[id]")?.id}`).toBe(row);
+        cursor = row;
+      }
     }
-    for (const id of ["btn_stats_enabled", "nick_colors_enabled", "compact_nicknames_enabled"]) {
-      expect(game.querySelector(`#${id}`), `${id} переехал в «Иконки»`).toBeNull();
+  });
+
+  test("подопции размечены классом, а не тире в подписи; у каждой есть родитель выше", () => {
+    const d = doc();
+    for (const row of Array.from(d.querySelectorAll<HTMLElement>(".panel .row"))) {
+      const label = row.firstElementChild?.textContent?.trim() || "";
+      expect(/^[—–└-]/.test(label), `«${label.slice(0, 30)}» — отступ задаёт класс child`).toBe(false);
     }
+    for (const kid of Array.from(d.querySelectorAll<HTMLElement>(".panel .row.child"))) {
+      const panel = kid.closest(".panel")!;
+      const rows = Array.from(panel.querySelectorAll<HTMLElement>(".row"));
+      const before = rows.slice(0, rows.indexOf(kid));
+      expect(before.some((r) => !r.classList.contains("child")), `у подопции ${kid.querySelector("[id]")?.id} нет родителя`).toBe(true);
+    }
+  });
+
+  test("вкладки «Матч» больше нет, а запомненный выбор уводит в «Стату»", () => {
+    const d = doc();
+    expect(d.querySelector('[data-tab="match"], [data-panel="match"]')).toBeNull();
+    expect(popupSource).toContain('name === "match" ? "stats" : name');
   });
 });
 

@@ -624,8 +624,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const activateTab = (name: string) => {
     // По панелям, а не по кнопкам: у «Тильта» кнопки в ряду нет — его
     // открывает красная кнопка в шапке (девятой вкладке нет места).
-    const exists = panels.some((p) => p.dataset.panel === name);
-    const target = exists ? name : "game";
+    // Вкладка «Матч» влилась в «Стату» (перекройка 16.11.2026) — запомненный
+    // выбор не должен сбрасываться на «Игру».
+    const wanted = name === "match" ? "stats" : name;
+    const exists = panels.some((p) => p.dataset.panel === wanted);
+    const target = exists ? wanted : "game";
     tabs.forEach((t) => t.classList.toggle("active", t.dataset.tab === target));
     panels.forEach((p) => p.classList.toggle("active", p.dataset.panel === target));
     // У «Тильта» вкладки нет — «нажатой» показывается кнопка в шапке.

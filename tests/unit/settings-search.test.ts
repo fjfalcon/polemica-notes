@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
+  CONTEXT_CLASS,
   EMPTY_PANEL_CLASS,
   HIT_CLASS,
   OWNER_CLASS,
@@ -73,7 +74,7 @@ describe("поиск по настоящему меню", () => {
     expect(shown).toBe(hits().length);
     expect(document.body.classList.contains(SEARCHING_CLASS)).toBe(true);
     // Вкладка без находок прячется целиком, «Тильт» в поиске не участвует.
-    expect(document.querySelector('.panel[data-panel="match"]')!.classList.contains(EMPTY_PANEL_CLASS)).toBe(true);
+    expect(document.querySelector('.panel[data-panel="roles"]')!.classList.contains(EMPTY_PANEL_CLASS)).toBe(true);
     expect(units.some((u) => u.panel.dataset.panel === "tilt")).toBe(false);
   });
 
@@ -95,6 +96,23 @@ describe("поиск по настоящему меню", () => {
     expect(rowOf("hide_rating").classList.contains(HIT_CLASS)).toBe(true);
     applySearch(document, units, "обс");
     expect(rowOf("obs_enabled").classList.contains(HIT_CLASS)).toBe(true);
+  });
+
+  test("найденная подопция приводит родителя: «Клавиша» без него непонятна", () => {
+    const units = buildIndex(document);
+    const shown = applySearch(document, units, "нумпад");
+    expect(rowOf("player_action_numpad").classList.contains(HIT_CLASS)).toBe(true);
+    const parent = rowOf("player_action_keys_enabled");
+    expect(parent.classList.contains(CONTEXT_CLASS)).toBe(true);
+    expect(parent.classList.contains(HIT_CLASS)).toBe(false);
+    expect(shown).toBe(2);
+    // Родитель сам подошёл под запрос — отдельной пометки контекста не надо.
+    applySearch(document, units, "быстрая пауза");
+    expect(rowOf("pause_hotkey_capture").classList.contains(HIT_CLASS)).toBe(true);
+    expect(rowOf("pause_hotkey_enabled").classList.contains(HIT_CLASS)).toBe(true);
+    expect(rowOf("pause_hotkey_enabled").classList.contains(CONTEXT_CLASS)).toBe(false);
+    applySearch(document, units, "");
+    expect(document.querySelectorAll(`.${CONTEXT_CLASS}`)).toHaveLength(0);
   });
 
   test("находка в скрытом блоке показывает строку, которая его включает", () => {
@@ -128,7 +146,9 @@ describe("поиск по настоящему меню", () => {
     applySearch(document, units, "роль");
     expect(applySearch(document, units, "   ")).toBe(0);
     expect(document.body.classList.contains(SEARCHING_CLASS)).toBe(false);
-    expect(document.querySelectorAll(`.${HIT_CLASS}, .${OWNER_CLASS}, .${EMPTY_PANEL_CLASS}`)).toHaveLength(0);
+    expect(
+      document.querySelectorAll(`.${HIT_CLASS}, .${OWNER_CLASS}, .${CONTEXT_CLASS}, .${EMPTY_PANEL_CLASS}`),
+    ).toHaveLength(0);
     expect(Array.from(document.querySelectorAll<HTMLElement>("[style]"), (el) => el.getAttribute("style"))).toEqual(before);
   });
 });

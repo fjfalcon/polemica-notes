@@ -13,6 +13,10 @@
  * попапа (OBS выключен → блок настроек скрыт и т.п.), и после очистки поиска
  * всё возвращается как было без единого восстановления «вручную».
  *
+ * Подопции (.row.child) зависят от строки над ними и без неё непонятны
+ * («Клавиша» — чего?). Поэтому подопция ищется и по подписи родителя, а
+ * найденная подопция приводит родителя с собой (search-ctx).
+ *
  * Скрытые настройки. Строка может подходить под запрос, но лежать в блоке,
  * который сейчас скрыт родительским тумблером (сцены OBS при выключенной
  * интеграции). Тогда показываем «хозяина» блока — строку перед ним, которая
@@ -23,13 +27,14 @@
 const UNIT_SELECTOR = ".row, .field";
 /** Панель «Тильт» — упражнения, а не настройки: в поиске не участвует. */
 const SKIP_PANEL = "tilt";
-/** Подопция: «— Клавиша паузы», «└ Кнопка на сайте». */
-const CHILD_RE = /^[\s—–\-└]+/;
+/** Подопция: строка с отступом, зависит от ближайшей строки без него выше. */
+const CHILD_CLASS = "child";
 /** Строка с захватом клавиши находится и по словам, которых в подписи нет. */
 const HOTKEY_WORDS = "клавиша хоткей горячая кнопка";
 
 export const HIT_CLASS = "search-hit";
 export const OWNER_CLASS = "search-owner";
+export const CONTEXT_CLASS = "search-ctx";
 export const EMPTY_PANEL_CLASS = "search-empty";
 export const SEARCHING_CLASS = "searching";
 export const TITLE_CLASS = "search-title";
@@ -59,6 +64,8 @@ interface Unit {
   el: HTMLElement;
   panel: HTMLElement;
   haystack: string;
+  /** Родитель подопции — строка, от которой она зависит. */
+  parent: HTMLElement | null;
 }
 
 /** Собрать индекс: текст строки + слова-синонимы + подпись родителя у подопций. */
@@ -66,16 +73,16 @@ export function buildIndex(root: ParentNode): Unit[] {
   const units: Unit[] = [];
   for (const panel of Array.from(root.querySelectorAll<HTMLElement>(".panel"))) {
     if (panel.dataset.panel === SKIP_PANEL) continue;
-    let parentLabel = "";
+    let parent: HTMLElement | null = null;
     for (const el of Array.from(panel.querySelectorAll<HTMLElement>(UNIT_SELECTOR))) {
       if (el.dataset.search === "off") continue;
-      const label = unitLabel(el);
-      const isChild = CHILD_RE.test(label);
-      if (!isChild && label) parentLabel = label;
+      const isChild = el.classList.contains(CHILD_CLASS);
+      // Родителем бывает только строка-настройка, не поле ввода между ними.
+      if (!isChild && el.matches(".row")) parent = el;
       const parts = [el.textContent || "", el.dataset.kw || ""];
-      if (isChild) parts.push(parentLabel);
+      if (isChild && parent) parts.push(unitLabel(parent), parent.dataset.kw || "");
       if (el.querySelector(".btn-key")) parts.push(HOTKEY_WORDS);
-      units.push({ el, panel, haystack: normalize(parts.join(" ")) });
+      units.push({ el, panel, haystack: normalize(parts.join(" ")), parent: isChild ? parent : null });
     }
   }
   return units;
@@ -111,6 +118,7 @@ export function applySearch(root: Document, units: Unit[], query: string): numbe
   root.body.classList.toggle(SEARCHING_CLASS, searching);
 
   const owners = new Set<HTMLElement>();
+  const contexts = new Set<HTMLElement>();
   const shownByPanel = new Map<HTMLElement, number>();
   let shown = 0;
   const count = (panel: HTMLElement): void => {
@@ -125,6 +133,7 @@ export function applySearch(root: Document, units: Unit[], query: string): numbe
     const hidden = hiddenRoot(unit.el, unit.panel);
     if (!hidden) {
       count(unit.panel);
+      if (unit.parent && !hiddenRoot(unit.parent, unit.panel)) contexts.add(unit.parent);
       continue;
     }
     const owner = ownerOf(hidden);
@@ -134,8 +143,12 @@ export function applySearch(root: Document, units: Unit[], query: string): numbe
   for (const unit of units) {
     const isOwner = owners.has(unit.el);
     unit.el.classList.toggle(OWNER_CLASS, isOwner);
+    const isHit = unit.el.classList.contains(HIT_CLASS);
+    // Родитель найденной подопции: виден как обычная строка, для контекста.
+    const isContext = contexts.has(unit.el) && !isHit && !isOwner;
+    unit.el.classList.toggle(CONTEXT_CLASS, isContext);
     // Хозяин, который и сам подошёл под запрос, уже посчитан выше.
-    if (isOwner && !unit.el.classList.contains(HIT_CLASS)) count(unit.panel);
+    if ((isOwner && !isHit) || isContext) count(unit.panel);
   }
 
   for (const panel of new Set(units.map((u) => u.panel))) {
