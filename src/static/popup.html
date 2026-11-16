@@ -199,20 +199,21 @@
         .search-title:hover { text-decoration: underline; }
         body.searching .tab.active { color: var(--muted); background: transparent; }
         body.searching .panel { display: block; }
-        body.searching .panel[data-panel="tilt"], body.searching .panel.search-empty { display: none; }
+        body.searching .panel[data-panel="tilt"], body.searching .panel.settings-empty { display: none; }
         body.searching .search-title { display: block; }
-        body.searching .panel:not(.search-empty) > .search-title:first-child { margin-top: 0; }
-        body.searching .panel .row:not(.search-hit):not(.search-owner):not(.search-ctx),
-        body.searching .panel .field:not(.search-hit),
+        body.searching .panel.settings-first > .search-title { margin-top: 0; }
+        body.searching .panel .row:not(.settings-hit):not(.settings-owner):not(.settings-ctx),
+        body.searching .panel .field:not(.settings-hit),
         body.searching .panel .note-box,
+        body.searching .panel .status,
         body.searching .panel .sub,
         body.searching .panel .emoji-palette,
         body.searching .panel > p,
         body.searching .panel .btn-row:not(.row .btn-row):not(.field .btn-row) { display: none !important; }
         /* Строка, которая открывает скрытый блок с найденным: приглушена. */
-        body.searching .row.search-owner:not(.search-hit) { border-style: dashed; }
-        body.searching .row.search-owner:not(.search-hit)::after {
-            content: "найдено внутри — включите"; flex: 0 0 auto; order: 3;
+        body.searching .row.settings-owner:not(.settings-hit) { border-style: dashed; }
+        body.searching .row.settings-owner:not(.settings-hit)::after {
+            content: "найденное скрыто — открывается здесь"; flex: 0 0 auto; order: 3;
             font-size: 10px; color: var(--muted); max-width: 84px; text-align: right;
         }
 

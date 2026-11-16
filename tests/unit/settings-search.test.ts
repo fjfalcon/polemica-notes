@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   CONTEXT_CLASS,
   EMPTY_PANEL_CLASS,
+  FIRST_PANEL_CLASS,
   HIT_CLASS,
   OWNER_CLASS,
   SEARCHING_CLASS,
@@ -18,7 +19,9 @@ import {
   applySearch,
   buildIndex,
   installSettingsSearch,
+  matchesWord,
   normalize,
+  stem,
   unitLabel,
 } from "../../src/popup/settings-search";
 
@@ -50,7 +53,53 @@ describe("разбор текста", () => {
   });
 });
 
+describe("формы слов", () => {
+  test("у слова запроса срезается окончание; латиница и короткие слова — как есть", () => {
+    expect(["камера", "камеры", "очередь", "роль", "клавиша", "ники", "заметками"].map(stem)).toEqual([
+      "камер",
+      "камер",
+      "очеред",
+      "рол",
+      "клавиш",
+      "ник",
+      "заметк",
+    ]);
+    expect(["ник", "obs", "f5", "mmr"].map(stem)).toEqual(["ник", "obs", "f5", "mmr"]);
+  });
+  test("основа ищется в начале слова; длинная — и внутри", () => {
+    expect(matchesWord("кнопка обновить камеры", "камера")).toBe(true);
+    expect(matchesWord("пароль опционально", "роль"), "«роль» — не «пароль»").toBe(false);
+    expect(matchesWord("автозапись игр", "запись"), "составное слово").toBe(true);
+    expect(matchesWord("метки ролей у игроков", "роль")).toBe(true);
+  });
+});
+
 describe("поиск по настоящему меню", () => {
+  test("примеры из самой строки поиска и из «ничего не нашлось» находят всё по теме", () => {
+    const units = buildIndex(document);
+    const found = (q: string) => {
+      applySearch(document, units, q);
+      return new Set(hits().map((el) => el.querySelector("[id]")?.id));
+    };
+    const placeholder = $<HTMLInputElement>("settings_search").placeholder;
+    const emptyText = $("settings_search_empty").textContent || "";
+    const examples = [
+      ...placeholder.replace(/^[^:]*:/, "").replace("…", "").split(","),
+      ...Array.from(emptyText.matchAll(/«([^»]+)»/g), (m) => m[1]),
+    ].map((w) => w.trim());
+    expect(examples).toEqual(["камера", "очередь", "клавиша", "роль", "ник", "OBS"]);
+    for (const word of examples) expect(found(word).size, `«${word}» что-то находит`).toBeGreaterThan(1);
+    // Словарная форма находит то же, что и основа (ревью 16.11.2026).
+    expect(found("камера")).toEqual(found("камер"));
+    expect(found("камера").has("camera_reload_enabled")).toBe(true);
+    expect(found("камера").has("camera_rotate_enabled")).toBe(true);
+    expect(found("очередь")).toEqual(found("очеред"));
+    expect(found("роль").has("role_marker_enabled")).toBe(true);
+    expect(found("роль").has("hotkey_role_peek")).toBe(true);
+    expect(found("роль").has("obs_password"), "«Пароль» OBS — не про роли").toBe(false);
+    expect(found("запись").has("obs_auto_record_enabled")).toBe(true);
+  });
+
   test("каждая строка меню находится по собственной подписи", () => {
     const units = buildIndex(document);
     expect(units.length).toBeGreaterThan(100);
@@ -135,6 +184,36 @@ describe("поиск по настоящему меню", () => {
     expect(document.querySelectorAll(`.${OWNER_CLASS}`)).toHaveLength(0);
   });
 
+  test("самостоятельная строка, скрытая целиком, чужого «хозяина» не получает", () => {
+    // Версия из магазина: тумблер уведомлений скрыт. Раньше «хозяином»
+    // назначалась строка выше — «Кнопка „У меня тильт“» (ревью 16.11.2026).
+    const row = $("update_notify_row");
+    row.style.display = "none";
+    const units = buildIndex(document);
+    applySearch(document, units, "уведомлять о новой версии");
+    expect(row.classList.contains(HIT_CLASS)).toBe(true);
+    expect(document.querySelectorAll(`.${OWNER_CLASS}`)).toHaveLength(0);
+    // А подопция, скрытая вместе с родительской настройкой, хозяина получает.
+    $("role_marker_icons_row").style.display = "none";
+    applySearch(document, units, "использовать иконки");
+    expect(rowOf("role_marker_enabled").classList.contains(OWNER_CLASS)).toBe(true);
+  });
+
+  test("первая вкладка с находками помечена — её заголовок без верхнего отступа", () => {
+    const units = buildIndex(document);
+    applySearch(document, units, "твич");
+    const marked = Array.from(document.querySelectorAll<HTMLElement>(`.${FIRST_PANEL_CLASS}`));
+    expect(marked.map((p) => p.dataset.panel)).toEqual(["stream"]);
+    applySearch(document, units, "");
+    expect(document.querySelectorAll(`.${FIRST_PANEL_CLASS}`)).toHaveLength(0);
+  });
+
+  test("классы поиска не совпадают с классами «Поиска игрока»", () => {
+    expect(html).toContain(".search-hit {"); // строки найденных игроков
+    expect([HIT_CLASS, OWNER_CLASS, CONTEXT_CLASS, EMPTY_PANEL_CLASS]).not.toContain("search-hit");
+    expect(html).toContain(`.row:not(.${HIT_CLASS})`);
+  });
+
   test("служебная строка «Скачана версия» в поиск не попадает", () => {
     const units = buildIndex(document);
     expect(units.some((u) => u.el.id === "store_update_ready_row")).toBe(false);
@@ -174,9 +253,24 @@ describe("подключение к попапу", () => {
     const esc2 = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     $("settings_search").dispatchEvent(esc2);
     expect(esc2.defaultPrevented).toBe(false);
+    // Фокус ушёл на тумблер в результатах — Esc всё равно чистит поиск.
+    type("очередь");
+    const esc3 = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    $("queue_peek_enabled").dispatchEvent(esc3);
+    expect(esc3.defaultPrevented).toBe(true);
+    expect($<HTMLInputElement>("settings_search").value).toBe("");
     type("роль");
     handle.clear();
     expect(document.body.classList.contains(SEARCHING_CLASS)).toBe(false);
+  });
+
+  test("индекс свежий: переназначенная клавиша ищется по новой подписи", () => {
+    installSettingsSearch(document, { activateTab: vi.fn() });
+    $("pause_hotkey_capture").textContent = "F7";
+    type("f7");
+    expect(rowOf("pause_hotkey_capture").classList.contains(HIT_CLASS)).toBe(true);
+    type("f8");
+    expect(rowOf("pause_hotkey_capture").classList.contains(HIT_CLASS)).toBe(false);
   });
 
   test("заголовок вкладки в результатах: подпись с вкладки, клик открывает её и чистит поиск", () => {

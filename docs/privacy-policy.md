@@ -77,4 +77,4 @@ _Обновлено: 29 июля 2026_
 ## Контакты
 
 Вопросы и сообщения об ошибках:
-<https://github.com/fjfalcon/polemicagame_phil_extension/issues>
+<https://github.com/fjfalcon/polemica-notes/issues>

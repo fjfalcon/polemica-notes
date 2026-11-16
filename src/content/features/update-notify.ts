@@ -18,7 +18,7 @@ import { browser, isStoreInstall } from "@core/env";
 import { log } from "@core/log";
 import type { Feature } from "@core/feature";
 
-const REPO = "fjfalcon/polemicagame_phil_extension";
+const REPO = "fjfalcon/polemica-notes";
 const RELEASES_URL = `https://github.com/${REPO}/releases/latest`;
 const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
 /**

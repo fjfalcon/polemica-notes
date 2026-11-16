@@ -65,7 +65,7 @@
 
 ## Установка (готовые сборки)
 
-Скачай архив из [последнего релиза](https://github.com/fjfalcon/polemicagame_phil_extension/releases/latest):
+Скачай архив из [последнего релиза](https://github.com/fjfalcon/polemica-notes/releases/latest):
 
 - **Firefox** — `polemica-notes-firefox-<версия>.xpi`: перетащить файл в окно браузера
   (или `about:addons` → шестерёнка → «Установить дополнение из файла»).

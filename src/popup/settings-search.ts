@@ -17,6 +17,11 @@
  * («Клавиша» — чего?). Поэтому подопция ищется и по подписи родителя, а
  * найденная подопция приводит родителя с собой (search-ctx).
  *
+ * Формы слов. Человек набирает «камера», а в меню «камеры», «камерам» —
+ * у слова запроса срезается окончание, и основа ищется в НАЧАЛЕ слов строки
+ * («роль» не находит «пароль»). Длинная основа (от 5 букв) ищется и внутри
+ * слова — чтобы «запись» находила «Автозапись».
+ *
  * Скрытые настройки. Строка может подходить под запрос, но лежать в блоке,
  * который сейчас скрыт родительским тумблером (сцены OBS при выключенной
  * интеграции). Тогда показываем «хозяина» блока — строку перед ним, которая
@@ -32,10 +37,13 @@ const CHILD_CLASS = "child";
 /** Строка с захватом клавиши находится и по словам, которых в подписи нет. */
 const HOTKEY_WORDS = "клавиша хоткей горячая кнопка";
 
-export const HIT_CLASS = "search-hit";
-export const OWNER_CLASS = "search-owner";
-export const CONTEXT_CLASS = "search-ctx";
-export const EMPTY_PANEL_CLASS = "search-empty";
+// Префикс settings-: класс search-hit уже занят строками «Поиска игрока».
+export const HIT_CLASS = "settings-hit";
+export const OWNER_CLASS = "settings-owner";
+export const CONTEXT_CLASS = "settings-ctx";
+export const EMPTY_PANEL_CLASS = "settings-empty";
+/** Первая вкладка с находками — её заголовок без верхнего отступа. */
+export const FIRST_PANEL_CLASS = "settings-first";
 export const SEARCHING_CLASS = "searching";
 export const TITLE_CLASS = "search-title";
 
@@ -46,6 +54,34 @@ export function normalize(text: string): string {
     .replace(/ё/g, "е")
     .replace(/[^a-zа-я0-9+#]+/g, " ")
     .trim();
+}
+
+/** Окончания, которые срезаются у слова запроса (длинные — раньше коротких). */
+const ENDINGS = [
+  "иями", "ями", "ами", "иях", "ией", "ого", "его", "ому", "ему", "ыми", "ими",
+  "ые", "ие", "ий", "ый", "ой", "ая", "яя", "ое", "ее", "ую", "юю", "ов", "ев", "ей",
+  "ам", "ям", "ах", "ях", "ом", "ем", "ью", "ия", "ию", "ии",
+  "а", "я", "ы", "и", "у", "ю", "е", "о", "ь", "й",
+];
+/** Короче этого основу не делаем: «ник» остаётся «ник». */
+const STEM_MIN = 3;
+/** С этой длины основа ищется и внутри слова («запис» в «автозапись»). */
+const INFIX_MIN = 5;
+
+/** Основа русского слова запроса; латиница и цифры — как есть. */
+export function stem(word: string): string {
+  if (!/[а-я]/.test(word)) return word;
+  for (const end of ENDINGS) {
+    if (word.endsWith(end) && word.length - end.length >= STEM_MIN) return word.slice(0, -end.length);
+  }
+  return word;
+}
+
+/** Подходит ли строка под слово запроса (haystack и word — после normalize). */
+export function matchesWord(haystack: string, word: string): boolean {
+  const s = stem(word);
+  if (` ${haystack}`.includes(` ${s}`)) return true;
+  return s.length >= INFIX_MIN && haystack.includes(s);
 }
 
 /** Подпись строки без подсказки: первый span (или label поля) минус .hint. */
@@ -97,8 +133,14 @@ function hiddenRoot(el: HTMLElement, panel: HTMLElement): HTMLElement | null {
   return found;
 }
 
-/** Строка, которая включает скрытый блок: ближайшая .row перед ним. */
+/**
+ * Строка, которая открывает скрытое: ближайшая .row перед ним. Только для
+ * блоков настроек и подопций — у них «хозяин» есть по построению меню.
+ * Самостоятельная строка, скрытая целиком (тумблер уведомлений у версии из
+ * магазина), просто недоступна: строка над ней к ней отношения не имеет.
+ */
 function ownerOf(hidden: HTMLElement): HTMLElement | null {
+  if (hidden.matches(".row") && !hidden.classList.contains(CHILD_CLASS)) return null;
   for (let node = hidden.previousElementSibling; node; node = node.previousElementSibling) {
     if (node instanceof HTMLElement && node.matches(".row")) {
       return node.style.display === "none" ? null : node;
@@ -127,7 +169,7 @@ export function applySearch(root: Document, units: Unit[], query: string): numbe
   };
 
   for (const unit of units) {
-    const hit = searching && words.every((w) => unit.haystack.includes(w));
+    const hit = searching && words.every((w) => matchesWord(unit.haystack, w));
     unit.el.classList.toggle(HIT_CLASS, hit);
     if (!hit) continue;
     const hidden = hiddenRoot(unit.el, unit.panel);
@@ -151,8 +193,12 @@ export function applySearch(root: Document, units: Unit[], query: string): numbe
     if ((isOwner && !isHit) || isContext) count(unit.panel);
   }
 
+  let first = true;
   for (const panel of new Set(units.map((u) => u.panel))) {
-    panel.classList.toggle(EMPTY_PANEL_CLASS, searching && !shownByPanel.has(panel));
+    const has = shownByPanel.has(panel);
+    panel.classList.toggle(EMPTY_PANEL_CLASS, searching && !has);
+    panel.classList.toggle(FIRST_PANEL_CLASS, searching && has && first);
+    if (has) first = false;
   }
   return shown;
 }
@@ -192,26 +238,33 @@ export function installSettingsSearch(doc: Document, opts: SettingsSearchOptions
     panel.prepend(title);
   }
 
-  const units = buildIndex(doc);
+  let units = buildIndex(doc);
   const run = (): void => {
+    // Индекс пересобираем на каждый запрос: подписи клавиш меняются
+    // (переназначили паузу на F7 — искать надо «f7», а не прежнее «f8»).
+    if (normalize(input.value)) units = buildIndex(doc);
     const shown = applySearch(doc, units, input.value);
     if (empty) empty.hidden = !(normalize(input.value) && shown === 0);
   };
   function clear(): void {
     if (!input) return;
-    if (input.value) input.value = "";
+    const was = input.value !== "";
+    if (was) input.value = "";
     run();
+    if (was && scroller) scroller.scrollTop = 0;
   }
 
   input.addEventListener("input", () => {
     run();
     if (scroller) scroller.scrollTop = 0;
   });
-  input.addEventListener("keydown", (e) => {
-    // Esc с текстом — очистить поиск, а не закрыть попап.
+  // Esc с текстом — очистить поиск, а не закрыть попап. На документе, а не
+  // на поле: после клика по тумблеру в результатах фокус уже не в строке.
+  doc.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && input.value) {
       e.preventDefault();
       clear();
+      input.focus({ preventScroll: true });
     }
   });
   // Тумблер в результатах мог раскрыть или скрыть блок настроек (OBS,

@@ -431,7 +431,11 @@ document.addEventListener("DOMContentLoaded", () => {
   // — обещание впустую: убираем его и объясняем, почему.
   if (isStoreInstall()) {
     const row = $("update_notify_row");
-    if (row) row.style.display = "none";
+    if (row) {
+      row.style.display = "none";
+      // И из поиска по настройкам: строки нет — находить нечего.
+      row.dataset.search = "off";
+    }
     const note = $("store_update_note");
     if (note) note.style.display = "";
   }
@@ -521,7 +525,7 @@ document.addEventListener("DOMContentLoaded", () => {
         let releaseUrl = "";
         try {
           const res = await fetch(
-            "https://api.github.com/repos/fjfalcon/polemicagame_phil_extension/releases/latest",
+            "https://api.github.com/repos/fjfalcon/polemica-notes/releases/latest",
             { headers: { Accept: "application/vnd.github+json" } },
           );
           if (!res.ok) throw new Error(`GitHub ${res.status}`);
@@ -571,7 +575,7 @@ document.addEventListener("DOMContentLoaded", () => {
           }
         } else if (newer) {
           showPopupToast(`Доступна версия ${latest} (у вас ${current}) — открываю страницу релиза`);
-          void browser.tabs.create({ url: releaseUrl || `https://github.com/fjfalcon/polemicagame_phil_extension/releases/latest` });
+          void browser.tabs.create({ url: releaseUrl || `https://github.com/fjfalcon/polemica-notes/releases/latest` });
         } else {
           showPopupToast(`У вас последняя версия (${current})`);
         }
@@ -1441,6 +1445,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // (арх-аудит швов 29.08.2026, SEAM-07). Новый захват снимает прежний
   // и возвращает его кнопке прежнюю подпись.
   let cancelKeyCapture: (() => void) | null = null;
+  // Ждущий захват клавиши («Нажми клавишу…») забрал бы первую же букву
+  // запроса в хоткей — курсор в строке поиска его отменяет. Подписка здесь,
+  // а не при установке поиска: тот ставит фокус сразу, до этой переменной.
+  $("settings_search")?.addEventListener("focus", () => cancelKeyCapture?.());
   /** Таймер возврата подписи после отказа: гасится новым захватом (F-3). */
   let captureLabelTimer: ReturnType<typeof setTimeout> | null = null;
   // Все текущие назначения — для отказа в дубле: роутер клавиш держит ОДИН

@@ -268,6 +268,8 @@ describe("раскладка настроек по вкладкам (перек�
       "match_stats_view",
     ],
     roles: ["enable_role_faker", "auto_hide_roles_enabled", "hotkey_role_peek", "role_marker_enabled"],
+    stream: ["obs_enabled", "obs_auto_record_enabled", "obs_clip_enabled", "mic_sync_enabled", "twitch_chat_enabled"],
+    misc: ["tilt_mode_enabled", "update_check_enabled", "export_notes", "debug_logging_enabled", "ws_full_log_enabled"],
   };
 
   test("каждая настройка лежит в своей вкладке", () => {
@@ -294,6 +296,20 @@ describe("раскладка настроек по вкладкам (перек�
       role_marker_enabled: ["role_marker_icons_enabled"],
       match_page_stats_enabled: ["match_stats_view"],
       tilt_mode_enabled: ["tilt_button_enabled"],
+      outcry_hotkey_enabled: ["outcry_hotkey_code"],
+      finish_speech_hotkey_enabled: ["finish_speech_hotkey_code"],
+      player_action_keys_enabled: [
+        "player_action_nominate",
+        "player_action_key_1",
+        "player_action_numpad",
+        "player_action_guess",
+        "guess_key_maf",
+      ],
+      stats_button_theme: ["stats_button_color_hex"],
+      enable_role_faker: ["hotkey_role_fake", "hotkey_role_reset"],
+      own_avatar_source: ["own_avatar_pick"],
+      obs_clip_enabled: ["obs_clip_minutes", "obs_clip_hotkey_code"],
+      twitch_floating_panel_enabled: ["twitch_chat_everywhere"],
     };
     const rowOf = (id: string) => d.getElementById(id)?.closest(".row") as HTMLElement;
     for (const [parentId, kids] of Object.entries(FAMILIES)) {
@@ -321,6 +337,25 @@ describe("раскладка настроек по вкладкам (перек�
       const before = rows.slice(0, rows.indexOf(kid));
       expect(before.some((r) => !r.classList.contains("child")), `у подопции ${kid.querySelector("[id]")?.id} нет родителя`).toBe(true);
     }
+  });
+
+  test("каждый id, к которому обращается код попапа, есть в разметке", () => {
+    // Кнопки («Экспорт», «Подключиться») — не настройки, и код их ищет через
+    // null-safe $(): потерянная при перекладке кнопка молча перестала бы
+    // работать, а тесты настроек этого не видят (ревью 16.11.2026).
+    const d = doc();
+    const dir = path.join(ROOT, "src/popup");
+    const sources = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".ts"))
+      .map((f) => fs.readFileSync(path.join(dir, f), "utf8"))
+      .join("\n");
+    const ids = new Set(
+      [...sources.matchAll(/(?:\$(?:<[^>]+>)?|getElementById)\(\s*"([A-Za-z0-9_]+)"\s*\)/g)].map((m) => m[1]),
+    );
+    expect(ids.size).toBeGreaterThan(80);
+    const missing = [...ids].filter((id) => !d.getElementById(id));
+    expect(missing, `код ищет, а в popup.html нет: ${missing.join(", ")}`).toEqual([]);
   });
 
   test("вкладки «Матч» больше нет, а запомненный выбор уводит в «Стату»", () => {
