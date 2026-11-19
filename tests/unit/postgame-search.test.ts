@@ -199,6 +199,15 @@ beforeEach(() => {
   vi.useFakeTimers();
   // Не с нуля: бэкофф сравнивает Date.now() с нулевой отметкой.
   vi.setSystemTime(new Date(1_800_000_000_000));
+  // Кнопка «В поиск» приводит с собой панель очередей, а та сама зовёт fetch.
+  // Без заглушки каждый показ кнопки уходил запросом на ЖИВОЙ сайт (12 за
+  // прогон), и ответы, прилетавшие во время чужих тестов, оставляли таймеры
+  // сетевого стека на их фейковых часах — отсюда «плавающее» падение проверки
+  // «после disable таймеров нет» (19.11.2026, см. tests/setup/no-network.ts).
+  // Блоки, которым важен ответ, ставят свою заглушку поверх.
+  vi.stubGlobal("fetch", vi.fn(async () => ({
+    ok: true, json: async () => ({ queues: { standard: { players: 1 } } }),
+  })));
 });
 
 let realJamReload: () => void;
@@ -213,6 +222,7 @@ afterEach(() => {
   postgameSearchFeature.disable();
   domSubscriber = null;
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("комната: условия показа кнопки", () => {

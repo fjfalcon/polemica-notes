@@ -13,6 +13,8 @@ export default defineConfig({
   test: {
     include: ["tests/unit/**/*.test.ts", "tests/invariants/**/*.test.ts"],
     environment: "node",
+    // Незаглушённый fetch не уходит в сеть и валит тест (см. шапку файла).
+    setupFiles: ["tests/setup/no-network.ts"],
     clearMocks: true,
     restoreMocks: true,
     testTimeout: 8_000,
