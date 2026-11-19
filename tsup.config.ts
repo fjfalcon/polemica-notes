@@ -30,6 +30,11 @@ export default defineConfig({
     "player-volume-page": "src/content/page/player-volume-page.ts",
     "search-counts-page": "src/content/page/search-counts-page.ts",
     "room-probe-inject": "src/content/page/room-probe-inject.ts",
+    // «Брать только выбранный микрофон»: обёртка getUserMedia в мире страницы
+    // и её ранний инжектор (content.js на document_end к первому запросу
+    // микрофона может не успеть).
+    "mic-pin-page": "src/content/page/mic-pin-page.ts",
+    "mic-pin-inject": "src/content/page/mic-pin-inject.ts",
     // Ранний флаг «Скрыть рейтинг» (content-скрипт на document_start): бандл
     // сайта рисует MMR раньше, чем грузится content.js.
     "rating-flag-early": "src/content/page/rating-flag-early.ts",

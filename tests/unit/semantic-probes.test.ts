@@ -15,6 +15,7 @@ import {
   ruPpkProbes,
   roomPlayerActionProbes,
   roomPlayerVolumeProbes,
+  roomMicPinProbes,
   roomBestMoveProbes,
   ruBestMoveProbes,
   enBestMoveProbes,
@@ -49,6 +50,7 @@ const RU_PPK = snip("ru-ppk.txt");
 const ROOM_PA = snip("room-player-actions.txt");
 const RU_PA = snip("ru-player-actions.txt");
 const ROOM_PV = snip("room-player-volume.txt");
+const ROOM_MIC = snip("room-mic-pin.txt");
 const ROOM_BM = snip("room-best-move.txt");
 const RU_BM = snip("ru-best-move.txt");
 const EN_BM = snip("en-best-move.txt");
@@ -69,6 +71,7 @@ describe("пробы зелёные на реальных фрагментах �
     ["room-main: действия игрока", roomPlayerActionProbes, ROOM_PA],
     ["RU: действия игрока", ruPlayerActionProbes, RU_PA],
     ["room-main: громкость игрока", roomPlayerVolumeProbes, ROOM_PV],
+    ["room-main: микрофон комнаты", roomMicPinProbes, ROOM_MIC],
     ["room-main: конец речи и ЛХ", roomBestMoveProbes, ROOM_BM],
     ["RU: конец речи и ЛХ", ruBestMoveProbes, RU_BM],
     ["EN: конец речи и ЛХ", enBestMoveProbes, EN_BM],
@@ -360,6 +363,17 @@ describe("каждая проба умирает от своего дрифта"
       (t) => t.replace("this.savedVolume=this.currentVolume,", "")],
     ["pv outcryWatcherRestores: сайт не возвращает громкость после выкрика", roomPlayerVolumeProbes, "outcryWatcherRestores", ROOM_PV,
       (t) => t.replace("&&this.updateVolumeIcon(this.savedVolume)}", "}")],
+    // Микрофон комнаты
+    ["mic probeOpensDefaultMic: список устройств без запроса микрофона", roomMicPinProbes, "probeOpensDefaultMic", ROOM_MIC,
+      (t) => t.replace("getUserMedia({audio:!0,video:{width:{ideal:1280}", "getUserMedia({audio:!1,video:{width:{ideal:1280}")],
+    ["mic settingsSaveDeviceId: ключ сохранения переименован", roomMicPinProbes, "settingsSaveDeviceId", ROOM_MIC,
+      (t) => t.replaceAll('localStorage.setItem("audioSourceId"', 'localStorage.setItem("micId"')],
+    ["mic streamReadsSavedId: поток берёт устройство из другого места", roomMicPinProbes, "streamReadsSavedId", ROOM_MIC,
+      (t) => t.replace('this.streamConstraints.audio.deviceId=localStorage.getItem("audioSourceId"),navigator', 'this.streamConstraints.audio.deviceId=this.$store.state.micId,navigator')],
+    ["mic entryMatchesSavedId: вход сверяет не deviceId", roomMicPinProbes, "entryMatchesSavedId", ROOM_MIC,
+      (t) => t.replace("i.audio[s].deviceId===a)", "i.audio[s].label===a)")],
+    ["mic noCachedReference: сайт сохранил ссылку на getUserMedia", roomMicPinProbes, "noCachedReference", ROOM_MIC,
+      (t) => `${t}var gum=navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);`],
     // Конец речи и ЛХ
     ["bm skipIsFinishSpeech: подпись skip сменилась", roomBestMoveProbes, "skipIsFinishSpeech", ROOM_BM,
       (t) => t.replace('case"skip":return{label:e.$root.Loc.speech_player_finish', 'case"skip":return{label:e.$root.Loc.end_speech')],

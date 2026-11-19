@@ -17,6 +17,7 @@ import { setupDiagnostics } from "./diag";
 import { startOrphanWatch, stopOrphanWatch } from "./orphan-watch";
 import { LEGACY_PROBE_FLAG_KEY, REQUEUE_FLAG_KEY, WS_LOG_FLAG_KEY } from "./page/room-probe-inject";
 import { getOwnUserId } from "@core/own-user";
+import { setupMicPin } from "./mic-pin";
 
 import { searchFeature } from "./features/search";
 import { autoStartFeature } from "./features/auto-start";
@@ -258,6 +259,8 @@ void getSetting("ws_full_log_enabled")
 void getSetting("requeue_after_lobby_fail_enabled")
   .catch(() => false)
   .then((on) => mirrorProbeFlag(REQUEUE_FLAG_KEY, on === true));
+// «Брать только выбранный микрофон»: зеркало для раннего инжектора и отчёт в лог.
+setupMicPin();
 onSettingsChanged((patch) => {
   if ("ws_full_log_enabled" in patch) mirrorProbeFlag(WS_LOG_FLAG_KEY, patch.ws_full_log_enabled === true);
   if ("requeue_after_lobby_fail_enabled" in patch) {

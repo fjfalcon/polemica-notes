@@ -76,6 +76,11 @@ export interface Settings {
   player_mute_enabled: boolean;
   /** Громкость игрока с ползунка сайта запоминается и возвращается в следующих играх. */
   player_volume_memory_enabled: boolean;
+  /**
+   * Запрос микрофона «по умолчанию» в комнате перенаправляется на микрофон,
+   * выбранный в настройках устройств сайта (Bluetooth-наушники остаются в A2DP).
+   */
+  mic_pin_enabled: boolean;
   /** Цветные ники игроков (цвет задаётся в заметке; палитра — как у рамок). */
   nick_colors_enabled: boolean;
   /**

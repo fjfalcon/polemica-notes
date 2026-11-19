@@ -812,6 +812,35 @@ export const ruPlayerActionProbes: Record<string, Probe> = {
 };
 
 /**
+ * «Брать только выбранный микрофон» (mic-pin, 19.11.2026). Обёртка
+ * getUserMedia опирается на три факта о комнате и на одно отсутствие:
+ * уедет любой из них — опция молча перестанет работать (или начнёт звать
+ * игрока выбрать микрофон, который он уже выбрал).
+ */
+export const roomMicPinProbes: Record<string, Probe> = {
+  probeOpensDefaultMic: re(
+    /getAvailableSources=function\([\w$]+,[\w$]+\)\{navigator\.mediaDevices\.getUserMedia\(\{audio:!0,video:\{/,
+    "список устройств комната получает запросом микрофона БЕЗ устройства (его и перенаправляем)",
+  ),
+  settingsSaveDeviceId: re(
+    /localStorage\.setItem\("audioSourceId",[\w$]+\.deviceId\)/,
+    "окно настроек устройств сохраняет deviceId микрофона в localStorage.audioSourceId",
+  ),
+  streamReadsSavedId: re(
+    /this\.streamConstraints\.audio\.deviceId=localStorage\.getItem\("audioSourceId"\),navigator\.mediaDevices\.getUserMedia\(this\.streamConstraints\)/,
+    "поток игрока запрашивается с сохранённым audioSourceId",
+  ),
+  entryMatchesSavedId: re(
+    /[\w$]+=localStorage\.getItem\("audioSourceId"\)[\s\S]{0,700}\.audio\[[\w$]+\]\.deviceId===[\w$]+\)/,
+    "вход в комнату ищет сохранённый audioSourceId в списке устройств по deviceId",
+  ),
+  noCachedReference: (text) => ({
+    ok: !/=navigator\.mediaDevices\.getUserMedia[^(]|getUserMedia\.bind\(/.test(text),
+    detail: "комната не сохраняет ссылку на getUserMedia заранее — обёртка, вставшая позже бандла, работает",
+  }),
+};
+
+/**
  * Громкость игрока (player-volume-memory, 09.11.2026). Page-скрипт зовёт у
  * компонента плитки метод сайта updateVolumeIcon(v) — тот же, что ползунок
  * меню; content запоминает отпущенный ползунок по id из ссылки «Профиль».

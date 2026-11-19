@@ -27,7 +27,8 @@
         "media-probe-page.js",
         "direct-requeue-page.js",
         "player-volume-page.js",
-        "search-counts-page.js"
+        "search-counts-page.js",
+        "mic-pin-page.js"
       ],
       "matches": [
         "https://*.polemicagame.com/*"
@@ -40,7 +41,8 @@
         "https://*.polemicagame.com/game*"
       ],
       "js": [
-        "room-probe-inject.js"
+        "room-probe-inject.js",
+        "mic-pin-inject.js"
       ],
       "run_at": "document_start"
     },

@@ -72,6 +72,9 @@ export const DEFAULT_SETTINGS: Settings = {
   player_mute_enabled: true,
   // Сайт сбрасывает громкость игрока с каждой игрой (просьба владельца 09.11.2026).
   player_volume_memory_enabled: true,
+  // Bluetooth-наушники: не открывать системный микрофон (просьба владельца
+  // 19.11.2026). Выключено по умолчанию — подмена getUserMedia только по желанию.
+  mic_pin_enabled: false,
   nick_colors_enabled: true,
   nick_aliases_enabled: true,
   nick_aliases_on_stream: true,

@@ -233,6 +233,7 @@ describe("раскладка настроек по вкладкам (перек�
       "camera_rotate_enabled",
       "player_mute_enabled",
       "player_volume_memory_enabled",
+      "mic_pin_enabled",
     ],
     icons: [
       "stats_button_theme",
