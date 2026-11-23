@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Стенд микрофона — Polemica Notes</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 20px; background: #10131c; color: #e6e9f0; font: 14px/1.45 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 22px 0 8px; color: #9fb0d0; text-transform: uppercase; letter-spacing: .04em; }
+  p { margin: 6px 0; color: #b6bfd3; max-width: 900px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; max-width: 1100px; }
+  .card { background: #1a1f2e; border: 1px solid #2a3147; border-radius: 10px; padding: 12px; }
+  .card b { display: block; margin-bottom: 4px; }
+  .card small { color: #94a0ba; display: block; margin-bottom: 8px; }
+  button { background: #3b5bdb; color: #fff; border: 0; border-radius: 7px; padding: 7px 12px; font: inherit; cursor: pointer; margin: 2px 4px 2px 0; }
+  button.ghost { background: #2a3147; }
+  button.stop { background: #c2255c; }
+  button:disabled { opacity: .45; cursor: default; }
+  select { background: #1a1f2e; color: inherit; border: 1px solid #2a3147; border-radius: 7px; padding: 6px; font: inherit; max-width: 100%; }
+  label { display: block; margin: 6px 0; }
+  .row { display: flex; gap: 14px; flex-wrap: wrap; align-items: end; }
+  #captures { display: grid; gap: 8px; max-width: 1100px; }
+  .cap { background: #151a27; border: 1px solid #2a3147; border-radius: 10px; padding: 10px; }
+  .cap .name { font-weight: 600; }
+  .meter { height: 12px; background: #0b0e16; border-radius: 6px; overflow: hidden; margin: 6px 0; }
+  .meter i { display: block; height: 100%; width: 0; background: #37b24d; transition: width .08s linear; }
+  .tags span { display: inline-block; background: #232a3d; border-radius: 5px; padding: 1px 6px; margin: 2px 4px 2px 0; font-size: 12px; }
+  .tags span.bad { background: #5c1f33; }
+  .tags span.ok { background: #1f4d2c; }
+  #log { background: #0b0e16; border: 1px solid #2a3147; border-radius: 10px; padding: 10px; max-width: 1100px; height: 260px; overflow: auto; font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+  .note { background: #2b2412; border: 1px solid #5c4a17; border-radius: 10px; padding: 10px; max-width: 1080px; color: #e9d9a6; }
+  code { background: #232a3d; border-radius: 4px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<h1>Стенд микрофона</h1>
+<p>Страница ничего никуда не отправляет: всё происходит в этой вкладке. Она повторяет то, что делает игра
+(и то, что могло бы делать расширение), чтобы понять, какой способ в Firefox на Mac даёт одновременно
+хороший звук в Bluetooth-наушниках и работающий микрофон компьютера.</p>
+<div class="note" id="fakeNote" hidden>Демо-режим: вместо настоящего микрофона — тон. Для проверки стенда, не для выводов.</div>
+
+<h2>1. Устройства</h2>
+<div class="row">
+  <button id="grant">Разрешить микрофон и показать устройства</button>
+  <label>Микрофон компьютера<br><select id="mic"></select></label>
+  <label>Микрофон наушников (для опыта Е)<br><select id="headsetMic"></select></label>
+  <label>Выход звука<br><select id="out"></select></label>
+</div>
+<p id="devInfo"></p>
+
+<h2>2. Опыты</h2>
+<p>Перед каждым опытом нажмите «Остановить всё» и <b>подождите 15 секунд</b>: Firefox держит системную
+обработку голоса ещё 10 секунд после захвата, и она портит следующий опыт. В каждом опыте смотрите на три
+вещи: <b>звук в наушниках</b> (хороший или «телефонный»), <b>значок микрофона в трее</b> (горит ровно,
+мигает, нет), <b>полоску уровня</b> здесь (двигается от голоса или нет).</p>
+<div class="note"><b>Два главных опыта.</b><br>
+<b>Первый — «без обработки».</b> Настройки Firefox в about:config — по умолчанию. Включите музыку в другом
+приложении, запустите опыт <b>В</b>, затем <b>Ж</b>. Ожидание: музыка остаётся хорошей, значок горит ровно,
+вы слышите себя.<br>
+<b>Второй — «раздельный выход».</b> В macOS (Настройки → Звук) поставьте выход «Динамики MacBook» и вход
+«Микрофон MacBook». Здесь в списке «Выход звука» выберите наушники. Запустите опыт <b>А</b>, затем <b>Ж</b> и
+<b>З</b>. Ожидание: себя и тон слышно в наушниках в хорошем качестве.</div>
+<div class="grid">
+  <div class="card"><b>А. Обычный захват</b><small>Как делает игра: выбранный микрофон, обработка по умолчанию.</small>
+    <button data-run="A">Запустить А</button></div>
+  <div class="card"><b>Б. Без эхоподавления</b><small>То же, но <code>echoCancellation: false</code>. Шумоподавление и автоусиление остаются.</small>
+    <button data-run="B">Запустить Б</button></div>
+  <div class="card"><b>В. Без обработки вовсе</b><small>Эхоподавление, шумоподавление и автоусиление выключены.</small>
+    <button data-run="C">Запустить В</button></div>
+  <div class="card"><b>Г. Глушить и включать, как игра</b><small>Запустите А, Б или В, затем эту кнопку: дорожка выключается и включается каждые 3 с — так игра глушит вас вне вашей речи.</small>
+    <button data-run="D" class="ghost">Начать / остановить</button></div>
+  <div class="card"><b>Д. Микрофон не отпускать</b><small>Настоящая дорожка всегда включена, глушится только её копия. Запустите А, Б или В, затем эту кнопку.</small>
+    <button data-run="E" class="ghost">Начать / остановить</button></div>
+  <div class="card"><b>Е. Сначала микрофон наушников</b><small>Как сайт без опции: сначала открывается микрофон наушников, потом выбранный.</small>
+    <button data-run="F">Запустить Е</button></div>
+  <div class="card"><b>И. Два захвата одного микрофона</b><small>Как игра с опцией расширения: сайт открывает выбранный микрофон «для списка устройств» и не закрывает, потом открывает его же для игры. Сравните с опытом А, где захват один.</small>
+    <button data-run="J">Запустить И</button>
+    <button data-run="K" class="ghost">Закрыть первый захват</button></div>
+  <div class="card"><b>К. Копия с усилением</b><small>Для опыта В: если без обработки вас слышно тихо, расширение могло бы усиливать голос само. Создаёт усиленную копию активного захвата; «Слышать себя» после этого берёт её.</small>
+    <button data-run="L" class="ghost">Создать усиленную копию</button></div>
+  <div class="card"><b>Ж. Слышать себя</b><small>Ваш голос через WebRTC — в выбранный «Выход звука». Слышите себя с задержкой — значит, другие слышали бы тоже. Нужен активный захват.</small>
+    <button data-run="G" class="ghost">Включить / выключить</button></div>
+  <div class="card"><b>З. Звук в выбранный выход</b><small>Тон 2 с в устройство из списка «Выход звука» — так игра выводит голоса игроков. Работает и без микрофона.</small>
+    <button data-run="H" class="ghost">Тон в выбранный выход</button>
+    <button data-run="I" class="ghost">Тон в системный выход</button></div>
+</div>
+<p><button id="stopAll" class="stop">Остановить всё</button> <button id="copy" class="ghost">Скопировать отчёт</button></p>
+
+<h2>3. Что сейчас захвачено</h2>
+<div id="captures"><p>Пока ничего.</p></div>
+
+<h2>4. Журнал</h2>
+<div id="log"></div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const FAKE = new URLSearchParams(location.search).has("fake");
+const t0 = performance.now();
+const lines = [];
+function log(msg) {
+  const line = `${((performance.now() - t0) / 1000).toFixed(1).padStart(6)} с  ${msg}`;
+  lines.push(line);
+  const el = $("log");
+  el.textContent += line + "\n";
+  el.scrollTop = el.scrollHeight;
+}
+log(`Браузер: ${navigator.userAgent}`);
+if (FAKE) $("fakeNote").hidden = false;
+
+/** Один AudioContext на страницу — как у комнаты игры. */
+let ctx = null;
+function audioCtx() {
+  if (!ctx) {
+    ctx = new AudioContext();
+    log(`AudioContext создан: ${ctx.sampleRate} Гц, состояние ${ctx.state}`);
+  }
+  if (ctx.state === "suspended") void ctx.resume();
+  return ctx;
+}
+
+/** Захват: настоящий getUserMedia либо тон (демо-режим). */
+async function capture(constraints, name) {
+  log(`${name}: запрос ${JSON.stringify(constraints)}`);
+  const started = performance.now();
+  let stream;
+  if (FAKE) {
+    const c = audioCtx();
+    const osc = c.createOscillator();
+    const dest = c.createMediaStreamDestination();
+    osc.frequency.value = 220 + Math.random() * 200;
+    osc.connect(dest);
+    osc.start();
+    stream = dest.stream;
+  } else {
+    stream = await navigator.mediaDevices.getUserMedia(constraints);
+  }
+  const track = stream.getAudioTracks()[0];
+  log(`${name}: получено за ${Math.round(performance.now() - started)} мс — «${track.label}»`);
+  addCapture(name, stream);
+  return stream;
+}
+
+const captures = [];
+function addCapture(name, stream, opts = {}) {
+  const track = stream.getAudioTracks()[0];
+  const c = audioCtx();
+  const analyser = c.createAnalyser();
+  analyser.fftSize = 1024;
+  const source = c.createMediaStreamSource(stream);
+  source.connect(analyser);
+  const cap = { name, stream, track, analyser, source, buf: new Float32Array(1024), level: 0, heardAt: 0, enabledAt: performance.now(), derived: !!opts.derived };
+  for (const ev of ["ended", "mute", "unmute"]) {
+    track.addEventListener(ev, () => log(`${name}: событие дорожки «${ev}»`));
+  }
+  captures.push(cap);
+  renderCaptures();
+  return cap;
+}
+
+function rms(cap) {
+  cap.analyser.getFloatTimeDomainData(cap.buf);
+  let sum = 0;
+  for (const v of cap.buf) sum += v * v;
+  return Math.sqrt(sum / cap.buf.length);
+}
+
+function renderCaptures() {
+  const root = $("captures");
+  root.textContent = "";
+  if (!captures.length) {
+    root.innerHTML = "<p>Пока ничего.</p>";
+    return;
+  }
+  for (const cap of captures) {
+    const div = document.createElement("div");
+    div.className = "cap";
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = `${cap.name} — ${cap.track.label || "без названия"}`;
+    const meter = document.createElement("div");
+    meter.className = "meter";
+    cap.bar = document.createElement("i");
+    meter.append(cap.bar);
+    cap.tags = document.createElement("div");
+    cap.tags.className = "tags";
+    div.append(name, meter, cap.tags);
+    root.append(div);
+  }
+}
+
+function tag(text, cls) {
+  const s = document.createElement("span");
+  s.textContent = text;
+  if (cls) s.className = cls;
+  return s;
+}
+
+setInterval(() => {
+  for (const cap of captures) {
+    if (!cap.bar) continue;
+    const level = rms(cap);
+    cap.level = level;
+    cap.bar.style.width = `${Math.min(100, Math.round(level * 400))}%`;
+    // Первый звук после включения дорожки: сколько ждали.
+    if (level > 0.003 && !cap.heardAt && cap.track.enabled) {
+      cap.heardAt = performance.now();
+      log(`${cap.name}: звук пошёл через ${Math.round(cap.heardAt - cap.enabledAt)} мс после включения`);
+    }
+    const s = cap.track.getSettings ? cap.track.getSettings() : {};
+    cap.tags.textContent = "";
+    cap.tags.append(
+      tag(cap.track.readyState === "live" ? "жива" : "завершена", cap.track.readyState === "live" ? "ok" : "bad"),
+      tag(cap.track.enabled ? "включена" : "заглушена сайтом"),
+      tag(cap.track.muted ? "браузер не даёт звук" : "звук идёт от браузера", cap.track.muted ? "bad" : "ok"),
+      tag(level > 0.003 ? "есть сигнал" : "тишина", level > 0.003 ? "ok" : ""),
+    );
+    if (!cap.derived) {
+      cap.tags.append(
+        tag(`${s.sampleRate ?? "?"} Гц`),
+        tag(`каналов ${s.channelCount ?? "?"}`),
+        tag(`эхо ${s.echoCancellation ?? "?"}`),
+        tag(`шум ${s.noiseSuppression ?? "?"}`),
+        tag(`усиление ${s.autoGainControl ?? "?"}`),
+      );
+    }
+  }
+}, 100);
+
+/** Раз в 2 с — строка в журнал: по ней видно, жил ли сигнал во время опыта. */
+setInterval(() => {
+  if (!captures.length) return;
+  log(captures.map((c) => `${c.name}: ${c.track.readyState === "live" ? (c.track.enabled ? "вкл" : "выкл") : "заверш"}${c.track.muted ? "/немая" : ""} ур.${c.level.toFixed(3)}`).join(" | "));
+}, 2000);
+
+function micId() { return $("mic").value; }
+function audioFor(extra) {
+  const base = micId() ? { deviceId: { exact: micId() } } : {};
+  return { audio: { ...base, ...extra }, video: false };
+}
+
+let toggleTimer = null;
+let proxy = null;
+let boosted = null;
+let monitor = null;
+
+function stopAll() {
+  if (toggleTimer) { clearInterval(toggleTimer); toggleTimer = null; }
+  if (monitor) { stopMonitor(); }
+  for (const cap of captures.splice(0)) {
+    try { cap.source.disconnect(); } catch { /* уже отключён */ }
+    for (const t of cap.stream.getTracks()) t.stop();
+  }
+  proxy = null;
+  boosted = null;
+  renderCaptures();
+  log("Всё остановлено");
+}
+
+/** Первый настоящий (не производный) захват — над ним идут опыты Г, Д, Ж. */
+function mainCapture() {
+  const live = captures.filter((c) => !c.derived && c.track.readyState === "live");
+  // В опытах Е и И игра работает со ВТОРЫМ захватом — берём последний.
+  return live[live.length - 1] || null;
+}
+
+function startToggle(cap, what) {
+  if (toggleTimer) {
+    clearInterval(toggleTimer);
+    toggleTimer = null;
+    cap.track.enabled = true;
+    log(`${what}: переключение остановлено, дорожка включена`);
+    return;
+  }
+  log(`${what}: каждые 3 с выключаю и включаю «${cap.name}»`);
+  toggleTimer = setInterval(() => {
+    cap.track.enabled = !cap.track.enabled;
+    if (cap.track.enabled) { cap.enabledAt = performance.now(); cap.heardAt = 0; }
+    log(`${cap.name}: ${cap.track.enabled ? "ВКЛЮЧЕНА" : "выключена"}`);
+  }, 3000);
+}
+
+async function startMonitor(cap) {
+  // Петля WebRTC внутри страницы: тот же путь, каким голос уходит другим игрокам.
+  const a = new RTCPeerConnection();
+  const b = new RTCPeerConnection();
+  a.onicecandidate = (e) => e.candidate && b.addIceCandidate(e.candidate);
+  b.onicecandidate = (e) => e.candidate && a.addIceCandidate(e.candidate);
+  const audio = new Audio();
+  audio.autoplay = true;
+  b.ontrack = (e) => { audio.srcObject = e.streams[0] || new MediaStream([e.track]); };
+  a.addTrack(cap.track, cap.stream);
+  await a.setLocalDescription(await a.createOffer());
+  await b.setRemoteDescription(a.localDescription);
+  await b.setLocalDescription(await b.createAnswer());
+  await a.setRemoteDescription(b.localDescription);
+  const sink = $("out").value;
+  if (sink && audio.setSinkId) {
+    try { await audio.setSinkId(sink); log("Слышать себя: вывод в выбранный выход"); }
+    catch (e) { log(`Слышать себя: setSinkId не удался — ${e.name}`); }
+  } else log("Слышать себя: вывод в системный выход");
+  await audio.play().catch((e) => log(`Слышать себя: воспроизведение не началось — ${e.name}`));
+  monitor = { a, b, audio };
+  log(`Слышать себя: включено для «${cap.name}»`);
+}
+function stopMonitor() {
+  monitor.audio.pause();
+  monitor.audio.srcObject = null;
+  monitor.a.close();
+  monitor.b.close();
+  monitor = null;
+  log("Слышать себя: выключено");
+}
+
+async function tone(toSink) {
+  const c = audioCtx();
+  const dest = c.createMediaStreamDestination();
+  const osc = c.createOscillator();
+  const gain = c.createGain();
+  gain.gain.value = 0.15;
+  osc.frequency.value = 440;
+  osc.connect(gain).connect(dest);
+  osc.start();
+  const audio = new Audio();
+  audio.srcObject = dest.stream;
+  const sink = toSink ? $("out").value : "";
+  if (toSink) {
+    if (!audio.setSinkId) { log("Тон: setSinkId в этом браузере нет"); }
+    else if (!sink) { log("Тон: выход не выбран — играю в системный"); }
+    else {
+      try { await audio.setSinkId(sink); }
+      catch (e) { log(`Тон: setSinkId не удался — ${e.name}: ${e.message}`); }
+    }
+  }
+  await audio.play().catch((e) => log(`Тон: не заиграл — ${e.name}`));
+  log(`Тон 2 с → ${toSink && sink ? "выбранный выход" : "системный выход"}`);
+  setTimeout(() => { osc.stop(); audio.pause(); audio.srcObject = null; }, 2000);
+}
+
+const runs = {
+  A: () => capture(audioFor({}), "А обычный"),
+  B: () => capture(audioFor({ echoCancellation: false }), "Б без эха"),
+  C: () => capture(audioFor({ echoCancellation: false, noiseSuppression: false, autoGainControl: false }), "В без обработки"),
+  D: async () => {
+    const cap = mainCapture();
+    if (!cap) return log("Г: сначала запустите А, Б или В");
+    startToggle(cap, "Г");
+  },
+  E: async () => {
+    const cap = mainCapture();
+    if (!cap) return log("Д: сначала запустите А, Б или В");
+    if (!proxy) {
+      // Копия через Web Audio: настоящую дорожку не трогаем вовсе.
+      const c = audioCtx();
+      const dest = c.createMediaStreamDestination();
+      c.createMediaStreamSource(cap.stream).connect(dest);
+      proxy = addCapture("Д копия", dest.stream, { derived: true });
+      log("Д: создана копия; настоящая дорожка остаётся включённой");
+    }
+    startToggle(proxy, "Д");
+  },
+  F: async () => {
+    const headset = $("headsetMic").value;
+    if (!headset && !FAKE) return log("Е: выберите микрофон наушников в списке выше");
+    await capture({ audio: headset ? { deviceId: { exact: headset } } : true, video: false }, "Е наушники");
+    await capture(audioFor({}), "Е выбранный");
+  },
+  G: async () => {
+    if (monitor) return stopMonitor();
+    const live = (c) => (c && c.track.readyState === "live" ? c : null);
+    const cap = live(boosted) || live(proxy) || mainCapture();
+    if (!cap) return log("Ж: сначала запустите захват");
+    await startMonitor(cap);
+  },
+  J: async () => {
+    await capture(audioFor({}), "И зонд (не закрыт)");
+    await capture(audioFor({}), "И игровой");
+  },
+  K: async () => {
+    const probe = captures.find((c) => c.name.startsWith("И зонд") && c.track.readyState === "live");
+    if (!probe) return log("И: первый захват уже закрыт или опыт не запущен");
+    probe.track.stop();
+    log("И: первый захват закрыт — остался только игровой");
+  },
+  L: async () => {
+    const cap = mainCapture();
+    if (!cap) return log("К: сначала запустите захват");
+    if (boosted && boosted.track.readyState === "live") return log("К: усиленная копия уже есть");
+    const c = audioCtx();
+    const src = c.createMediaStreamSource(cap.stream);
+    const comp = c.createDynamicsCompressor();
+    comp.threshold.value = -30; comp.knee.value = 20; comp.ratio.value = 6; comp.attack.value = 0.005; comp.release.value = 0.2;
+    const gain = c.createGain();
+    gain.gain.value = 4;
+    const dest = c.createMediaStreamDestination();
+    src.connect(comp).connect(gain).connect(dest);
+    boosted = addCapture("К усиленная копия", dest.stream, { derived: true });
+    log("К: создана усиленная копия (компрессор + усиление ×4)");
+  },
+  H: () => tone(true),
+  I: () => tone(false),
+};
+
+for (const btn of document.querySelectorAll("[data-run]")) {
+  btn.addEventListener("click", async () => {
+    try { await runs[btn.dataset.run](); }
+    catch (e) { log(`Опыт ${btn.dataset.run}: ошибка ${e.name}: ${e.message}`); }
+  });
+}
+$("stopAll").addEventListener("click", stopAll);
+$("copy").addEventListener("click", async () => {
+  const text = lines.join("\n");
+  try { await navigator.clipboard.writeText(text); log("Отчёт скопирован в буфер"); }
+  catch { log("Буфер недоступен — выделите журнал и скопируйте вручную"); }
+});
+
+async function listDevices() {
+  const all = await navigator.mediaDevices.enumerateDevices();
+  const fill = (select, kind, emptyLabel) => {
+    const keep = select.value;
+    select.textContent = "";
+    select.append(new Option(emptyLabel, ""));
+    for (const d of all.filter((x) => x.kind === kind)) select.append(new Option(d.label || `${kind} без названия`, d.deviceId));
+    if ([...select.options].some((o) => o.value === keep)) select.value = keep;
+  };
+  fill($("mic"), "audioinput", "— системный —");
+  fill($("headsetMic"), "audioinput", "— не выбран —");
+  fill($("out"), "audiooutput", "— системный —");
+  const ins = all.filter((d) => d.kind === "audioinput").length;
+  const outs = all.filter((d) => d.kind === "audiooutput").length;
+  $("devInfo").textContent = `Микрофонов: ${ins}, выходов звука: ${outs}.` + (outs === 0 ? " Браузер не показал выходы звука — опыт З в выбранный выход недоступен." : "");
+  log(`Устройства: микрофонов ${ins}, выходов ${outs}`);
+}
+
+$("grant").addEventListener("click", async () => {
+  try {
+    if (!FAKE) {
+      // Разрешение нужно, чтобы браузер показал названия устройств. Просим
+      // БЕЗ обработки: обычный запрос в Firefox на Mac поднимает системную
+      // обработку голоса и держит её ещё 10 с — это исказило бы первый опыт.
+      const s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+      for (const t of s.getTracks()) t.stop();
+      log("Разрешение получено (пробный захват без обработки, сразу остановлен)");
+    }
+    await listDevices();
+  } catch (e) {
+    log(`Разрешение: ошибка ${e.name}: ${e.message}`);
+  }
+});
+for (const id of ["mic", "headsetMic", "out"]) {
+  $(id).addEventListener("change", () => log(`Выбрано «${$(id).selectedOptions[0]?.textContent}» в списке «${id}»`));
+}
+if (navigator.mediaDevices?.addEventListener) {
+  navigator.mediaDevices.addEventListener("devicechange", () => log("Событие браузера: список устройств изменился"));
+}
+</script>
+</body>
+</html>
