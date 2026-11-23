@@ -48,6 +48,7 @@ import {
   formatMicPinState,
   hasConcreteDevice,
   micPinAllowed,
+  needsFirefoxMacMicNote,
   parseMicPinState,
   pinAudioConstraints,
   shouldRetryUnpinned,
@@ -1007,5 +1008,50 @@ describe("content-сторона: зеркало и отчёт", () => {
     expect(block?.run_at).toBe("document_start");
     expect(block?.matches).toEqual(["https://*.polemicagame.com/game*"]);
     expect(manifest.web_accessible_resources.some((r) => r.resources.includes("mic-pin-page.js"))).toBe(true);
+  });
+});
+
+describe("Firefox на macOS: приписка про настройку браузера", () => {
+  const FIREFOX_MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:160.0) Gecko/20100101 Firefox/160.0";
+  const CHROME_MAC =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36";
+  const FIREFOX_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0) Gecko/20100101 Firefox/160.0";
+
+  test("только Firefox и только macOS", () => {
+    expect(needsFirefoxMacMicNote(FIREFOX_MAC, "mac")).toBe(true);
+    // В Chrome системной обработки голоса в цепочке нет — приписка была бы враньём.
+    expect(needsFirefoxMacMicNote(CHROME_MAC, "mac")).toBe(false);
+    expect(needsFirefoxMacMicNote(FIREFOX_WIN, "win")).toBe(false);
+    expect(needsFirefoxMacMicNote(FIREFOX_MAC, "linux")).toBe(false);
+    expect(needsFirefoxMacMicNote("", "mac")).toBe(false);
+  });
+
+  test("в разметке приписка — подопция сразу под тумблером, по умолчанию скрыта и вне поиска", () => {
+    const html = read("src/static/popup.html");
+    const at = html.indexOf('id="mic_pin_enabled"');
+    const rowAt = html.indexOf('id="mic_pin_firefox_row"');
+    expect(rowAt).toBeGreaterThan(at);
+    // Между тумблером и припиской нет других строк настроек.
+    expect(html.slice(at, rowAt).match(/<div class="row/g)).toHaveLength(1);
+    const tag = html.slice(html.lastIndexOf("<div", rowAt), html.indexOf(">", rowAt) + 1);
+    expect(tag).toContain('class="row child"');
+    expect(tag).toContain('style="display:none"');
+    expect(tag).toContain('data-search="off"');
+    // Имя настройки — дословно: по нему её ищут в about:config.
+    expect(html).toContain("media.getusermedia.microphone.prefer_voice_stream_with_processing.enabled");
+  });
+
+  test("попап показывает приписку и возвращает её в поиск только по признаку браузера", () => {
+    const src = read("src/popup/index.ts");
+    const at = src.indexOf("needsFirefoxMacMicNote(navigator.userAgent, info.os)");
+    expect(at).toBeGreaterThan(0);
+    // Сбой API не обрывает инициализацию попапа: вызов стоит внутри цепочки
+    // промиса (иначе синхронное исключение ломало весь попап — поймано
+    // тестом popup-mic-hotkey, где у заглушки getPlatformInfo нет).
+    expect(src).toContain(".then(() => browser.runtime.getPlatformInfo())");
+    const block = src.slice(at, at + 400);
+    expect(block).toContain('$("mic_pin_firefox_row")');
+    expect(block).toContain('row.style.display = ""');
+    expect(block).toContain("delete row.dataset.search");
   });
 });

@@ -182,3 +182,21 @@ export function parseMicPinState(raw: string | null | undefined): MicPinCounts |
     fallback: Number(m[6]),
   };
 }
+
+/**
+ * Нужна ли в попапе приписка про настройку Firefox.
+ *
+ * Firefox на macOS ведёт микрофон через системный блок обработки голоса
+ * (VPIO) в паре с устройством вывода. С Bluetooth-наушниками на выходе и
+ * встроенным микрофоном на входе это ломается: наушники уходят в гарнитурный
+ * режим, а микрофон в игре замолкает (жалобы владельца 20.11 и 23.11.2026).
+ * Без нашей опции это маскирует сам сайт: поток, открытый ради списка
+ * устройств, он не закрывает, тот держит системный микрофон (наушников), и
+ * микрофон игры идёт вторым, уже без VPIO. Опция убирает этот случайный
+ * костыль — значит, обязана сказать про настройку браузера
+ * `media.getusermedia.microphone.prefer_voice_stream_with_processing.enabled`.
+ * Прочитать или поменять её расширение не может.
+ */
+export function needsFirefoxMacMicNote(userAgent: string, os: string): boolean {
+  return /\bFirefox\/\d/.test(userAgent) && os === "mac";
+}

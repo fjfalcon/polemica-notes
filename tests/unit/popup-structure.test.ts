@@ -311,6 +311,7 @@ describe("раскладка настроек по вкладкам (перек�
       own_avatar_source: ["own_avatar_pick"],
       obs_clip_enabled: ["obs_clip_minutes", "obs_clip_hotkey_code"],
       twitch_floating_panel_enabled: ["twitch_chat_everywhere"],
+      mic_pin_enabled: ["mic_pin_firefox_row"],
     };
     const rowOf = (id: string) => d.getElementById(id)?.closest(".row") as HTMLElement;
     for (const [parentId, kids] of Object.entries(FAMILIES)) {
