@@ -24,7 +24,7 @@
  *
  * Никаких импортов из core/*: см. шапку room-probe-inject.ts.
  */
-import { micPinAllowed } from "@shared/mic-pin";
+import { isFirefoxOnMac, micPinAllowed } from "@shared/mic-pin";
 import { isGameRoomPath } from "@shared/routes";
 
 const MARK = "data-pn-mic-pin-inject";
@@ -43,6 +43,10 @@ export function injectMicPin(): void {
   // Манифест матчит `/game*` — это ещё и страница поиска `/game-search`,
   // где микрофон не запрашивают. Обёртка нужна только в комнате.
   if (!isGameRoomPath(location.pathname)) return;
+  // Firefox на macOS: с опцией игрока перестают слышать — не ставим вовсе
+  // (см. isFirefoxOnMac). Проверка здесь, а не только в зеркале: ключ «1»
+  // мог остаться от версии 10.3.0, где этого запрета ещё не было.
+  if (isFirefoxOnMac(navigator.userAgent)) return;
   if (!micPinAllowed(pageStore())) return;
   if (document.querySelector(`script[${MARK}]`)) return;
   const runtime = (globalThis as { browser?: typeof chrome; chrome?: typeof chrome }).browser

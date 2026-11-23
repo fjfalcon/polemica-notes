@@ -22,7 +22,13 @@ import { log } from "@core/log";
 import { getSetting, onSettingsChanged } from "@core/settings";
 import { showToast } from "@core/toast";
 import { isGameRoomPath } from "@shared/routes";
-import { MIC_PIN_FLAG_KEY, MIC_PIN_STATE_ATTR, parseMicPinState, type MicPinCounts } from "@shared/mic-pin";
+import {
+  MIC_PIN_FLAG_KEY,
+  MIC_PIN_STATE_ATTR,
+  isFirefoxOnMac,
+  parseMicPinState,
+  type MicPinCounts,
+} from "@shared/mic-pin";
 
 const SCOPE = "mic-pin";
 /** К этому времени комната уже запросила устройства (вход в игру — секунды). */
@@ -30,8 +36,16 @@ export const REPORT_DELAY_MS = 20_000;
 /** Подсказка — раз на вкладку, а не в каждой игре: sessionStorage страницы. */
 const HINT_SHOWN_KEY = "pn_mic_pin_hint";
 
-export function micPinActive(state: { master?: unknown; option?: unknown }): boolean {
-  return state.master !== false && state.option === true;
+/**
+ * Действует ли опция. В Firefox на macOS — никогда (см. isFirefoxOnMac):
+ * зеркало там не пишется (и убирается, если осталось от 10.3.0), обёртка не
+ * ставится, отчёта и подсказок нет.
+ */
+export function micPinActive(
+  state: { master?: unknown; option?: unknown },
+  userAgent: string = navigator.userAgent,
+): boolean {
+  return state.master !== false && state.option === true && !isFirefoxOnMac(userAgent);
 }
 
 export function writeMicPinMirror(store: Pick<Storage, "setItem" | "removeItem"> | null, on: boolean): void {
@@ -170,15 +184,25 @@ export function setupMicPin(): void {
    * опция или всё расширение точно выключены, вторая настройка ничего не
    * меняет, и ждать её значило бы оставить устаревшую «1».
    */
+  const blocked = isFirefoxOnMac(navigator.userAgent);
+  let blockedLogged = false;
   const decision = (): boolean | null => {
+    if (blocked) {
+      if (state.option === true && !blockedLogged) {
+        blockedLogged = true;
+        log.info(SCOPE, "Firefox на macOS: опция включена, но здесь не действует — см. приписку в попапе");
+      }
+      return false;
+    }
     if ("option" in state && state.option !== true) return false;
     if ("master" in state && state.master === false) return false;
     return "master" in state && "option" in state ? true : null;
   };
 
   const sync = (): void => {
-    const on = decision();
-    if (on === null) return;
+    const decided = decision();
+    if (decided === null) return;
+    const on = decided && micPinActive(state);
     writeMicPinMirror(safeStore("localStorage"), on);
     if (timer) {
       clearTimeout(timer);

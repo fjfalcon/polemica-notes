@@ -47,8 +47,8 @@ import {
   emptyMicPinCounts,
   formatMicPinState,
   hasConcreteDevice,
+  isFirefoxOnMac,
   micPinAllowed,
-  needsFirefoxMacMicNote,
   parseMicPinState,
   pinAudioConstraints,
   shouldRetryUnpinned,
@@ -1011,19 +1011,76 @@ describe("content-сторона: зеркало и отчёт", () => {
   });
 });
 
-describe("Firefox на macOS: приписка про настройку браузера", () => {
+describe("Firefox на macOS: опция отключена — с ней игрока переставали слышать", () => {
   const FIREFOX_MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:160.0) Gecko/20100101 Firefox/160.0";
   const CHROME_MAC =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36";
   const FIREFOX_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0) Gecko/20100101 Firefox/160.0";
+  const FIREFOX_LINUX = "Mozilla/5.0 (X11; Linux x86_64; rv:160.0) Gecko/20100101 Firefox/160.0";
+  const realUa = Object.getOwnPropertyDescriptor(Navigator.prototype, "userAgent");
 
-  test("только Firefox и только macOS", () => {
-    expect(needsFirefoxMacMicNote(FIREFOX_MAC, "mac")).toBe(true);
-    // В Chrome системной обработки голоса в цепочке нет — приписка была бы враньём.
-    expect(needsFirefoxMacMicNote(CHROME_MAC, "mac")).toBe(false);
-    expect(needsFirefoxMacMicNote(FIREFOX_WIN, "win")).toBe(false);
-    expect(needsFirefoxMacMicNote(FIREFOX_MAC, "linux")).toBe(false);
-    expect(needsFirefoxMacMicNote("", "mac")).toBe(false);
+  function setUa(ua: string): void {
+    Object.defineProperty(navigator, "userAgent", { configurable: true, get: () => ua });
+  }
+  afterEach(() => {
+    // Свойство экземпляра снимаем — снова виден геттер прототипа.
+    delete (navigator as { userAgent?: string }).userAgent;
+    expect(Object.getOwnPropertyDescriptor(Navigator.prototype, "userAgent")).toEqual(realUa);
+  });
+
+  test("признак: только Firefox и только macOS", () => {
+    expect(isFirefoxOnMac(FIREFOX_MAC)).toBe(true);
+    // В Chrome этой проблемы нет — запрет там отнял бы рабочую опцию.
+    expect(isFirefoxOnMac(CHROME_MAC)).toBe(false);
+    expect(isFirefoxOnMac(FIREFOX_WIN)).toBe(false);
+    expect(isFirefoxOnMac(FIREFOX_LINUX)).toBe(false);
+    expect(isFirefoxOnMac("")).toBe(false);
+  });
+
+  test("инжектор: обёртка не ставится даже при оставшемся от 10.3.0 ключе «1»", () => {
+    store.set(MIC_PIN_FLAG_KEY, "1");
+    setUa(FIREFOX_MAC);
+    injectMicPin();
+    expect(document.querySelector("script[data-pn-mic-pin-inject]")).toBeNull();
+    // Тот же ключ в Chrome на Mac и в Firefox на Windows — ставится.
+    for (const ua of [CHROME_MAC, FIREFOX_WIN]) {
+      setUa(ua);
+      injectMicPin();
+      expect(document.querySelector("script[data-pn-mic-pin-inject]"), ua).not.toBeNull();
+      document.querySelector("script[data-pn-mic-pin-inject]")?.remove();
+    }
+  });
+
+  test("опция считается недействующей; зеркало убирается, в лог — одна строка, отчёта и подсказок нет", async () => {
+    expect(micPinActive({ master: true, option: true }, FIREFOX_MAC)).toBe(false);
+    expect(micPinActive({ master: true, option: true }, CHROME_MAC)).toBe(true);
+
+    vi.useFakeTimers();
+    setUa(FIREFOX_MAC);
+    mocks.settings.mic_pin_enabled = true;
+    store.set(MIC_PIN_FLAG_KEY, "1");
+    document.documentElement.setAttribute(MIC_PIN_STATE_ATTR, "0:1:1:0:0:0");
+    setupMicPin();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(store.has(MIC_PIN_FLAG_KEY)).toBe(false);
+    mocks.handlers[0]({ mic_pin_enabled: true });
+    mocks.handlers[0]({ extension_enabled: true });
+    expect(store.has(MIC_PIN_FLAG_KEY)).toBe(false);
+    const lines = mocks.info.mock.calls.filter((c) => String(c[1]).includes("Firefox на macOS"));
+    expect(lines).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(REPORT_DELAY_MS * 2);
+    window.dispatchEvent(new Event("pagehide"));
+    expect(mocks.info).toHaveBeenCalledTimes(1);
+    expect(mocks.toast).not.toHaveBeenCalled();
+    expect(mocks.flushNow).not.toHaveBeenCalled();
+  });
+
+  test("опция выключена — в Firefox на macOS лог молчит", async () => {
+    setUa(FIREFOX_MAC);
+    setupMicPin();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(mocks.info).not.toHaveBeenCalled();
   });
 
   test("в разметке приписка — подопция сразу под тумблером, по умолчанию скрыта и вне поиска", () => {
@@ -1037,19 +1094,17 @@ describe("Firefox на macOS: приписка про настройку бра�
     expect(tag).toContain('class="row child"');
     expect(tag).toContain('style="display:none"');
     expect(tag).toContain('data-search="off"');
-    // Имя настройки — дословно: по нему её ищут в about:config.
-    expect(html).toContain("media.getusermedia.microphone.prefer_voice_stream_with_processing.enabled");
+    const text = html.slice(rowAt, html.indexOf("</div>", rowAt));
+    expect(text).toContain("опция не действует");
+    // Настройку браузера больше не советуем: с ней игрока тоже не было слышно.
+    expect(text).not.toContain("about:config");
   });
 
-  test("попап показывает приписку и возвращает её в поиск только по признаку браузера", () => {
+  test("попап показывает приписку и возвращает её в поиск только в Firefox на macOS", () => {
     const src = read("src/popup/index.ts");
-    const at = src.indexOf("needsFirefoxMacMicNote(navigator.userAgent, info.os)");
+    const at = src.indexOf("if (isFirefoxOnMac(navigator.userAgent)) {");
     expect(at).toBeGreaterThan(0);
-    // Сбой API не обрывает инициализацию попапа: вызов стоит внутри цепочки
-    // промиса (иначе синхронное исключение ломало весь попап — поймано
-    // тестом popup-mic-hotkey, где у заглушки getPlatformInfo нет).
-    expect(src).toContain(".then(() => browser.runtime.getPlatformInfo())");
-    const block = src.slice(at, at + 400);
+    const block = src.slice(at, at + 300);
     expect(block).toContain('$("mic_pin_firefox_row")');
     expect(block).toContain('row.style.display = ""');
     expect(block).toContain("delete row.dataset.search");

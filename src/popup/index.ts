@@ -150,7 +150,7 @@ import type {
 } from "@shared/types";
 import type { NickLengths } from "../content/nickname-lengths";
 import { installSettingsSearch } from "./settings-search";
-import { needsFirefoxMacMicNote } from "@shared/mic-pin";
+import { isFirefoxOnMac } from "@shared/mic-pin";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
@@ -427,21 +427,16 @@ document.addEventListener("DOMContentLoaded", () => {
       return { status: "error" };
     }
   };
-  // Firefox на macOS: «Брать только выбранный микрофон» без настройки
-  // браузера оставляет игрока с немым микрофоном (см. needsFirefoxMacMicNote).
-  // Приписка стоит подопцией прямо под тумблером и участвует в поиске.
-  // Вызов — внутри цепочки промиса: приписка декоративная, и её сбой (нет
-  // API, отказ браузера) не имеет права оборвать инициализацию попапа.
-  void Promise.resolve()
-    .then(() => browser.runtime.getPlatformInfo())
-    .then((info) => {
-      if (!needsFirefoxMacMicNote(navigator.userAgent, info.os)) return;
-      const row = $("mic_pin_firefox_row");
-      if (!row) return;
+  // Firefox на macOS: «Брать только выбранный микрофон» там отключена — с ней
+  // игрока переставали слышать (см. isFirefoxOnMac). Приписка стоит
+  // подопцией прямо под тумблером и участвует в поиске.
+  if (isFirefoxOnMac(navigator.userAgent)) {
+    const row = $("mic_pin_firefox_row");
+    if (row) {
       row.style.display = "";
       delete row.dataset.search;
-    })
-    .catch((e) => log.debug(SCOPE, "getPlatformInfo failed", e));
+    }
+  }
 
   // Сторовую установку обновляет браузер, и баннера о версиях у неё больше
   // нет (решение владельца 09.08.2026). Тумблер, который ничего не включает,

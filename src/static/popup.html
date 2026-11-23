@@ -182,8 +182,6 @@
         .scene-item:hover { background: rgba(255,255,255,.06); }
         .scene-item.active { color: var(--accent); font-weight: 700; background: rgba(255,255,255,.04); }
         .scenes-empty { padding: 10px; text-align: center; color: var(--muted); font-size: 11px; }
-        /* Длинное имя настройки браузера: переносим по символам и выделяем одним кликом. */
-        code.pref { word-break: break-all; user-select: all; font-size: 11px; }
         .note-box {
             margin: 6px 0 0; padding: 8px 10px; font-size: 10px; color: var(--muted);
             background: rgba(255,255,255,.04); border-radius: 8px;
@@ -449,7 +447,7 @@
             <div class="row" data-kw="наушники блютус bluetooth airpods гарнитура качество звук a2dp"><span>Брать только выбранный микрофон<span class="hint">для Bluetooth-наушников: при входе в игру сайт открывает системный микрофон, и наушники переходят в «телефонный» звук. С опцией игра сразу берёт микрофон, выбранный в её настройках устройств: выберите там микрофон компьютера, а не строку «по умолчанию». Действует со следующей загрузки игры</span></span>
                 <label class="switch"><input type="checkbox" id="mic_pin_enabled"><span class="slider"></span></label>
             </div>
-            <div class="row child" data-search="off" data-kw="firefox мак mac about:config" id="mic_pin_firefox_row" style="display:none"><span>⚠ Firefox на Mac: нужна настройка браузера<span class="hint">без неё с этой опцией микрофон в игре может замолчать, а наушники всё равно сменят профиль. Откройте about:config, найдите <code class="pref">media.getusermedia.microphone.prefer_voice_stream_with_processing.enabled</code>, поставьте false и перезапустите Firefox</span></span>
+            <div class="row child" data-search="off" data-kw="firefox мак mac" id="mic_pin_firefox_row" style="display:none"><span>⚠ В Firefox на Mac опция не действует<span class="hint">с Bluetooth-наушниками и микрофоном компьютера Firefox на Mac не передаёт голос: с этой опцией игрока переставали слышать, поэтому здесь она отключена. Хороший звук в наушниках с микрофоном компьютера — через Chrome</span></span>
             </div>
         </div>
 
