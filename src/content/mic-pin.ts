@@ -12,19 +12,22 @@
  *     Включение действует со следующей загрузки игры (перехват ставится один
  *     раз), выключение — сразу (page-скрипт перечитывает флаг на запросе).
  *     Настройки не прочитались — зеркало НЕ трогаем: случайный сбой storage
- *     не должен молча выключать опцию на эту и следующую игру.
+ *     не должен молча выключать опцию на эту и следующую игру. Исключение —
+ *     Firefox на macOS: там опция отключена целиком, и ключ убирается всегда.
  *
  *  2. ОТЧЁТ в лог и подсказка. Перехват молчалив по построению, и без отчёта
  *     на жалобу «всё равно переключает» ответить было бы нечем. В лог идут
  *     только счётчики — ни deviceId, ни названий устройств.
  */
 import { log } from "@core/log";
+import { browser } from "@core/env";
 import { getSetting, onSettingsChanged } from "@core/settings";
 import { showToast } from "@core/toast";
 import { isGameRoomPath } from "@shared/routes";
 import {
   MIC_PIN_FLAG_KEY,
   MIC_PIN_STATE_ATTR,
+  currentBrowserSigns,
   isFirefoxOnMac,
   parseMicPinState,
   type MicPinCounts,
@@ -37,15 +40,12 @@ export const REPORT_DELAY_MS = 20_000;
 const HINT_SHOWN_KEY = "pn_mic_pin_hint";
 
 /**
- * Действует ли опция. В Firefox на macOS — никогда (см. isFirefoxOnMac):
+ * Действует ли опция. `blocked` — Firefox на macOS (см. isFirefoxOnMac):
  * зеркало там не пишется (и убирается, если осталось от 10.3.0), обёртка не
  * ставится, отчёта и подсказок нет.
  */
-export function micPinActive(
-  state: { master?: unknown; option?: unknown },
-  userAgent: string = navigator.userAgent,
-): boolean {
-  return state.master !== false && state.option === true && !isFirefoxOnMac(userAgent);
+export function micPinActive(state: { master?: unknown; option?: unknown }, blocked = false): boolean {
+  return state.master !== false && state.option === true && !blocked;
 }
 
 export function writeMicPinMirror(store: Pick<Storage, "setItem" | "removeItem"> | null, on: boolean): void {
@@ -184,25 +184,28 @@ export function setupMicPin(): void {
    * опция или всё расширение точно выключены, вторая настройка ничего не
    * меняет, и ждать её значило бы оставить устаревшую «1».
    */
-  const blocked = isFirefoxOnMac(navigator.userAgent);
-  let blockedLogged = false;
+  const blocked = isFirefoxOnMac(currentBrowserSigns(browser.runtime));
   const decision = (): boolean | null => {
-    if (blocked) {
-      if (state.option === true && !blockedLogged) {
-        blockedLogged = true;
-        log.info(SCOPE, "Firefox на macOS: опция включена, но здесь не действует — см. приписку в попапе");
-      }
-      return false;
-    }
+    if (blocked) return false;
     if ("option" in state && state.option !== true) return false;
     if ("master" in state && state.master === false) return false;
     return "master" in state && "option" in state ? true : null;
   };
 
+  /** Один раз на страницу комнаты: опция включена, а здесь не действует. */
+  let blockedLogged = false;
+  const noteBlocked = (): void => {
+    if (!blocked || blockedLogged) return;
+    if (state.option !== true || state.master === false || !("master" in state)) return;
+    if (!isGameRoomPath(location.pathname)) return;
+    blockedLogged = true;
+    log.info(SCOPE, "Firefox на macOS: опция включена, но здесь не действует — см. приписку в попапе");
+  };
+
   const sync = (): void => {
-    const decided = decision();
-    if (decided === null) return;
-    const on = decided && micPinActive(state);
+    noteBlocked();
+    const on = decision();
+    if (on === null) return;
     writeMicPinMirror(safeStore("localStorage"), on);
     if (timer) {
       clearTimeout(timer);
@@ -211,7 +214,7 @@ export function setupMicPin(): void {
     if (on && isGameRoomPath(location.pathname)) {
       timer = setTimeout(() => {
         timer = null;
-        if (micPinActive(state)) reportMicPin();
+        if (micPinActive(state, blocked)) reportMicPin();
       }, REPORT_DELAY_MS);
     }
   };
@@ -246,7 +249,7 @@ export function setupMicPin(): void {
   // буфер на pagehide, но его слушатель стоит раньше нашего — без явного
   // сброса эта строка осталась бы в памяти умирающей страницы.
   window.addEventListener("pagehide", () => {
-    if (!micPinActive(state) || !isGameRoomPath(location.pathname)) return;
+    if (!micPinActive(state, blocked) || !isGameRoomPath(location.pathname)) return;
     reportMicPin(document.documentElement, { hint: false });
     log.flushNow();
   });

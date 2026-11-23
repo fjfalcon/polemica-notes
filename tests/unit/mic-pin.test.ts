@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   handlers: [] as Array<(patch: Record<string, unknown>) => void>,
   /** true — не читается ничего; имя ключа — не читается только он. */
   failRead: false as boolean | string,
+  /** Адрес расширения, каким его видит код: в Firefox — moz-extension://… */
+  extensionUrl: "chrome-extension://test/",
   toast: vi.fn(() => true),
   info: vi.fn(),
   warn: vi.fn(),
@@ -35,6 +37,7 @@ vi.mock("@core/settings", () => ({
     return () => undefined;
   }),
 }));
+vi.mock("@core/env", () => ({ browser: { runtime: { getURL: (p: string) => mocks.extensionUrl + p } } }));
 vi.mock("@core/toast", () => ({ showToast: mocks.toast }));
 vi.mock("@core/log", () => ({
   log: { debug: vi.fn(), info: mocks.info, warn: mocks.warn, error: vi.fn(), flushNow: mocks.flushNow },
@@ -47,6 +50,7 @@ import {
   emptyMicPinCounts,
   formatMicPinState,
   hasConcreteDevice,
+  currentBrowserSigns,
   isFirefoxOnMac,
   micPinAllowed,
   parseMicPinState,
@@ -55,6 +59,8 @@ import {
   usableMicId,
 } from "@shared/mic-pin";
 import { injectMicPin } from "@content/page/mic-pin-inject";
+import { showFirefoxMacMicNote } from "@popup/mic-pin-note";
+import { applySearch, buildIndex } from "@popup/settings-search";
 import {
   REPORT_DELAY_MS,
   micPinActive,
@@ -85,6 +91,7 @@ beforeEach(() => {
   mocks.settings.mic_pin_enabled = false;
   mocks.handlers.length = 0;
   mocks.failRead = false;
+  mocks.extensionUrl = "chrome-extension://test/";
   resetMicPinForTest();
   setPath("/game");
   store = new Map();
@@ -1017,34 +1024,80 @@ describe("Firefox на macOS: опция отключена — с ней игр
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36";
   const FIREFOX_WIN = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0) Gecko/20100101 Firefox/160.0";
   const FIREFOX_LINUX = "Mozilla/5.0 (X11; Linux x86_64; rv:160.0) Gecko/20100101 Firefox/160.0";
+  const FXIOS_IPAD =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/140.0 Mobile/15E148 Safari/605.1.15";
   const realUa = Object.getOwnPropertyDescriptor(Navigator.prototype, "userAgent");
 
-  function setUa(ua: string): void {
+  /** Подменить окружение целиком: User-Agent, platform и адрес расширения. */
+  function setBrowser(ua: string, platform = "", extensionUrl = "chrome-extension://test/"): void {
     Object.defineProperty(navigator, "userAgent", { configurable: true, get: () => ua });
+    Object.defineProperty(navigator, "platform", { configurable: true, get: () => platform });
+    mocks.extensionUrl = extensionUrl;
+    (globalThis as { chrome?: unknown }).chrome = { runtime: { getURL: (p: string) => extensionUrl + p } };
   }
   afterEach(() => {
-    // Свойство экземпляра снимаем — снова виден геттер прототипа.
+    // Свойства экземпляра снимаем — снова видны геттеры прототипа.
     delete (navigator as { userAgent?: string }).userAgent;
+    delete (navigator as { platform?: string }).platform;
     expect(Object.getOwnPropertyDescriptor(Navigator.prototype, "userAgent")).toEqual(realUa);
   });
 
-  test("признак: только Firefox и только macOS", () => {
-    expect(isFirefoxOnMac(FIREFOX_MAC)).toBe(true);
-    // В Chrome этой проблемы нет — запрет там отнял бы рабочую опцию.
-    expect(isFirefoxOnMac(CHROME_MAC)).toBe(false);
-    expect(isFirefoxOnMac(FIREFOX_WIN)).toBe(false);
-    expect(isFirefoxOnMac(FIREFOX_LINUX)).toBe(false);
-    expect(isFirefoxOnMac("")).toBe(false);
+  test("признак по User-Agent: только Firefox и только macOS", () => {
+    expect(isFirefoxOnMac({ userAgent: FIREFOX_MAC })).toBe(true);
+    // В Chrome этой проблемы не наблюдали — запрет там отнял бы опцию.
+    expect(isFirefoxOnMac({ userAgent: CHROME_MAC })).toBe(false);
+    expect(isFirefoxOnMac({ userAgent: FIREFOX_WIN })).toBe(false);
+    expect(isFirefoxOnMac({ userAgent: FIREFOX_LINUX })).toBe(false);
+    // Firefox для iPad в «режиме компьютера» — это не Firefox на Mac.
+    expect(isFirefoxOnMac({ userAgent: FXIOS_IPAD })).toBe(false);
+    expect(isFirefoxOnMac({ userAgent: "" })).toBe(false);
+  });
+
+  test("подменённый User-Agent запрет не снимает: есть второй признак", () => {
+    // general.useragent.override: браузер представляется Chrome на Windows.
+    const spoofed = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36";
+    expect(isFirefoxOnMac({ userAgent: spoofed, platform: "MacIntel", extensionUrl: "moz-extension://abc/" })).toBe(true);
+    // Каждый признак по отдельности ничего не решает.
+    expect(isFirefoxOnMac({ userAgent: spoofed, platform: "MacIntel", extensionUrl: "chrome-extension://abc/" })).toBe(false);
+    expect(isFirefoxOnMac({ userAgent: spoofed, platform: "Win32", extensionUrl: "moz-extension://abc/" })).toBe(false);
+    expect(isFirefoxOnMac({ userAgent: FIREFOX_WIN, platform: "Win32", extensionUrl: "moz-extension://abc/" })).toBe(false);
+    // Смешанные: Firefox по User-Agent, Mac по platform.
+    expect(isFirefoxOnMac({ userAgent: FIREFOX_LINUX.replace("X11; Linux x86_64", "X"), platform: "MacIntel" })).toBe(true);
+  });
+
+  test("признаки окружения собираются без падений, даже если расширение умерло", () => {
+    setBrowser(FIREFOX_MAC, "MacIntel", "moz-extension://abc/");
+    expect(currentBrowserSigns({ getURL: (p) => `moz-extension://abc/${p}` })).toEqual({
+      userAgent: FIREFOX_MAC,
+      platform: "MacIntel",
+      extensionUrl: "moz-extension://abc/",
+    });
+    const dead = {
+      getURL: () => {
+        throw new Error("Extension context invalidated");
+      },
+    };
+    expect(currentBrowserSigns(dead).extensionUrl).toBe("");
+    expect(currentBrowserSigns(null).extensionUrl).toBe("");
   });
 
   test("инжектор: обёртка не ставится даже при оставшемся от 10.3.0 ключе «1»", () => {
     store.set(MIC_PIN_FLAG_KEY, "1");
-    setUa(FIREFOX_MAC);
+    setBrowser(FIREFOX_MAC, "MacIntel", "moz-extension://abc/");
+    injectMicPin();
+    expect(document.querySelector("script[data-pn-mic-pin-inject]")).toBeNull();
+    // …и при подменённом User-Agent.
+    setBrowser(CHROME_MAC, "MacIntel", "moz-extension://abc/");
     injectMicPin();
     expect(document.querySelector("script[data-pn-mic-pin-inject]")).toBeNull();
     // Тот же ключ в Chrome на Mac и в Firefox на Windows — ставится.
-    for (const ua of [CHROME_MAC, FIREFOX_WIN]) {
-      setUa(ua);
+    const allowed: Array<[string, string, string]> = [
+      [CHROME_MAC, "MacIntel", "chrome-extension://abc/"],
+      [FIREFOX_WIN, "Win32", "moz-extension://abc/"],
+      [FIREFOX_LINUX, "Linux x86_64", "moz-extension://abc/"],
+    ];
+    for (const [ua, platform, ext] of allowed) {
+      setBrowser(ua, platform, ext);
       injectMicPin();
       expect(document.querySelector("script[data-pn-mic-pin-inject]"), ua).not.toBeNull();
       document.querySelector("script[data-pn-mic-pin-inject]")?.remove();
@@ -1052,11 +1105,11 @@ describe("Firefox на macOS: опция отключена — с ней игр
   });
 
   test("опция считается недействующей; зеркало убирается, в лог — одна строка, отчёта и подсказок нет", async () => {
-    expect(micPinActive({ master: true, option: true }, FIREFOX_MAC)).toBe(false);
-    expect(micPinActive({ master: true, option: true }, CHROME_MAC)).toBe(true);
+    expect(micPinActive({ master: true, option: true }, true)).toBe(false);
+    expect(micPinActive({ master: true, option: true }, false)).toBe(true);
 
     vi.useFakeTimers();
-    setUa(FIREFOX_MAC);
+    setBrowser(FIREFOX_MAC, "MacIntel", "moz-extension://abc/");
     mocks.settings.mic_pin_enabled = true;
     store.set(MIC_PIN_FLAG_KEY, "1");
     document.documentElement.setAttribute(MIC_PIN_STATE_ATTR, "0:1:1:0:0:0");
@@ -1076,37 +1129,111 @@ describe("Firefox на macOS: опция отключена — с ней игр
     expect(mocks.flushNow).not.toHaveBeenCalled();
   });
 
-  test("опция выключена — в Firefox на macOS лог молчит", async () => {
-    setUa(FIREFOX_MAC);
+  test("строка про запрет — только в комнате, только при включённых опции и расширении", async () => {
+    const settle = async (): Promise<void> => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    };
+    setBrowser(FIREFOX_MAC, "MacIntel", "moz-extension://abc/");
+    // Опция выключена.
+    setupMicPin();
+    await settle();
+    expect(mocks.info).not.toHaveBeenCalled();
+    // Опция включена, но расширение выключено главным тумблером.
+    mocks.handlers.length = 0;
+    mocks.settings.mic_pin_enabled = true;
+    mocks.settings.extension_enabled = false;
+    setupMicPin();
+    await settle();
+    expect(mocks.info).not.toHaveBeenCalled();
+    // Всё включено, но это страница поиска.
+    mocks.handlers.length = 0;
+    mocks.settings.extension_enabled = true;
+    setPath("/game-search");
+    setupMicPin();
+    await settle();
+    expect(mocks.info).not.toHaveBeenCalled();
+    // Комната — одна строка.
+    mocks.handlers.length = 0;
+    setPath("/game");
+    setupMicPin();
+    await settle();
+    expect(mocks.info).toHaveBeenCalledTimes(1);
+  });
+
+  test("настройки не прочитались — оставшийся от 10.3.0 ключ всё равно убирается", async () => {
+    setBrowser(FIREFOX_MAC, "MacIntel", "moz-extension://abc/");
+    mocks.failRead = true;
+    store.set(MIC_PIN_FLAG_KEY, "1");
     setupMicPin();
     for (let i = 0; i < 5; i++) await Promise.resolve();
-    expect(mocks.info).not.toHaveBeenCalled();
+    expect(store.has(MIC_PIN_FLAG_KEY)).toBe(false);
   });
 
-  test("в разметке приписка — подопция сразу под тумблером, по умолчанию скрыта и вне поиска", () => {
-    const html = read("src/static/popup.html");
-    const at = html.indexOf('id="mic_pin_enabled"');
-    const rowAt = html.indexOf('id="mic_pin_firefox_row"');
-    expect(rowAt).toBeGreaterThan(at);
-    // Между тумблером и припиской нет других строк настроек.
-    expect(html.slice(at, rowAt).match(/<div class="row/g)).toHaveLength(1);
-    const tag = html.slice(html.lastIndexOf("<div", rowAt), html.indexOf(">", rowAt) + 1);
-    expect(tag).toContain('class="row child"');
-    expect(tag).toContain('style="display:none"');
-    expect(tag).toContain('data-search="off"');
-    const text = html.slice(rowAt, html.indexOf("</div>", rowAt));
-    expect(text).toContain("опция не действует");
-    // Настройку браузера больше не советуем: с ней игрока тоже не было слышно.
-    expect(text).not.toContain("about:config");
+  test("Firefox на Windows под запрет не попадает: зеркало пишется, отчёт идёт", async () => {
+    vi.useFakeTimers();
+    setBrowser(FIREFOX_WIN, "Win32", "moz-extension://abc/");
+    mocks.settings.mic_pin_enabled = true;
+    document.documentElement.setAttribute(MIC_PIN_STATE_ATTR, "1:1:0:1:0:0");
+    setupMicPin();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(store.get(MIC_PIN_FLAG_KEY)).toBe("1");
+    await vi.advanceTimersByTimeAsync(REPORT_DELAY_MS);
+    expect(mocks.info).toHaveBeenCalledTimes(1);
+    expect(String(mocks.info.mock.calls[0][1])).toContain("запросы микрофона");
   });
 
-  test("попап показывает приписку и возвращает её в поиск только в Firefox на macOS", () => {
-    const src = read("src/popup/index.ts");
-    const at = src.indexOf("if (isFirefoxOnMac(navigator.userAgent)) {");
-    expect(at).toBeGreaterThan(0);
-    const block = src.slice(at, at + 300);
-    expect(block).toContain('$("mic_pin_firefox_row")');
-    expect(block).toContain('row.style.display = ""');
-    expect(block).toContain("delete row.dataset.search");
+  describe("приписка в попапе", () => {
+    const popup = (): Document => new DOMParser().parseFromString(read("src/static/popup.html"), "text/html");
+    const firefoxMac = { userAgent: FIREFOX_MAC, platform: "MacIntel", extensionUrl: "moz-extension://abc/" };
+    const chromeMac = { userAgent: CHROME_MAC, platform: "MacIntel", extensionUrl: "chrome-extension://abc/" };
+    const shown = (doc: Document, query: string): string[] => {
+      applySearch(doc, buildIndex(doc), query);
+      return Array.from(doc.querySelectorAll<HTMLElement>(".row.settings-hit, .row.settings-ctx"))
+        .map((r) => r.id || r.querySelector("[id]")?.id || "")
+        .filter(Boolean);
+    };
+
+    test("в разметке — подопция сразу под тумблером, скрыта и вне поиска", () => {
+      const doc = popup();
+      const note = doc.getElementById("mic_pin_firefox_row")!;
+      const parent = doc.getElementById("mic_pin_enabled")!.closest(".row")!;
+      expect(parent.nextElementSibling).toBe(note);
+      expect(note.classList.contains("child")).toBe(true);
+      expect(note.style.display).toBe("none");
+      expect(note.dataset.search).toBe("off");
+      expect(note.textContent).toContain("опция не действует");
+      // Настройку браузера не советуем (с ней игрока тоже не было слышно) и
+      // про Chrome не обещаем: там опция вживую не проверена.
+      expect(note.textContent).not.toContain("about:config");
+      expect(note.textContent).not.toContain("Chrome");
+    });
+
+    test("в Firefox на Mac приписка открывается и находится поиском вместе с тумблером", () => {
+      const doc = popup();
+      expect(showFirefoxMacMicNote(doc, firefoxMac)).toBe(true);
+      const note = doc.getElementById("mic_pin_firefox_row")!;
+      expect(note.style.display).toBe("");
+      expect(note.dataset.search).toBeUndefined();
+      expect(shown(doc, "firefox")).toEqual(expect.arrayContaining(["mic_pin_firefox_row", "mic_pin_enabled"]));
+      // Запрос, который находит тумблер по его подсказке, приводит и предупреждение.
+      for (const query of ["телефонный", "наушники", "микрофон системный"]) {
+        expect(shown(doc, query), query).toEqual(expect.arrayContaining(["mic_pin_firefox_row", "mic_pin_enabled"]));
+      }
+    });
+
+    test("в остальных браузерах приписки нет ни на вкладке, ни в поиске", () => {
+      const doc = popup();
+      expect(showFirefoxMacMicNote(doc, chromeMac)).toBe(false);
+      const note = doc.getElementById("mic_pin_firefox_row")!;
+      expect(note.style.display).toBe("none");
+      expect(note.dataset.search).toBe("off");
+      expect(shown(doc, "firefox")).not.toContain("mic_pin_firefox_row");
+      expect(shown(doc, "наушники")).toContain("mic_pin_enabled");
+      expect(shown(doc, "наушники")).not.toContain("mic_pin_firefox_row");
+    });
+
+    test("попап вызывает показ приписки с признаками текущего браузера", () => {
+      expect(read("src/popup/index.ts")).toContain("showFirefoxMacMicNote(document, currentBrowserSigns(browser.runtime));");
+    });
   });
 });

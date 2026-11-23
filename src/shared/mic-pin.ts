@@ -202,9 +202,33 @@ export function parseMicPinState(raw: string | null | undefined): MicPinCounts |
  * всеми наблюдениями.
  *
  * Немой микрофон в игре хуже «телефонного» звука, поэтому здесь обёртку не
- * ставим вовсе, а попап говорит об этом прямо. Распознаём по User-Agent:
- * решение нужно синхронно, на document_start.
+ * ставим вовсе, а попап говорит об этом прямо. Решение нужно синхронно, на
+ * document_start, поэтому — по признакам окружения, и по ДВУМ независимым:
+ * User-Agent можно подменить (general.useragent.override), и тогда запрет
+ * молча снялся бы, вернув немой микрофон. Firefox узнаём ещё и по адресу
+ * расширения (moz-extension:), macOS — по navigator.platform.
  */
-export function isFirefoxOnMac(userAgent: string): boolean {
-  return /\bFirefox\/\d/.test(userAgent) && /Macintosh|Mac OS X/.test(userAgent);
+export interface BrowserSigns {
+  userAgent: string;
+  /** navigator.platform — «MacIntel» на любом Mac. */
+  platform?: string;
+  /** runtime.getURL("") — «moz-extension://…» в Firefox. */
+  extensionUrl?: string;
+}
+
+export function isFirefoxOnMac(signs: BrowserSigns): boolean {
+  const firefox = /\bFirefox\/\d/.test(signs.userAgent) || (signs.extensionUrl ?? "").startsWith("moz-extension:");
+  const mac = /Macintosh/.test(signs.userAgent) || /^Mac/.test(signs.platform ?? "");
+  return firefox && mac;
+}
+
+/** Признаки текущего окружения. `runtime` передаёт вызывающий: у раннего инжектора нет полифилла. */
+export function currentBrowserSigns(runtime?: { getURL?: (path: string) => string } | null): BrowserSigns {
+  let extensionUrl = "";
+  try {
+    extensionUrl = runtime?.getURL?.("") ?? "";
+  } catch {
+    /* контекст расширения умер — остаются User-Agent и platform */
+  }
+  return { userAgent: navigator.userAgent, platform: navigator.platform, extensionUrl };
 }

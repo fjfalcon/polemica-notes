@@ -150,7 +150,8 @@ import type {
 } from "@shared/types";
 import type { NickLengths } from "../content/nickname-lengths";
 import { installSettingsSearch } from "./settings-search";
-import { isFirefoxOnMac } from "@shared/mic-pin";
+import { currentBrowserSigns } from "@shared/mic-pin";
+import { showFirefoxMacMicNote } from "./mic-pin-note";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T | null =>
   document.getElementById(id) as T | null;
@@ -430,13 +431,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Firefox на macOS: «Брать только выбранный микрофон» там отключена — с ней
   // игрока переставали слышать (см. isFirefoxOnMac). Приписка стоит
   // подопцией прямо под тумблером и участвует в поиске.
-  if (isFirefoxOnMac(navigator.userAgent)) {
-    const row = $("mic_pin_firefox_row");
-    if (row) {
-      row.style.display = "";
-      delete row.dataset.search;
-    }
-  }
+  showFirefoxMacMicNote(document, currentBrowserSigns(browser.runtime));
 
   // Сторовую установку обновляет браузер, и баннера о версиях у неё больше
   // нет (решение владельца 09.08.2026). Тумблер, который ничего не включает,
