@@ -49,6 +49,7 @@
   <label>Выход звука<br><select id="out"></select></label>
 </div>
 <p id="devInfo"></p>
+<div class="note" id="micWarn" hidden></div>
 
 <h2>2. Опыты</h2>
 <p>Перед каждым опытом нажмите «Остановить всё» и <b>подождите 15 секунд</b>: Firefox держит системную
@@ -117,7 +118,9 @@ function audioCtx() {
     ctx = new AudioContext();
     log(`AudioContext создан: ${ctx.sampleRate} Гц, состояние ${ctx.state}`);
   }
-  if (ctx.state === "suspended") void ctx.resume();
+  if (ctx.state === "suspended") {
+    void ctx.resume().then(() => log(`AudioContext запущен (${ctx.state})`));
+  }
   return ctx;
 }
 
@@ -139,6 +142,10 @@ async function capture(constraints, name) {
   }
   const track = stream.getAudioTracks()[0];
   log(`${name}: получено за ${Math.round(performance.now() - started)} мс — «${track.label}»`);
+  const wanted = constraints.audio && constraints.audio.deviceId && constraints.audio.deviceId.exact;
+  if (!FAKE && wanted === micId() && micLabel() && track.label !== micLabel()) {
+    log(`ВНИМАНИЕ: просили «${micLabel()}», а браузер дал «${track.label}» — результат этого опыта не про микрофон компьютера`);
+  }
   addCapture(name, stream);
   return stream;
 }
@@ -229,13 +236,41 @@ setInterval(() => {
   }
 }, 100);
 
-/** Раз в 2 с — строка в журнал: по ней видно, жил ли сигнал во время опыта. */
+/**
+ * Раз в 3 с — строка в журнал: по ней видно, жил ли сигнал во время опыта.
+ * Пишем наибольший уровень за интервал: мгновенный замер попадал бы в паузы речи.
+ */
+setInterval(() => {
+  for (const c of captures) c.peak = Math.max(c.peak || 0, c.level);
+}, 100);
 setInterval(() => {
   if (!captures.length) return;
-  log(captures.map((c) => `${c.name}: ${c.track.readyState === "live" ? (c.track.enabled ? "вкл" : "выкл") : "заверш"}${c.track.muted ? "/немая" : ""} ур.${c.level.toFixed(3)}`).join(" | "));
-}, 2000);
+  const state = ctx ? ctx.state : "нет";
+  log(
+    captures
+      .map((c) => {
+        const line = `${c.name}: ${c.track.readyState === "live" ? (c.track.enabled ? "вкл" : "выкл") : "заверш"}${c.track.muted ? "/немая" : ""} макс.${(c.peak || 0).toFixed(3)}`;
+        c.peak = 0;
+        return line;
+      })
+      .join(" | ") + (state !== "running" ? ` | ИЗМЕРЕНИЕ СТОИТ: AudioContext ${state}` : ""),
+  );
+}, 3000);
 
 function micId() { return $("mic").value; }
+function micLabel() { return $("mic").selectedOptions[0]?.textContent || ""; }
+/** Опыты про микрофон компьютера бессмысленны, если он не выбран: браузер возьмёт системный (наушники). */
+function requireMic(letter) {
+  if (FAKE || micId()) return true;
+  log(`Опыт ${letter} НЕ запущен: в списке «Микрофон компьютера» ничего не выбрано — браузер взял бы системный микрофон (наушники)`);
+  showMicWarn("Сначала выберите в списке «Микрофон компьютера» именно микрофон MacBook. Без этого опыт пойдёт через микрофон наушников и ничего не покажет.");
+  return false;
+}
+function showMicWarn(text) {
+  const el = $("micWarn");
+  el.textContent = text;
+  el.hidden = !text;
+}
 function audioFor(extra) {
   const base = micId() ? { deviceId: { exact: micId() } } : {};
   return { audio: { ...base, ...extra }, video: false };
@@ -340,9 +375,11 @@ async function tone(toSink) {
 }
 
 const runs = {
-  A: () => capture(audioFor({}), "А обычный"),
-  B: () => capture(audioFor({ echoCancellation: false }), "Б без эха"),
-  C: () => capture(audioFor({ echoCancellation: false, noiseSuppression: false, autoGainControl: false }), "В без обработки"),
+  A: async () => { if (requireMic("А")) await capture(audioFor({}), "А обычный"); },
+  B: async () => { if (requireMic("Б")) await capture(audioFor({ echoCancellation: false }), "Б без эха"); },
+  C: async () => {
+    if (requireMic("В")) await capture(audioFor({ echoCancellation: false, noiseSuppression: false, autoGainControl: false }), "В без обработки");
+  },
   D: async () => {
     const cap = mainCapture();
     if (!cap) return log("Г: сначала запустите А, Б или В");
@@ -364,6 +401,7 @@ const runs = {
   F: async () => {
     const headset = $("headsetMic").value;
     if (!headset && !FAKE) return log("Е: выберите микрофон наушников в списке выше");
+    if (!requireMic("Е")) return;
     await capture({ audio: headset ? { deviceId: { exact: headset } } : true, video: false }, "Е наушники");
     await capture(audioFor({}), "Е выбранный");
   },
@@ -375,6 +413,7 @@ const runs = {
     await startMonitor(cap);
   },
   J: async () => {
+    if (!requireMic("И")) return;
     await capture(audioFor({}), "И зонд (не закрыт)");
     await capture(audioFor({}), "И игровой");
   },
@@ -425,9 +464,26 @@ async function listDevices() {
     for (const d of all.filter((x) => x.kind === kind)) select.append(new Option(d.label || `${kind} без названия`, d.deviceId));
     if ([...select.options].some((o) => o.value === keep)) select.value = keep;
   };
-  fill($("mic"), "audioinput", "— системный —");
+  fill($("mic"), "audioinput", "— не выбран —");
   fill($("headsetMic"), "audioinput", "— не выбран —");
   fill($("out"), "audiooutput", "— системный —");
+  // Подставляем очевидное: встроенный микрофон — в первый список, остальной — во второй.
+  const builtIn = /macbook|built-?in|встроен|internal/i;
+  const mics = all.filter((d) => d.kind === "audioinput" && d.deviceId && d.label);
+  const own = mics.find((d) => builtIn.test(d.label));
+  const other = mics.find((d) => !builtIn.test(d.label));
+  if (own && !$("mic").value) $("mic").value = own.deviceId;
+  if (other && !$("headsetMic").value) $("headsetMic").value = other.deviceId;
+  const speaker = all.find((d) => d.kind === "audiooutput" && d.label && !builtIn.test(d.label));
+  if (speaker && !$("out").value) $("out").value = speaker.deviceId;
+  if (!FAKE) {
+    showMicWarn(
+      $("mic").value
+        ? `Проверьте списки: микрофон компьютера — «${micLabel()}», микрофон наушников — «${$("headsetMic").selectedOptions[0]?.textContent}», выход — «${$("out").selectedOptions[0]?.textContent}». Если что-то не так — поправьте до опытов.`
+        : "Не удалось узнать микрофон компьютера по названию — выберите его в первом списке вручную.",
+    );
+  }
+  log(`Выбрано: микрофон компьютера «${micLabel()}», микрофон наушников «${$("headsetMic").selectedOptions[0]?.textContent}», выход «${$("out").selectedOptions[0]?.textContent}»`);
   const ins = all.filter((d) => d.kind === "audioinput").length;
   const outs = all.filter((d) => d.kind === "audiooutput").length;
   $("devInfo").textContent = `Микрофонов: ${ins}, выходов звука: ${outs}.` + (outs === 0 ? " Браузер не показал выходы звука — опыт З в выбранный выход недоступен." : "");
