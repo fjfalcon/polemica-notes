@@ -1,0 +1,47 @@
+{
+  "id": 673041,
+  "winnerCode": 1,
+  "players": [
+    { "id": 6091, "username": "hanna_ross", "points": -0.1, "mmr_diff": -44 },
+    { "id": 13509, "username": "fj", "points": 1.5, "mmr_diff": 57 },
+    { "id": 117465, "username": "Sher.", "points": -0.1, "mmr_diff": -25 },
+    { "id": 99665, "username": "НЕ ТУДА", "points": 0.6, "mmr_diff": 7 },
+    { "id": 76267, "username": "кис кис", "points": 1.5, "mmr_diff": 47 },
+    { "id": 155815, "username": "4659128049871resu", "points": -0.1, "mmr_diff": 2 },
+    { "id": 14577, "username": "JT", "points": 0.9, "mmr_diff": 23 },
+    { "id": 140881, "username": "Молодой 2", "points": 0.6, "mmr_diff": 5 },
+    { "id": 158505, "username": "yfii7i7ft6tdr6u6dyt", "points": -0.1, "mmr_diff": 11 },
+    { "id": 65605, "username": "Бэт", "points": 0.6, "mmr_diff": 6 }
+  ],
+  "data": {
+    "stage": { "type": "gameOver", "day": 4, "player": 1 },
+    "players": [
+      { "position": 1, "username": "hanna_ross", "player": 6091, "role": 2 },
+      { "position": 2, "username": "fj", "player": 13509, "role": 1 },
+      { "position": 3, "username": "Sher.", "player": 117465, "role": 2 },
+      { "position": 4, "username": "НЕ ТУДА", "player": 99665, "role": 2 },
+      { "position": 5, "username": "кис кис", "player": 76267, "role": 0 },
+      { "position": 6, "username": "4659128049871resu", "player": 155815, "role": 2 },
+      { "position": 7, "username": "JT", "player": 14577, "role": 1 },
+      { "position": 8, "username": "Молодой 2", "player": 140881, "role": 3 },
+      { "position": 9, "username": "Неординарный 2099", "player": 158505, "role": 2 },
+      { "position": 10, "username": "Бэт", "player": 65605, "role": 2 }
+    ],
+    "votes": [
+      { "day": 2, "num": 0, "voter": 2, "candidate": 8 },
+      { "day": 2, "num": 0, "voter": 5, "candidate": 3 },
+      { "day": 2, "num": 0, "voter": 7, "candidate": 6 },
+      { "day": 2, "num": 0, "voter": 8, "candidate": 7 },
+      { "day": 2, "num": 0, "voter": 10, "candidate": 9 },
+      { "day": 2, "num": 1, "voter": 1, "candidate": 7 },
+      { "day": 2, "num": 1, "voter": 2, "candidate": 7 },
+      { "day": 2, "num": 1, "voter": 3, "candidate": 7 },
+      { "day": 2, "num": 1, "voter": 5, "candidate": 8 },
+      { "day": 2, "num": 1, "voter": 6, "candidate": 7 },
+      { "day": 2, "num": 1, "voter": 7, "candidate": 8 },
+      { "day": 2, "num": 1, "voter": 8, "candidate": 7 },
+      { "day": 2, "num": 1, "voter": 9, "candidate": 7 },
+      { "day": 2, "num": 1, "voter": 10, "candidate": 7 }
+    ]
+  }
+}

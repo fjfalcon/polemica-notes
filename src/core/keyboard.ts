@@ -62,7 +62,11 @@ function isSiteRoleToggle(e: KeyboardEvent): boolean {
 
 /** Пользователь печатает — в поле ввода, в textarea или в contenteditable. */
 export function isTypingContext(e: KeyboardEvent): boolean {
-  const candidates: Array<EventTarget | null> = [e.target, document.activeElement];
+  // На window браузер меняет target поля внутри Shadow DOM на host. Для
+  // обычных событий оставляем прежний фолбэк по фокусу, включая открытый shadow.
+  let focused = document.activeElement;
+  while (focused?.shadowRoot?.activeElement) focused = focused.shadowRoot.activeElement;
+  const candidates: Array<EventTarget | null | undefined> = [e.composedPath()[0], e.target, focused];
   for (const c of candidates) {
     if (!(c instanceof HTMLElement)) continue;
     const tag = c.tagName;

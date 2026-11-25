@@ -1106,6 +1106,7 @@ class PlayerNotesManager {
 
   private refreshNickColors(): void {
     this.aliases.reset(); // правка в диалоге видна сразу, а не через TTL индекса
+    applyMatchAliases(this.aliases); // на эфире сразу убрать суффиксы и title, включая Shadow DOM
     applyTileAliases(this.aliases, this.model.keys);
     document
       .querySelectorAll<HTMLElement>(`.${OWN.playerIcons} > [data-username]`)
@@ -1115,8 +1116,7 @@ class PlayerNotesManager {
         if (u && container) this.applyNickColor(container, u);
       });
     this.applyParticipantColors();
-    this.ensureProfileNoteUI(); // свой ник профиля и разбора — тоже сразу (эфир, правка)
-    applyMatchAliases(this.aliases);
+    this.ensureProfileNoteUI(); // свой ник профиля — тоже сразу (эфир, правка)
   }
 
   // ─────────── Статистика игрока ───────────

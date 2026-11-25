@@ -2,7 +2,10 @@
 import { registerOwnContainer, unregisterOwnContainer } from "@core/dom";
 import { escapeHtml } from "@core/escape";
 import { voteRoundName, type MatchVote } from "./match-outcome";
-import type { MatchReview, ReviewDay, ReviewEvent, ReviewRound } from "./match-review-data";
+import { shotIconTitle } from "./mafia-shots";
+import { watchMatchReviewAliases } from "./features/player-notes/nick-alias";
+import type { MatchReview, ReviewDay, ReviewEvent, ReviewPlayer, ReviewRound } from "./match-review-data";
+import { MATCH_REVIEW_STYLES } from "./match-review-styles";
 
 const VIEWS = [
   ["table", "Таблица"],
@@ -12,6 +15,8 @@ const VIEWS = [
 type View = (typeof VIEWS)[number][0];
 const TAB_VIEW_KEY = "pn_match_review_view";
 const ROLE_NAMES = ["Дон", "Мафия", "Мирный", "Шериф"];
+const pointsFormat = new Intl.NumberFormat("ru", { maximumFractionDigits: 2 });
+const mmrFormat = new Intl.NumberFormat("ru", { signDisplay: "exceptZero" });
 const byView = (value: string | null | undefined): value is View => VIEWS.some(([key]) => key === value);
 
 export interface MatchReviewState {
@@ -28,7 +33,11 @@ export function createMatchReviewState(): MatchReviewState {
   return { view: "timeline" };
 }
 
-export function createMatchReview(review: MatchReview, state: MatchReviewState): { root: HTMLElement; dispose: () => void } {
+export function createMatchReview(
+  review: MatchReview,
+  state: MatchReviewState,
+  meta: { id: string; winner: string; mafiaWon: boolean; judge?: string },
+): { root: HTMLElement; dispose: () => void } {
   const players = new Map(review.players.map((p) => [p.position, p]));
   const nameOf = (pos: number) => {
     const name = players.get(pos)?.username;
@@ -41,26 +50,77 @@ export function createMatchReview(review: MatchReview, state: MatchReviewState):
     return `<span class="pn-mr-seat${tone}" title="${escapeHtml(nameOf(pos!))}">№${pos}</span>`;
   };
   const person = (pos?: number) => {
-    const name = pos !== undefined ? nameOf(pos) : "";
-    return `${seat(pos)}${name ? ` <span>${escapeHtml(name)}</span>` : ""}`;
+    return `${seat(pos)}${pos !== undefined ? ` ${nameLabel(pos)}` : ""}`;
   };
   const voterChips = (voters: (number | undefined)[]) => voters.map(seat).join("");
   const seats = (list: number[]) => list.slice().sort((a, b) => a - b).map((n) => `№${n}`).join(", ");
+  const hasPoints = review.players.some((p) => p.points !== undefined);
+  const hasMmr = review.players.some((p) => p.mmrDiff !== undefined);
+
+  function nameLabel(pos: number): string {
+    const name = nameOf(pos);
+    if (!name) return "";
+    const p = players.get(pos);
+    const id = p?.id;
+    const attr = `class="pn-mr-name" data-pn-review-name="${id ?? ""}"${p?.formerName
+      ? ` data-pn-review-former="${escapeHtml(p.formerName)}"` : ""}`;
+    return id !== undefined
+      ? `<a ${attr} href="/profile/${id}" target="_blank" rel="noopener">${escapeHtml(name)}</a>`
+      : `<span ${attr}>${escapeHtml(name)}</span>`;
+  }
+
+  function roleLabel(pos: number): string {
+    const role = players.get(pos)?.role;
+    return role === 0 || role === 1 || role === 2 || role === 3 ? `<small>${ROLE_NAMES[role]}</small>` : "";
+  }
+
+  function formerNameLabel(pos: number): string {
+    const name = players.get(pos)?.formerName;
+    return name ? `<small class="pn-mr-former" title="В матче: ${escapeHtml(name)}">В матче: ${escapeHtml(name)}</small>` : "";
+  }
+
+  function score(value: number | undefined, format: Intl.NumberFormat): string {
+    if (value === undefined) return '<span class="pn-mr-empty-cell">—</span>';
+    const tone = value > 0 ? "pn-mr-plus" : value < 0 ? "pn-mr-minus" : "";
+    return `<span class="pn-mr-number ${tone}">${format.format(value)}</span>`;
+  }
+
+  function rosterCard(p: ReviewPlayer): string {
+    return `<li><div class="pn-mr-roster-player">${seat(p.position)} ${nameLabel(p.position)} ${roleLabel(p.position)}</div>
+      ${formerNameLabel(p.position)}
+      <div class="pn-mr-roster-scores">
+        ${p.points !== undefined ? `<span>Баллы ${score(p.points, pointsFormat)}</span>` : ""}
+        ${p.mmrDiff !== undefined ? `<span class="pn-mr-rating-inline">MMR ${score(p.mmrDiff, mmrFormat)}</span>` : ""}
+      </div></li>`;
+  }
 
   const root = document.createElement("section");
   root.className = "pn-match-review";
-  root.setAttribute("aria-label", "Полный разбор матча");
+  const shadow = root.attachShadow({ mode: "open" });
+  const style = document.createElement("style");
+  style.textContent = MATCH_REVIEW_STYLES;
+  const panel = document.createElement("div");
+  panel.className = "pn-mr-panel";
+  root.setAttribute("aria-label", "Разбор матча");
+  shadow.append(style, panel);
   let view = state.view;
   // Открываем самый насыщенный голосованиями день; при равенстве — первый.
   let day = review.days.find((d) => d.day === state.day) ??
     review.days.reduce<ReviewDay | undefined>((best, next) =>
       !best || next.rounds.length > best.rounds.length ? next : best, undefined);
   let player = state.player !== undefined && review.positions.includes(state.player) ? state.player : undefined;
-  root.innerHTML = `
+  const nights = review.days.flatMap((d) => d.shots ? [d.shots] : []);
+  const shooters = review.players.filter((p) => (p.role === 0 || p.role === 1) &&
+    nights.some((n) => n.shots.some((s) => s.shooter === p.position)));
+  panel.innerHTML = `
     <div class="pn-mr-head">
-      <h2>Полный разбор</h2>
+      <div><p class="pn-mr-kicker">Разбор игры</p><h2>Матч №${escapeHtml(meta.id)}</h2>
+        ${meta.judge ? `<p class="pn-mr-judge">Судья: ${escapeHtml(meta.judge)}</p>` : ""}</div>
+      ${meta.winner ? `<span class="pn-mr-winner${meta.mafiaWon ? " pn-mr-mafia-win" : ""}">${escapeHtml(meta.winner)}</span>` : ""}
+    </div>
+    <div class="pn-mr-nav">
       <div class="pn-mr-choices" role="group" aria-label="Вид разбора">
-        ${VIEWS.map(([key, label], i) => `<button type="button" data-pn-review-view="${key}"><span aria-hidden="true">0${i + 1}</span> ${label}</button>`).join("")}
+        ${VIEWS.map(([key, label]) => `<button type="button" data-pn-review-view="${key}">${label}</button>`).join("")}
       </div>
     </div>
     <div class="pn-mr-controls" hidden>
@@ -73,14 +133,21 @@ export function createMatchReview(review: MatchReview, state: MatchReviewState):
         </select>
       </label>
     </div>
-    <div class="pn-mr-content"></div>`;
-  const controls = root.querySelector<HTMLElement>(".pn-mr-controls")!;
-  const filter = root.querySelector<HTMLElement>(".pn-mr-filter")!;
-  const pane = root.querySelector<HTMLElement>(".pn-mr-content")!;
+    <div class="pn-mr-content"></div>
+    ${review.players.length ? `<details class="pn-mr-roster"><summary>Состав и результаты</summary>
+      <ul>${review.players.map(rosterCard).join("")}</ul></details>` : ""}
+    ${shooters.length ? `<details class="pn-mr-shooting"><summary>Стрельба мафии за матч</summary>
+      <div class="pn-mr-shooting-list">${shooters.map((p) =>
+        `<section><h3>${person(p.position)}</h3><ul>${shotIconTitle(p.position, nights).split("\n").slice(1)
+          .map((line) => `<li>${escapeHtml(line)}</li>`).join("")}</ul></section>`).join("")}</div></details>` : ""}`;
+  const controls = panel.querySelector<HTMLElement>(".pn-mr-controls")!;
+  const filter = panel.querySelector<HTMLElement>(".pn-mr-filter")!;
+  const pane = panel.querySelector<HTMLElement>(".pn-mr-content")!;
+  const roster = panel.querySelector<HTMLDetailsElement>(".pn-mr-roster");
   const playerInput = filter.querySelector("select")!;
   playerInput.value = player === undefined ? "" : String(player);
-  const viewButtons = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-pn-review-view]"));
-  const dayButtons = Array.from(root.querySelectorAll<HTMLButtonElement>("[data-pn-review-day]"));
+  const viewButtons = Array.from(panel.querySelectorAll<HTMLButtonElement>("[data-pn-review-view]"));
+  const dayButtons = Array.from(panel.querySelectorAll<HTMLButtonElement>("[data-pn-review-day]"));
 
   function result(d: ReviewDay): string {
     const { departed, tied, counts } = d.outcome;
@@ -160,32 +227,34 @@ export function createMatchReview(review: MatchReview, state: MatchReviewState):
       ${d.removed.length ? `<span class="pn-mr-outcome">Дисквалификация: ${seats(d.removed)}</span>` : ""}</div>`;
   };
 
-  function table(d: ReviewDay): string {
-    const rows = [...(d.nomination ? [d.nomination] : []), ...d.rounds];
-    const grid = rows.length ? `<div class="pn-mr-scroll" role="region" aria-label="Таблица голосования" tabindex="0">
-      <table class="pn-mr-table"><thead><tr><th scope="col">Тур / кандидат</th>
-        ${review.positions.map((pos) => {
-          const name = nameOf(pos);
-          const role = players.get(pos)?.role;
-          return `<th scope="col">${seat(pos)}
-            ${name ? `<strong title="${escapeHtml(name)}">${escapeHtml(name)}</strong>` : ""}
-            ${role !== undefined && ROLE_NAMES[role] ? `<small>${ROLE_NAMES[role]}</small>` : ""}</th>`;
-        }).join("")}</tr></thead>
+  function table(d?: ReviewDay): string {
+    const rows = [...(d?.nomination ? [d.nomination] : []), ...(d?.rounds ?? [])];
+    const footerRow = (label: string, key: "points" | "mmrDiff", format: Intl.NumberFormat) =>
+      `<tr${key === "mmrDiff" ? ' class="pn-mr-rating-row"' : ""}><th scope="row">${label}</th>
+      ${review.positions.map((pos) => `<td>${score(players.get(pos)?.[key], format)}</td>`).join("")}</tr>`;
+    const grid = review.positions.length ? `<div class="pn-mr-scroll" role="region" aria-label="Голосования и результаты матча" tabindex="0">
+      <table class="pn-mr-table"><thead><tr><th scope="col">Игроки</th>
+        ${review.positions.map((pos) =>
+          `<th scope="col">${seat(pos)} ${nameLabel(pos)} ${roleLabel(pos)} ${formerNameLabel(pos)}</th>`).join("")}</tr></thead>
         <tbody>${rows.map((r) => {
-          const last = r.num > 0 && r.num === d.outcome.finalNum;
+          const last = r.num > 0 && r.num === d?.outcome.finalNum;
           const candidates = new Map(r.candidates.map((c) => [c.position, c.voters]));
           return `<tr${last ? ' class="pn-mr-final"' : ""}><th scope="row">${voteRoundName(r.num)}
-            ${last && d.rounds.length > 1 ? "<small>Финальный тур</small>" : ""}</th>
+            ${last && d && d.rounds.length > 1 ? "<small>Финальный тур</small>" : ""}</th>
             ${review.positions.map((pos) => {
               const voters = candidates.get(pos);
               const top = r.num > 0 && r.leaders.includes(pos);
               return voters ? `<td${top ? ' class="pn-mr-leading"' : ""}><b>${voters.length}</b>
                 <span class="pn-mr-table-voters">${voters.map((v) => v ?? "?").join(", ")}</span></td>`
                 : '<td class="pn-mr-empty-cell">—</td>';
-            }).join("")}</tr>`;
-        }).join("")}</tbody></table></div>` : '<p class="pn-mr-empty">Записей голосования за этот день нет.</p>';
-    return `<div class="pn-mr-day-banner">${dayBanner(d)}</div>${grid}
-      <div class="pn-mr-stack">${lift(d)}${dayEvents(d)}${night(d)}</div>`;
+          }).join("")}</tr>`;
+        }).join("")}</tbody>
+        ${hasPoints || hasMmr ? `<tfoot>${hasPoints ? footerRow("Баллы за матч", "points", pointsFormat) : ""}
+          ${hasMmr ? footerRow("MMR за матч", "mmrDiff", mmrFormat) : ""}</tfoot>` : ""}
+      </table></div>` : "";
+    return `${d ? `<div class="pn-mr-day-banner">${dayBanner(d)}</div>` : ""}${grid}
+      ${!rows.length ? '<p class="pn-mr-empty">Записей голосования за этот день нет.</p>' : ""}
+      ${d ? `<div class="pn-mr-stack">${lift(d)}${dayEvents(d)}${night(d)}</div>` : ""}`;
   }
 
   function card(d: ReviewDay, r: ReviewRound): string {
@@ -245,8 +314,10 @@ export function createMatchReview(review: MatchReview, state: MatchReviewState):
     for (const button of dayButtons) button.setAttribute("aria-pressed", String(Number(button.dataset.pnReviewDay) === day?.day));
     controls.hidden = view === "timeline" || !day;
     filter.hidden = view !== "journal";
-    pane.innerHTML = !day ? '<p class="pn-mr-empty">Нет данных о ходе матча.</p>'
-      : view === "timeline" ? timeline() : view === "table" ? table(day) : journal(day);
+    if (roster) roster.hidden = view === "table";
+    pane.innerHTML = view === "table" ? table(day) : !day ? '<p class="pn-mr-empty">Нет данных о ходе матча.</p>'
+      : view === "timeline" ? timeline() : journal(day);
+    aliases.refresh();
   }
 
   function click(event: MouseEvent): void {
@@ -283,15 +354,17 @@ export function createMatchReview(review: MatchReview, state: MatchReviewState):
     paint();
   }
 
+  const aliases = watchMatchReviewAliases(panel);
   paint();
-  root.addEventListener("click", click);
+  panel.addEventListener("click", click);
   playerInput.addEventListener("change", changePlayer);
   registerOwnContainer(root);
   return {
     root,
     dispose: () => {
-      root.removeEventListener("click", click);
+      panel.removeEventListener("click", click);
       playerInput.removeEventListener("change", changePlayer);
+      aliases.dispose();
       unregisterOwnContainer(root);
       root.remove();
     },

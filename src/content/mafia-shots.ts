@@ -115,3 +115,30 @@ export function analyzeMafiaShots(data: {
   }
   return out;
 }
+
+/** Детали стрельбы для старой иконки и раскрываемого блока полного разбора. */
+export function shotIconTitle(position: number, nights: NightShooting[]): string {
+  const lines: string[] = ["Стрельба мафии"];
+  let teamMisses = 0;
+  const blamedHere: number[] = [];
+  for (const n of nights) {
+    if (n.missed) teamMisses++;
+    const own = n.shots.find((sh) => sh.shooter === position);
+    if (!own) continue;
+    let outcome: string;
+    if (!n.missed) {
+      outcome = `убит ${n.victim}`;
+    } else if (n.blamed.includes(position)) {
+      blamedHere.push(n.alive);
+      outcome = n.blamed.length === n.shots.length ? "ПРОМАХ — не сведено" : "ПРОМАХ — увёл выстрел";
+    } else {
+      outcome = "промах команды (не его)";
+    }
+    lines.push(`ночь ${n.night} · в ${n.alive} · → ${own.victim} · ${outcome}`);
+  }
+  lines.push(
+    `Промахов команды: ${teamMisses} · виновен: ${blamedHere.length}` +
+      (blamedHere.length ? ` (${blamedHere.map((a) => `в ${a}`).join(", ")})` : ""),
+  );
+  return lines.join("\n");
+}

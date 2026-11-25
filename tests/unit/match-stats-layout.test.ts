@@ -47,9 +47,12 @@ vi.mock("../../src/content/match-data", () => ({
 
 import { matchStatsFeature, syncMatchStatsRoute } from "@content/features/match-stats";
 import { onDomChange } from "@core/dom";
+import { AliasResolver, applyMatchAliases, clearAllAliases } from "@content/features/player-notes/nick-alias";
+import type { AliasPolicy } from "@shared/alias-policy";
 import { log } from "@core/log";
 import type { Settings } from "@shared/types";
 import match673463 from "../fixtures/match_673463.json";
+import match673041 from "../fixtures/match_673041.json";
 import match598995 from "../../docs/fixtures/match_598995.json";
 
 /**
@@ -135,7 +138,8 @@ describe("полный и прежние виды: три тура матча 67
   function context(view = "hints", enabled = true) {
     return { settings: { ...ctx.settings, match_stats_view: view, statistics_enabled: enabled } };
   }
-  const full = () => document.querySelector<HTMLElement>(".pn-match-review")!;
+  const host = () => document.querySelector<HTMLElement>(".pn-match-review");
+  const full = () => (host()?.shadowRoot ?? null)!;
   const pickView = (view: string) => full().querySelector<HTMLButtonElement>(`[data-pn-review-view="${view}"]`)!.click();
   const pickDay = (n: number) => full().querySelector<HTMLButtonElement>(`[data-pn-review-day="${n}"]`)!.click();
 
@@ -149,7 +153,7 @@ describe("полный и прежние виды: три тура матча 67
     start();
     fireGameData(match673463);
     const panel = full();
-    expect(panel.nextElementSibling).toBe(document.querySelector(".game-stats-table"));
+    expect(host()?.nextElementSibling).toBe(document.querySelector(".game-stats-table"));
     expect(phaseRows()).toHaveLength(0);
     const openDay = panel.querySelector(".pn-mr-day[open]")!;
     expect(openDay.querySelector("summary")?.textContent).toMatch(/День 2.*3 тура/s);
@@ -176,12 +180,104 @@ describe("полный и прежние виды: три тура матча 67
     select.dispatchEvent(new Event("change"));
     expect(counts()).toEqual([3, 4, 6]); // голосовал сам или голосовали за него
     panel.querySelector<HTMLButtonElement>('[data-pn-review-jump="3"]')!.click();
-    expect(document.activeElement).toBe(panel.querySelector('[data-pn-review-round="3"]'));
+    expect(panel.activeElement).toBe(panel.querySelector('[data-pn-review-round="3"]'));
     pickDay(4);
     expect(counts()).toEqual([]);
     expect(panel.querySelector(".pn-mr-day-banner")?.textContent).toContain("Матч завершён");
     pickView("table");
     expect(panel.querySelector(".pn-mr-day-banner strong")?.textContent).toBe("День 4");
+  });
+
+  test("№673041: одна таблица с голосами, баллами и MMR, ник и профиль по ID", () => {
+    start("hints", match673041.id);
+    const native = document.querySelector<HTMLElement>(".game-stats-table")!;
+    const header = document.querySelector<HTMLElement>(".game-stats-header")!;
+    header.textContent = "Заголовок сайта";
+    const footerAction = document.createElement("button");
+    footerAction.textContent = "Репорт";
+    native.after(footerAction);
+    const action = vi.fn();
+    footerAction.addEventListener("click", action);
+    // Переставляем список итогов: склейка по индексу отдаст чужие баллы.
+    fireGameData({ ...match673041, players: match673041.players.slice().reverse() });
+    expect(getComputedStyle(native).display).toBe("none");
+    expect(getComputedStyle(header).display).toBe("none");
+    expect(getComputedStyle(footerAction).display).not.toBe("none");
+    footerAction.click();
+    expect(action).toHaveBeenCalledOnce();
+    expect(full().querySelector(".pn-mr-head")?.textContent).toMatch(/Матч №673041.*Победа мафии/s);
+    expect(full().querySelector("table")).toBeNull(); // в ходе игры нет таблицы-дублёра
+    expect(full().querySelector(".pn-mr-roster")?.hasAttribute("open")).toBe(false);
+    pickView("table");
+    const table = full().querySelector<HTMLTableElement>("table")!;
+    expect(document.querySelector(".pn-mr-table")).toBeNull(); // CSS сайта не видит её
+    expect(full().querySelectorAll("table")).toHaveLength(1);
+    expect(full().querySelector(".pn-mr-roster")?.hasAttribute("hidden")).toBe(true);
+    const name = table.tHead?.rows[0].cells[9].querySelector("a");
+    expect(name?.textContent).toBe("yfii7i7ft6tdr6u6dyt");
+    expect(name?.getAttribute("href")).toBe("/profile/158505");
+    expect(table.tHead?.rows[0].cells[9].querySelector(".pn-mr-former")?.textContent)
+      .toBe("В матче: Неординарный 2099");
+    expect(table.tFoot?.rows[0].cells[9].textContent).toBe("-0,1");
+    expect(table.tFoot?.rows[1].cells[9].textContent).toBe("+11");
+    expect(full().querySelector(".pn-mr-outcome")?.textContent).toBe("Ушёл №7 · 7:2");
+    pickDay(4);
+    expect(full().querySelectorAll("tfoot tr")).toHaveLength(2); // итоги даже в день без голосования
+    pickView("journal");
+    expect(full().querySelector("table")).toBeNull();
+    expect(full().querySelector(".pn-mr-roster")?.hasAttribute("hidden")).toBe(false);
+    matchStatsFeature.disable();
+    expect(getComputedStyle(native).display).not.toBe("none");
+    expect(header.textContent).toBe("Заголовок сайта");
+    expect(getComputedStyle(header).display).not.toBe("none");
+    expect(footerAction.isConnected).toBe(true);
+  });
+
+  test("свои ники в разборе используют политику заметок при эфире и смене режима", () => {
+    start("hints", match673041.id);
+    let policy: AliasPolicy = "all";
+    const resolver = new AliasResolver(() => ({
+      "u:158505": { text: "", timestamp: 1, alias: "Секретный ник", aliasCondemned: true },
+      "u:13509": { text: "", timestamp: 1, alias: "Обычный ник" },
+    }), () => policy);
+    applyMatchAliases(resolver); // заметки загрузились прежде таблицы
+    fireGameData(match673041);
+    pickView("table");
+    const cellName = full().querySelector('table a[href="/profile/158505"]');
+    expect(cellName?.textContent).toBe("yfii7i7ft6tdr6u6dyt");
+    expect(cellName?.getAttribute("data-pn-alias-suffix")).toBe("Секретный ник");
+    expect(cellName?.getAttribute("title")).toContain("Секретный ник");
+
+    policy = "safe"; // player-notes получает уведомление о начале эфира
+    applyMatchAliases(resolver);
+    expect(full().querySelector(".pn-mr-panel")?.innerHTML).not.toContain("Секретный ник");
+    expect(full().querySelector('table a[href="/profile/13509"]')?.getAttribute("data-pn-alias-suffix"))
+      .toBe("Обычный ник");
+    pickView("journal");
+    expect(full().querySelector(".pn-mr-panel")?.innerHTML).not.toContain("Секретный ник");
+    pickDay(4);
+    pickView("table");
+    expect(full().querySelector(".pn-mr-panel")?.innerHTML).not.toContain("Секретный ник");
+    clearAllAliases(); // выключили заметки, разбор остался
+    expect(full().querySelector("[data-pn-alias-suffix]")).toBeNull();
+    expect(full().querySelector('table a[href="/profile/158505"]')?.getAttribute("title"))
+      .toContain("В матче: Неординарный 2099");
+  });
+
+  test("новый разбор не берёт псевдоним тёзки: ни при отсутствии записи u:<id>, ни без ID", () => {
+    start("hints", match673041.id);
+    applyMatchAliases(new AliasResolver(() => ({
+      yfii7i7ft6tdr6u6dyt: { text: "", timestamp: 1, alias: "Псевдоним по общему нику" },
+      hanna_ross: { text: "", timestamp: 1, alias: "Псевдоним без ID" },
+    })));
+    const players = match673041.data.players.map((p) => p.position === 1 ? { ...p, player: undefined } : p);
+    fireGameData({ ...match673041, data: { ...match673041.data, players } });
+    pickView("table");
+    const stable = full().querySelector('table a[href="/profile/158505"]');
+    const withoutId = full().querySelector('table [data-pn-review-name=""]');
+    expect(stable?.textContent).toBe("yfii7i7ft6tdr6u6dyt");
+    expect(withoutId?.textContent).toBe("hanna_ross");
+    expect(full().querySelector(".pn-mr-panel")?.innerHTML).not.toContain("Псевдоним");
   });
 
   test.each(["legend", "classic"])("%s: видны все три тура матча", (view) => {
@@ -235,7 +331,7 @@ describe("полный и прежние виды: три тура матча 67
     document.body.append(replacement);
     flush([]); // Vue смонтировал замену. Других DOM-изменений ждать нельзя.
     vi.advanceTimersByTime(600);
-    expect(full()?.nextElementSibling).toBe(replacement);
+    expect(host()?.nextElementSibling).toBe(replacement);
     expect(document.querySelectorAll(".pn-match-review")).toHaveLength(1);
   });
 
@@ -254,7 +350,7 @@ describe("полный и прежние виды: три тура матча 67
       flush([]);
       expect(full()).toBeNull();
       vi.advanceTimersByTime(300);
-      expect(full()?.nextElementSibling).toBe(native);
+      expect(host()?.nextElementSibling).toBe(native);
     } finally {
       jitter.mockRestore();
     }
@@ -264,10 +360,11 @@ describe("полный и прежние виды: три тура матча 67
     start();
     fireGameData(match673463);
     pickView("journal");
-    const first = full();
+    const first = host();
     matchStatsFeature.update!(context("classic"));
     vi.advanceTimersByTime(600);
-    expect(first.isConnected).toBe(false);
+    expect(first?.isConnected).toBe(false);
+    expect(document.querySelector("[data-pn-review-replaced]")).toBeNull();
     expect(full()).toBeNull();
     expect(phaseRows().length).toBeGreaterThan(0);
     matchStatsFeature.update!(context());
@@ -287,6 +384,7 @@ describe("полный и прежние виды: три тура матча 67
 
 afterEach(() => {
   matchStatsFeature.disable();
+  clearAllAliases();
   vi.useRealTimers();
 });
 

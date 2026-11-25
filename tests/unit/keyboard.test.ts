@@ -55,6 +55,29 @@ describe("keyboard helpers and router gates", () => {
     offF();
   });
 
+  test("стрелка внутри select в открытом Shadow DOM не уходит глобальному хоткею", () => {
+    const handler = vi.fn();
+    const off = keyboard.register("ArrowDown", handler, { preventDefault: true });
+    try {
+      const host = document.createElement("div");
+      const select = document.createElement("select");
+      document.body.append(host);
+      host.attachShadow({ mode: "open" }).append(select);
+      select.focus();
+      expect(document.activeElement).toBe(host);
+      const key = () => new KeyboardEvent("keydown", { code: "ArrowDown", bubbles: true, composed: true, cancelable: true });
+      const atSelect = key();
+      select.dispatchEvent(atSelect);
+      expect(handler).not.toHaveBeenCalled();
+      expect(atSelect.defaultPrevented).toBe(false);
+      select.blur();
+      window.dispatchEvent(key());
+      expect(handler).toHaveBeenCalledOnce();
+    } finally {
+      off();
+    }
+  });
+
   test.each([
     { ctrlKey: true },
     { metaKey: true },

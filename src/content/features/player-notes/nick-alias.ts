@@ -80,6 +80,7 @@ export function sweepStaleAliases(root: ParentNode = document): void {
 /** Снять все свои ники (выключение фичи/статистики). */
 export function clearAllAliases(root: ParentNode = document): void {
   root.querySelectorAll<HTMLElement>(`[${ALIAS_FOR_ATTR}]`).forEach(clearNode);
+  if (root === document) setReviewAliasResolver(null);
 }
 
 /**
@@ -131,6 +132,35 @@ export class AliasResolver {
 /** Ссылка на профиль, которой match-stats оборачивает ник в ячейке разбора. */
 const MATCH_PROFILE_LINK = "a.pn-profile-link";
 
+// Shadow DOM не сканируется из document. Владельцем заметок и политики
+// эфира остаётся player-notes; полный вид держит только подписку на обновление.
+let reviewAliasResolver: AliasResolver | null = null;
+const reviewAliasListeners = new Set<() => void>();
+
+function setReviewAliasResolver(resolver: AliasResolver | null): void {
+  reviewAliasResolver = resolver;
+  for (const refresh of reviewAliasListeners) refresh();
+}
+
+export function watchMatchReviewAliases(root: ParentNode): { refresh: () => void; dispose: () => void } {
+  const refresh = (): void => {
+    for (const el of root.querySelectorAll<HTMLElement>("[data-pn-review-name]")) {
+      const nick = el.textContent?.trim() || "";
+      const id = el.dataset.pnReviewName;
+      // aliasFor(id, nick, true) всё ещё имеет легаси-фолбэк по нику.
+      // На новых строках с двумя источниками имени он мог бы приклеить
+      // заметку тёзки. Без подтверждённого ключа u:<id> ничего не показываем.
+      const aliasById = id ? reviewAliasResolver?.aliasFor(id, null, true) ?? "" : "";
+      setNickAlias(el, aliasById, nick, "suffix");
+      const alias = el.getAttribute(ALIAS_SUFFIX_ATTR);
+      const former = el.dataset.pnReviewFormer;
+      setAttr(el, "title", `${nick}${alias ? ` (${alias})` : ""}${former ? ` · В матче: ${former}` : ""}`);
+    }
+  };
+  reviewAliasListeners.add(refresh);
+  return { refresh, dispose: () => { reviewAliasListeners.delete(refresh); } };
+}
+
 /**
  * Таблица разбора матча (/match/<id>). Ячейки ников — разметка сайта
  * (`cell player username`), заголовок строки (`.title`) — не игрок.
@@ -141,6 +171,7 @@ const MATCH_PROFILE_LINK = "a.pn-profile-link";
  *    легаси-ключ: таблица ник→свой ник по истории ников выдавала бы чужой.
  */
 export function applyMatchAliases(resolver: AliasResolver): void {
+  setReviewAliasResolver(resolver);
   document
     .querySelectorAll<HTMLElement>(`${SITE.statsTable} ${SITE.statsUsernameCell}:not(${SITE.statsTitleCell})`)
     .forEach((cell) => {

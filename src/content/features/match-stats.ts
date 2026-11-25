@@ -14,10 +14,9 @@ import { escapeHtml } from "@core/escape";
 import { actionTip, isLiftBallot, resolveDayOutcome, voteRoundName } from "../match-outcome";
 import { log } from "@core/log";
 import { getLastGameData, getMatchId } from "../match-data";
-import { analyzeMafiaShots, type NightShooting } from "../mafia-shots";
+import { analyzeMafiaShots, shotIconTitle } from "../mafia-shots";
 import { buildMatchReview, type ReviewBestMove } from "../match-review-data";
 import { createMatchReview, createMatchReviewState, type MatchReviewState } from "../match-review-view";
-import { MATCH_REVIEW_STYLES } from "../match-review-styles";
 import type { Feature, FeatureContext } from "@core/feature";
 import type { Settings } from "@shared/types";
 
@@ -48,7 +47,10 @@ let latestGameData: any = null;
 let renderGeneration = 0;
 let fullReview: ReturnType<typeof createMatchReview> | null = null;
 let fullReviewTable: HTMLElement | null = null;
+let fullReviewAnchor: HTMLElement | null = null;
+let fullReviewHeader: HTMLElement | null = null;
 let fullReviewState: MatchReviewState | null = null;
+const REPLACED_BY_REVIEW = "data-pn-review-replaced";
 /**
  * Ожидание таблицы от ПРЕДЫДУЩЕГО enhance(). Обязано быть модульным: два
  * enhance() подряд быстрее 500мс (пользователь листает виды в select'е
@@ -207,7 +209,9 @@ function enhance(gameData: any): void {
     getMatchId() === matchIdAtStart && statsEnabled();
 
   const header = document.querySelector<HTMLElement>(SITE.statsHeader);
-  if (header) {
+  if (viewMode() === "hints") {
+    restoreHeader();
+  } else if (header) {
     const gameId = gameData.id || "";
     if (header !== originalHeaderElement) restoreHeader();
     if (originalHeaderHtml === null) {
@@ -267,22 +271,32 @@ function enhance(gameData: any): void {
     const view = viewMode();
     const moves = collectBestMoves(gameData);
     if (view === "hints") {
+      const review = buildMatchReview(gameData.data, moves, gameData.players);
+      // Если сайт вернул только обёртку, не заменяем рабочую разметку пустой.
+      if (!review.players.length) return;
       const anchor = table.closest<HTMLElement>(SITE.statsTableRoot) ?? table;
-      appendStyle(MATCH_REVIEW_STYLES, "pn-match-review-styles");
+      appendStyle(
+        `[${REPLACED_BY_REVIEW}] { display: none !important; }
+         html[data-pn-hide-rating] .pn-match-review { --pn-mr-rating-display: none; }`,
+        "pn-match-review-bridge",
+      );
       fullReviewState ??= createMatchReviewState();
-      fullReview = createMatchReview(buildMatchReview(gameData.data, moves), fullReviewState);
+      fullReview = createMatchReview(review, fullReviewState, {
+        id: matchIdAtStart, winner: winnerBadge(gameData.winnerCode).text, mafiaWon: gameData.winnerCode === 1,
+        judge: typeof gameData.judge?.username === "string" ? gameData.judge.username : undefined,
+      });
       fullReviewTable = table;
+      fullReviewAnchor = anchor;
       anchor.before(fullReview.root);
-      linkPlayerNames(table, gameData.data.players || []);
-    } else {
-      enhanceTable(table, gameData, view === "classic");
+      anchor.setAttribute(REPLACED_BY_REVIEW, "");
+      replaceNativeHeader();
+      return;
     }
+    enhanceTable(table, gameData, view === "classic");
     trackTimeout(() => {
       if (!current() || !table.isConnected) return;
-      if (view !== "hints") {
-        addBestMoveIndicators(table, moves);
-        addPenaltyIndicators(table, gameData);
-      }
+      addBestMoveIndicators(table, moves);
+      addPenaltyIndicators(table, gameData);
       addShotIcons(table, gameData);
     }, 100);
   };
@@ -364,10 +378,22 @@ function unlinkPlayerNames(root: ParentNode = document): void {
   });
 }
 
+function replaceNativeHeader(): void {
+  const header = document.querySelector<HTMLElement>(SITE.statsHeader);
+  if (header === fullReviewHeader) return;
+  fullReviewHeader?.removeAttribute(REPLACED_BY_REVIEW);
+  fullReviewHeader = header;
+  header?.setAttribute(REPLACED_BY_REVIEW, "");
+}
+
 function removeEnhancements(): void {
   fullReview?.dispose();
   fullReview = null;
   fullReviewTable = null;
+  fullReviewAnchor?.removeAttribute(REPLACED_BY_REVIEW);
+  fullReviewAnchor = null;
+  fullReviewHeader?.removeAttribute(REPLACED_BY_REVIEW);
+  fullReviewHeader = null;
   document
     .querySelectorAll(
       `${SITE.statsRowPhase}, ${SITE.bestMoveDot}, ${SITE.penaltyDots}, .pn-timeline, .pn-shot-icon`,
@@ -609,32 +635,6 @@ function enhanceTable(table: HTMLElement, gameData: any, classic: boolean): void
  * mafia-shots.ts (уведший от большинства; при ничьей виновны все).
  */
 const SHOT_ICON_CLASS = "pn-shot-icon";
-
-export function shotIconTitle(position: number, nights: NightShooting[]): string {
-  const lines: string[] = ["Стрельба мафии"];
-  let teamMisses = 0;
-  let blamedHere: number[] = [];
-  for (const n of nights) {
-    if (n.missed) teamMisses++;
-    const own = n.shots.find((sh) => sh.shooter === position);
-    if (!own) continue;
-    let outcome: string;
-    if (!n.missed) {
-      outcome = `убит ${n.victim}`;
-    } else if (n.blamed.includes(position)) {
-      blamedHere.push(n.alive);
-      outcome = n.blamed.length === n.shots.length ? "ПРОМАХ — не сведено" : "ПРОМАХ — увёл выстрел";
-    } else {
-      outcome = "промах команды (не его)";
-    }
-    lines.push(`ночь ${n.night} · в ${n.alive} · → ${own.victim} · ${outcome}`);
-  }
-  lines.push(
-    `Промахов команды: ${teamMisses} · виновен: ${blamedHere.length}` +
-      (blamedHere.length ? ` (${blamedHere.map((a) => `в ${a}`).join(", ")})` : ""),
-  );
-  return lines.join("\n");
-}
 
 export function addShotIcons(table: HTMLElement, gameData: any): void {
   const players = gameData?.data?.players;
@@ -1792,9 +1792,11 @@ function startMatchRoute(matchId: string): void {
     if (getMatchId() !== matchId || !statsEnabled()) return;
     // Vue мог пересоздать секцию того же матча. Панель привязана к живой
     // таблице; если якорь исчез, восстанавливаем её один раз по тем же данным.
-    if (fullReview && (!fullReview.root.isConnected || !fullReviewTable?.isConnected)) {
+    if (fullReview && (!fullReview.root.isConnected || !fullReviewTable?.isConnected || !fullReviewAnchor?.isConnected)) {
       pendingGameData = latestGameData;
       removeEnhancements();
+    } else if (fullReview) {
+      replaceNativeHeader();
     }
     if (!pendingGameData) return;
     // SharedDomObserver уже дросселирует проходы. Дополнительный time-gate

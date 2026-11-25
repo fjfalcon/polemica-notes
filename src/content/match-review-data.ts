@@ -39,6 +39,24 @@ export interface MatchReviewInput {
   stage?: Stage;
 }
 
+export interface MatchReviewSummaryPlayer {
+  id?: number | string;
+  username?: string;
+  role_val?: number;
+  points?: number | null;
+  mmr_diff?: number | null;
+}
+
+export interface ReviewPlayer {
+  position: number;
+  username?: string;
+  formerName?: string;
+  id?: number;
+  role?: number;
+  points?: number;
+  mmrDiff?: number;
+}
+
 export interface ReviewRound {
   num: number;
   votes: MatchVote[];
@@ -76,7 +94,7 @@ export interface ReviewDay {
 }
 
 export interface MatchReview {
-  players: Player[];
+  players: ReviewPlayer[];
   positions: number[];
   days: ReviewDay[];
 }
@@ -84,6 +102,38 @@ export interface MatchReview {
 const list = <T>(value?: T[]): T[] => Array.isArray(value) ? value : [];
 const isPositiveInt = (value: unknown): value is number =>
   Number.isSafeInteger(value) && (value as number) > 0;
+
+function playerId(value: number | string | undefined): number | undefined {
+  const id = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  return isPositiveInt(id) ? id : undefined;
+}
+
+const score = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+function reviewPlayers(players: Player[], summary: MatchReviewSummaryPlayer[]): ReviewPlayer[] {
+  const byId = new Map<number, MatchReviewSummaryPlayer>();
+  for (const row of summary) {
+    const id = playerId(row?.id);
+    if (id !== undefined) byId.set(id, row);
+  }
+  return players.map((p) => {
+    const id = playerId(p.player);
+    // История (data.players) хранит ник за столом, итог сайта (players) может
+    // вернуть другой. Сводим по аккаунту, не по нику и не по индексу массива.
+    const result = id !== undefined ? byId.get(id) : undefined;
+    const username = typeof result?.username === "string" && result.username.trim()
+      ? result.username : p.username;
+    return {
+      position: p.position, id,
+      username,
+      formerName: typeof p.username === "string" && p.username.trim() && p.username !== username ? p.username : undefined,
+      role: p.role ?? result?.role_val,
+      points: score(result?.points),
+      mmrDiff: score(result?.mmr_diff),
+    };
+  });
+}
 
 function roundFrom(num: number, votes: MatchVote[]): ReviewRound {
   const byPosition = new Map<number, (number | undefined)[]>();
@@ -142,7 +192,11 @@ function eventsFor(players: Player[], day: ReviewDay): void {
   }
 }
 
-export function buildMatchReview(input: MatchReviewInput, moves: readonly ReviewBestMove[] = []): MatchReview {
+export function buildMatchReview(
+  input: MatchReviewInput,
+  moves: readonly ReviewBestMove[] = [],
+  summary?: MatchReviewSummaryPlayer[],
+): MatchReview {
   const players = list(input.players).filter((p) => isPositiveInt(p?.position))
     .sort((a, b) => a.position - b.position);
   const votes = list(input.votes).filter((v) => isPositiveInt(v?.day) &&
@@ -215,5 +269,5 @@ export function buildMatchReview(input: MatchReviewInput, moves: readonly Review
   }
   for (const s of shots) { positions.add(s.shooter); positions.add(s.victim); }
   for (const c of checks) positions.add(c.player);
-  return { players, days, positions: [...positions].sort((a, b) => a - b) };
+  return { players: reviewPlayers(players, list(summary)), days, positions: [...positions].sort((a, b) => a - b) };
 }
