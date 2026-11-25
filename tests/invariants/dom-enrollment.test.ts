@@ -79,8 +79,6 @@ const EXEMPT: Record<string, { count: number; reason: string }> = {
     { count: 1, reason: "держит <style> (сравнение textContent перед записью) и классы-метки с contains-гейтами; узлы не переставляет" },
   "src/content/features/hotkey-hints.ts":
     { count: 1, reason: "подпись клавиши пишется только при отличии текста (сравнение перед записью)" },
-  "src/content/features/match-stats.ts":
-    { count: 1, reason: "обогащение таблицы разбора однократное, помечено классом-маркером; route-lifecycle гасит повтор" },
   "src/content/features/nick-plate.ts":
     { count: 1, reason: "syncOpenAttrs пишет open-атрибут только при расхождении с Set opened (сравнение перед записью); гейты compactOn/childList" },
   "src/content/features/player-notes.ts":
@@ -146,6 +144,7 @@ describe("зачисление DOM-подписчиков (§4, механика
     const COVERED_COUNTS: Record<string, number> = {
       "src/content/features/auto-ready.ts": 1,
       "src/content/features/hide-rating.ts": 1,
+      "src/content/features/match-stats.ts": 1,
       "src/content/features/mic-sync.ts": 1,
       "src/content/features/player-action-keys.ts": 1,
       "src/content/features/profile-crossover.ts": 1,
@@ -179,6 +178,7 @@ describe("зачисление DOM-подписчиков (§4, механика
     expect([...coveredByFixpoint()]).toEqual([
       "src/content/features/auto-ready.ts",
       "src/content/features/hide-rating.ts",
+      "src/content/features/match-stats.ts",
       "src/content/features/mic-sync.ts",
       "src/content/features/player-action-keys.ts",
       "src/content/features/profile-crossover.ts",

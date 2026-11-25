@@ -11,10 +11,13 @@
 import { SITE, SITE_CLASS } from "@core/selectors";
 import { onDomChange } from "@core/dom";
 import { escapeHtml } from "@core/escape";
-import { actionTip, isLiftBallot, resolveDayOutcome } from "../match-outcome";
+import { actionTip, isLiftBallot, resolveDayOutcome, voteRoundName } from "../match-outcome";
 import { log } from "@core/log";
 import { getLastGameData, getMatchId } from "../match-data";
 import { analyzeMafiaShots, type NightShooting } from "../mafia-shots";
+import { buildMatchReview, type ReviewBestMove } from "../match-review-data";
+import { createMatchReview, createMatchReviewState, type MatchReviewState } from "../match-review-view";
+import { MATCH_REVIEW_STYLES } from "../match-review-styles";
 import type { Feature, FeatureContext } from "@core/feature";
 import type { Settings } from "@shared/types";
 
@@ -38,9 +41,14 @@ let previousRouteTable: WeakRef<HTMLElement> | null = null;
 let previousRouteTableHtml = "";
 let previousRouteMatchId: string | null = null;
 let routeReadyInterval: ReturnType<typeof setInterval> | null = null;
+let autoHeightInterval: ReturnType<typeof setInterval> | null = null;
 let routeDomUnsub: (() => void) | null = null;
 let pendingGameData: any = null;
-let lastPendingRetryAt = 0;
+let latestGameData: any = null;
+let renderGeneration = 0;
+let fullReview: ReturnType<typeof createMatchReview> | null = null;
+let fullReviewTable: HTMLElement | null = null;
+let fullReviewState: MatchReviewState | null = null;
 /**
  * Ожидание таблицы от ПРЕДЫДУЩЕГО enhance(). Обязано быть модульным: два
  * enhance() подряд быстрее 500мс (пользователь листает виды в select'е
@@ -144,9 +152,10 @@ function applyScope(el: HTMLElement, scopeAttr: string | null): void {
   if (scopeAttr) el.setAttribute(scopeAttr, "");
 }
 
-/** Вид разбора: hints (подсказки) | legend (только сводка) | classic (старый вид). */
-function viewMode(): string {
-  return settings?.match_stats_view || "hints";
+/** Ключ hints остаётся прежним: он уже записан в настройках пользователей. */
+function viewMode(): "hints" | "legend" | "classic" {
+  const view = settings?.match_stats_view;
+  return view === "legend" || view === "classic" ? view : "hints";
 }
 
 function statsEnabled(): boolean {
@@ -176,13 +185,15 @@ function enhance(gameData: any): void {
   // Идемпотентность + защита от SPA-гонки: повторное событие или ожидание
   // таблицы, пережившее переход на другой матч, раньше давало дубликаты строк
   // и вставку данных ЧУЖОГО матча в свежеоткрытую таблицу.
-  const matchIdAtStart = getMatchId() || "";
+  const matchIdAtStart = getMatchId();
+  if (!statsEnabled() || !gameData?.data || !matchIdAtStart || activeMatchId !== matchIdAtStart) return;
   // Данные должны принадлежать ЭТОЙ странице: кэш getLastGameData при
   // перевключении тумблера после SPA-перехода приносил матч A на страницу B.
   if (gameData?.id && String(gameData.id) !== matchIdAtStart) {
     log.debug(SCOPE, "cached data is for another match, skip", gameData.id, matchIdAtStart);
     return;
   }
+  latestGameData = gameData;
   if (!isRouteDomReady()) {
     pendingGameData = gameData;
     return;
@@ -190,10 +201,15 @@ function enhance(gameData: any): void {
   pendingGameData = null;
   clearPreviousRouteSnapshot();
   removeEnhancements();
+  const generation = ++renderGeneration;
+  const current = (): boolean =>
+    renderGeneration === generation && activeMatchId === matchIdAtStart &&
+    getMatchId() === matchIdAtStart && statsEnabled();
 
   const header = document.querySelector<HTMLElement>(SITE.statsHeader);
   if (header) {
     const gameId = gameData.id || "";
+    if (header !== originalHeaderElement) restoreHeader();
     if (originalHeaderHtml === null) {
       originalHeaderHtml = header.innerHTML;
       originalHeaderElement = header;
@@ -235,34 +251,52 @@ function enhance(gameData: any): void {
   // Ждём появления таблицы.
   // Гасим ожидание от предыдущего enhance(), иначе оба дорисуют фазы.
   if (tableCheckInterval !== null) clearTrackedInterval(tableCheckInterval);
-  const checkTable = trackInterval(
-    setInterval(() => {
-      // SPA-переход на другой матч — данные этого больше не актуальны.
-      if ((getMatchId() || "") !== matchIdAtStart) {
-        clearTrackedInterval(checkTable);
-        if (tableCheckInterval === checkTable) tableCheckInterval = null;
-        return;
-      }
-      const table = document.querySelector<HTMLElement>(SITE.statsTable);
-      if (table) {
-        clearTrackedInterval(checkTable);
-        if (tableCheckInterval === checkTable) tableCheckInterval = null;
-        enhanceTable(table, gameData);
-        // Небольшая задержка для гарантированного добавления точек.
-        trackTimeout(() => {
-          addPenaltyIndicators(table, gameData);
-        }, 100);
-      } else {
-        log.debug(SCOPE, "Table not found, retrying...");
-      }
-    }, 500),
-  );
-  tableCheckInterval = checkTable;
-
-  // Прекращаем поиск через 10 секунд.
-  trackTimeout(() => {
+  const stopTableCheck = (): void => {
     clearTrackedInterval(checkTable);
     if (tableCheckInterval === checkTable) tableCheckInterval = null;
+  };
+  const tryRender = (): void => {
+    // SPA-переход на другой матч — данные этого больше не актуальны.
+    if (!current()) {
+      stopTableCheck();
+      return;
+    }
+    const table = document.querySelector<HTMLElement>(SITE.statsTable);
+    if (!table) return;
+    stopTableCheck();
+    const view = viewMode();
+    const moves = collectBestMoves(gameData);
+    if (view === "hints") {
+      const anchor = table.closest<HTMLElement>(SITE.statsTableRoot) ?? table;
+      appendStyle(MATCH_REVIEW_STYLES, "pn-match-review-styles");
+      fullReviewState ??= createMatchReviewState();
+      fullReview = createMatchReview(buildMatchReview(gameData.data, moves), fullReviewState);
+      fullReviewTable = table;
+      anchor.before(fullReview.root);
+      linkPlayerNames(table, gameData.data.players || []);
+    } else {
+      enhanceTable(table, gameData, view === "classic");
+    }
+    trackTimeout(() => {
+      if (!current() || !table.isConnected) return;
+      if (view !== "hints") {
+        addBestMoveIndicators(table, moves);
+        addPenaltyIndicators(table, gameData);
+      }
+      addShotIcons(table, gameData);
+    }, 100);
+  };
+  const checkTable = trackInterval(setInterval(tryRender, 500));
+  tableCheckInterval = checkTable;
+
+  // На дедлайне пробуем ещё раз: наблюдатель мог уже обработать появление
+  // таблицы с пустым pendingGameData, а очередной тик таймера задержаться.
+  trackTimeout(() => {
+    if (tableCheckInterval !== checkTable) return;
+    tryRender();
+    if (tableCheckInterval !== checkTable) return;
+    pendingGameData = gameData;
+    stopTableCheck();
   }, 10000);
 }
 
@@ -331,6 +365,9 @@ function unlinkPlayerNames(root: ParentNode = document): void {
 }
 
 function removeEnhancements(): void {
+  fullReview?.dispose();
+  fullReview = null;
+  fullReviewTable = null;
   document
     .querySelectorAll(
       `${SITE.statsRowPhase}, ${SITE.bestMoveDot}, ${SITE.penaltyDots}, .pn-timeline, .pn-shot-icon`,
@@ -436,13 +473,10 @@ function renderVotesBlock(
  * не встречался в данных (ожидаемо `candidate: 0`).
  */
 
-function enhanceTable(table: HTMLElement, gameData: any): void {
+function enhanceTable(table: HTMLElement, gameData: any, classic: boolean): void {
   const gameDetails = gameData.data || {};
   const players = gameDetails.players || [];
   const phases = processGamePhases(gameDetails);
-  // Один раз на перерисовку: enhanceTable синхронна, вид посреди неё не меняется.
-  const classic = viewMode() === "classic";
-
   linkPlayerNames(table, players);
 
   const rows = Array.from(table.querySelectorAll<HTMLElement>(SITE.statsRow));
@@ -498,18 +532,14 @@ function enhanceTable(table: HTMLElement, gameData: any): void {
       // голосов «за подъём» рисовались ложными «Выс» в ячейке игрока №1
       // (реальный кейс: docs/fixtures/match_598995.json, день 4).
       const votes = phase.day.filter((a: any) => a.to === player.position && !a.lift);
-      // «Как в старой версии» = выставления (num 0) не показываются вовсе.
-      // Это не упрощение, а точное поведение legacy: processGamePhases там
-      // (legacy/match-enhancer.js:651-694) клал в phase.day ТОЛЬКО num 1 и 2,
-      // поэтому `!v.num` в его фильтре на строке 140 был мёртвым кодом.
-      // Следствие, которое надо знать: день без голосования (в
-      // legacy/match_314446.json это день 1 — одни выставления) в этом режиме
-      // пустой — и это НЕ баг рендера. Так было в старой версии; наш classic
-      // в 8.1.34-8.1.35 ошибочно показывал выставления, с 8.1.36 не показывает.
-      // Кому нужны выставления — два других вида.
-      const firstVotes = votes.filter((v: any) => (classic ? v.num === 1 : !v.num));
-      const secondVotes = classic ? [] : votes.filter((v: any) => v.num === 1);
-      const thirdVotes = votes.filter((v: any) => v.num === 2);
+      // Classic, как прежде, не показывает выставления и подписи, но реальные
+      // туры голосования больше не ограничены двумя (match/673463).
+      const rounds = new Map<number, any[]>();
+      for (const v of votes) {
+        if (!Number.isSafeInteger(v.num) || v.num < (classic ? 1 : 0)) continue;
+        if (!rounds.has(v.num)) rounds.set(v.num, []);
+        rounds.get(v.num)!.push(v);
+      }
       // Бюллетень рисуем в ячейках ничейных кандидатов финального тура (по
       // просьбе владельца: «должно быть в игроках 4 и 5, а не у №1»). Не в
       // classic: legacy его не знал и не рисовал.
@@ -519,40 +549,15 @@ function enhanceTable(table: HTMLElement, gameData: any): void {
           : [];
 
       let html = "";
-      const labeled = !classic;
-      if (firstVotes.length > 0) {
+      for (const [num, round] of [...rounds].sort(([a], [b]) => a - b)) {
+        const title = voteRoundName(num);
         html += renderVotesBlock(
-          firstVotes,
+          round,
           players,
-          "",
-          classic ? `Голосование за №${player.position}` : `Выставление №${player.position}`,
-          // В classic этот блок несёт ГОЛОСОВАНИЕ, а не выставление: подписи
-          // тоже условны, иначе включение labeled в classic напишет «Выс» над
-          // чипами голосов.
-          labeled ? "Выс" : "",
-          classic ? "Голосование" : "Выставление",
-        );
-      }
-      if (secondVotes.length > 0) {
-        html += renderVotesBlock(
-          secondVotes,
-          players,
-          "margin-top: 4px;",
-          `Голосование за №${player.position}`,
-          labeled ? "Гол" : "",
-          "Голосование",
-        );
-      }
-      if (thirdVotes.length > 0) {
-        html += renderVotesBlock(
-          thirdVotes,
-          players,
-          "margin-top: 4px;",
-          `Повторное голосование за №${player.position}`,
-          // Термины владельца (26.07.2026): num 2 — «повторное голосование»
-          // (перестрелка ничейных кандидатов), а «подъём» — это БЮЛЛЕТЕНЬ ниже.
-          labeled ? "перегол." : "",
-          "Повторное голосование",
+          html ? "margin-top: 4px;" : "",
+          `${title}${num === 0 ? "" : " за"} №${player.position}`,
+          classic ? "" : num === 0 ? "Выс" : num === 1 ? "Гол" : `Перег. ${num - 1}`,
+          title,
         );
       }
       if (liftBallot.length > 0) {
@@ -594,13 +599,7 @@ function enhanceTable(table: HTMLElement, gameData: any): void {
   // Таймлайн со сворачиванием: детальные строки фаз спрятаны, над таблицей —
   // компактная строка на каждый день (итог голосования + ночь + штрафы);
   // клик по строке раскрывает подробности. Таблица вдвое короче.
-  buildPhaseTimeline(table, players, phases, gameDetails);
-
-  trackTimeout(() => {
-    addBestMoveIndicators(table, gameData);
-    addShotIcons(table, gameData);
-    log.debug(SCOPE, "Best move indicators added");
-  }, 100);
+  if (!classic) buildPhaseTimeline(table, players, phases, gameDetails);
 }
 
 /**
@@ -714,10 +713,6 @@ function buildPhaseTimeline(
   phases: Array<{ day: any[]; night: any[] }>,
   gameDetails: any,
 ): void {
-  // classic — старый вид: без сводки, детали видны, подписи туров выключены.
-  if (viewMode() === "classic") return;
-  const compact = viewMode() === "legend";
-
   const detailRowsByPhase = new Map<number, HTMLElement[]>();
   table.querySelectorAll<HTMLElement>(".row[data-phase]").forEach((row) => {
     const m = row.getAttribute("data-phase")?.match(/^(?:day|night)-(\d+)$/);
@@ -725,8 +720,7 @@ function buildPhaseTimeline(
     const n = parseInt(m[1], 10);
     if (!detailRowsByPhase.has(n)) detailRowsByPhase.set(n, []);
     detailRowsByPhase.get(n)!.push(row);
-    // hints: детали раскрыты, сводка по клику. legend: наоборот — компакт.
-    if (compact) row.style.display = "none";
+    row.style.display = "none";
     row.classList.add("pn-phase-detail");
   });
   if (detailRowsByPhase.size === 0) return;
@@ -739,14 +733,11 @@ function buildPhaseTimeline(
   const timeline = document.createElement("div");
   timeline.className = "pn-timeline";
 
-  // Свёрнут по умолчанию (решение владельца): детали фаз в таблице и так
-  // раскрыты, разворачивать сводку сверху — по клику на заголовок.
   const tlHeader = document.createElement("div");
   tlHeader.className = "pn-tl-header";
-  tlHeader.innerHTML = `<span class="pn-tl-toggle">${compact ? "▾" : "▸"}</span> Сводка по дням`;
+  tlHeader.innerHTML = '<span class="pn-tl-toggle">▾</span> Сводка по дням';
   const tlBody = document.createElement("div");
   tlBody.className = "pn-tl-body";
-  if (!compact) tlBody.style.display = "none";
   tlHeader.addEventListener("click", () => {
     const show = tlBody.style.display === "none";
     tlBody.style.display = show ? "" : "none";
@@ -762,7 +753,7 @@ function buildPhaseTimeline(
       gameDetails.votes || [],
       n,
     );
-    const tourName = finalNum === 0 ? "" : finalNum === 1 ? " (голос.)" : " (перегол.)";
+    const tourName = finalNum === 0 ? "" : finalNum === 1 ? " (голос.)" : ` (перегол. ${finalNum - 1})`;
     // Гард по finalNum, а не по номеру дня: день из одних выставлений — это не
     // ничья (голосования не было), а настоящая ничья в первом дне существует,
     // если у стола включён zeroVoting. Прежний `n > 1` врал в обе стороны.
@@ -810,7 +801,7 @@ function buildPhaseTimeline(
     const line = document.createElement("div");
     line.className = "pn-tl-line";
     line.innerHTML =
-      `<span class="pn-tl-toggle">${compact ? "▸" : "▾"}</span>` +
+      '<span class="pn-tl-toggle">▸</span>' +
       `<span class="pn-tl-phase">${n} ☀️</span><span class="pn-tl-group">${dayHtml}</span>` +
       (nightHtml ? `<span class="pn-tl-phase">🌙</span><span class="pn-tl-group">${nightHtml}</span>` : "") +
       penaltyHtml;
@@ -901,35 +892,30 @@ function createNightRow(
 
 // ───────────────────────── индикаторы «лучшего хода» ─────────────────────────
 
-function addBestMoveIndicators(table: HTMLElement, gameData: any): void {
+function collectBestMoves(gameData: any): ReviewBestMove[] {
   const players = gameData.data?.players || [];
-
+  const moves: ReviewBestMove[] = [];
   players.forEach((player: any) => {
-    if (
-      player.guess?.completed ||
-      player.guess?.mafs ||
-      player.guess?.civs ||
-      player.guess?.vice !== undefined
-    ) {
-      const playerPosition = player.position;
-      const hasGuesses =
-        (player.guess.mafs && player.guess.mafs.length > 0) ||
-        (player.guess.civs && player.guess.civs.length > 0) ||
-        player.guess.vice !== undefined;
-
-      if (hasGuesses) {
-        const shotNight = findShotNight(playerPosition, gameData);
-        const votedDay = shotNight === null ? findVotedDay(playerPosition, gameData) : null;
-
-        if (shotNight !== null) {
-          addDotToCell(table, playerPosition, "night", shotNight, player.guess);
-        } else if (votedDay !== null) {
-          addDotToCell(table, playerPosition, "day", votedDay, player.guess);
-        }
-      }
-    }
+    const guess = player?.guess;
+    if (!guess || !Number.isSafeInteger(player.position) || player.position <= 0) return;
+    const lines: string[] = [];
+    if (Array.isArray(guess.mafs) && guess.mafs.length) lines.push(`Черные: ${guess.mafs.join(" ")}`);
+    if (Array.isArray(guess.civs) && guess.civs.length) lines.push(`Мирные: ${guess.civs.join(" ")}`);
+    if (guess.vice !== undefined) lines.push(`Руль: ${guess.vice}`);
+    if (!lines.length) return;
+    const shotNight = findShotNight(player.position, gameData);
+    const day = shotNight ?? findVotedDay(player.position, gameData);
+    if (day !== null) moves.push({
+      player: player.position, day, night: shotNight !== null, description: lines.join("\n"),
+    });
   });
+  return moves;
+}
 
+function addBestMoveIndicators(table: HTMLElement, moves: ReviewBestMove[]): void {
+  for (const move of moves) {
+    addDotToCell(table, move.player, move.night ? "night" : "day", move.day, move.description);
+  }
   addBestMoveStyles();
 }
 
@@ -938,7 +924,7 @@ function addDotToCell(
   playerPosition: number,
   phaseType: "night" | "day",
   phaseNumber: number,
-  guessData: any,
+  description: string,
 ): void {
   const rows = table.querySelectorAll<HTMLElement>(SITE.statsRow);
   rows.forEach((row) => {
@@ -959,11 +945,7 @@ function addDotToCell(
         // Контент — в title: тултип-фича вынесет его в body с position:fixed,
         // как у штрафов. Прежний sibling-тултип (absolute внутри ячейки)
         // срезался границей строки и накрывался строками Итог/MMR.
-        const lines = ["Лучший ход"];
-        if (guessData.mafs?.length) lines.push(`Черные: ${guessData.mafs.join(" ")}`);
-        if (guessData.civs?.length) lines.push(`Мирные: ${guessData.civs.join(" ")}`);
-        if (guessData.vice !== undefined) lines.push(`Руль: ${guessData.vice}`);
-        dot.title = lines.join("\n");
+        dot.title = `Лучший ход\n${description}`;
 
         playerCell.appendChild(dot);
       }
@@ -1111,22 +1093,15 @@ function processGamePhases(gameDetails: any): Array<{ day: any[]; night: any[] }
     () => ({ day: [], night: [] }),
   );
 
-  // Туры голосования (AGENTS.md §4 п.8, термины сообщества):
-  // num=0 — ВЫСТАВЛЕНИЕ (заявки в речах), num=1 — голосование, num=2 — подъём.
-  // Раньше обрабатывались только num===1 и num===2: выставление вообще не
-  // попадало в таблицу. (isLeading убран — его никто не рендерил.)
-  // НЕ «исправлять» на основной/переголосовку — этот misread уже дважды
-  // порождал баги (день ухода по выставлениям; classic-режим 8.1.34-8.1.35).
+  // num=0 — выставление, num=1 — голосование, num>=2 — переголосования.
   votes.forEach((vote: any) => {
     if (!vote.day || vote.day <= 0 || vote.day > maxDay) return;
     phases[vote.day - 1].day.push({
       type: "vote",
       from: vote.voter,
       to: vote.candidate,
-      num: vote.num || 0,
-      // Запись БЕЗ num — бюллетень «поднимаем всех?» (candidate 1 = «за»),
-      // НЕ голос за игрока. Без флага `vote.num || 0` сливал его с
-      // выставлениями (шесть ложных «Выс» у №1 в match_598995, день 4).
+      num: vote.num,
+      // Бюллетень «поднимаем всех?» (candidate 1 = «за») — не голос за №1.
       lift: isLiftBallot(vote),
     });
   });
@@ -1775,7 +1750,8 @@ function stopMatchRoute(preserveSnapshot = true): void {
   restoreHeader();
   restoreInlineStyles();
   pendingGameData = null;
-  lastPendingRetryAt = 0;
+  latestGameData = null;
+  fullReviewState = null;
   if (leavingMatchId && preserveSnapshot) {
     clearPreviousRouteSnapshot();
     previousRouteMatchId = leavingMatchId;
@@ -1785,7 +1761,16 @@ function stopMatchRoute(preserveSnapshot = true): void {
     clearPreviousRouteSnapshot();
   }
   routeReadyInterval = null;
+  autoHeightInterval = null;
+  tableCheckInterval = null;
   activeMatchId = null;
+}
+
+function ensureAutoHeight(): void {
+  applyAutoHeight();
+  if (autoHeightInterval === null) {
+    autoHeightInterval = trackInterval(setInterval(applyAutoHeight, 5000));
+  }
 }
 
 function startMatchRoute(matchId: string): void {
@@ -1800,18 +1785,23 @@ function startMatchRoute(matchId: string): void {
   injectBaseStyles();
 
   routeDomUnsub = onDomChange(() => {
-    if (routeReadyInterval !== null || !pendingGameData || activeMatchId !== matchId) return;
+    if (routeReadyInterval !== null || activeMatchId !== matchId) return;
     // URL уже мог смениться, а роутер (поллинг 500мс) ещё не среконсилил роут:
     // без этого гейта enhance() выходил по несовпадению id, НЕ очищая pending,
     // и каждый DOM-флеш окна навешивал новый setInterval(applyAutoHeight).
-    if ((location.pathname.split("/").pop() || "") !== matchId) return;
-    const now = Date.now();
-    if (now - lastPendingRetryAt < 500) return;
-    lastPendingRetryAt = now;
+    if (getMatchId() !== matchId || !statsEnabled()) return;
+    // Vue мог пересоздать секцию того же матча. Панель привязана к живой
+    // таблице; если якорь исчез, восстанавливаем её один раз по тем же данным.
+    if (fullReview && (!fullReview.root.isConnected || !fullReviewTable?.isConnected)) {
+      pendingGameData = latestGameData;
+      removeEnhancements();
+    }
+    if (!pendingGameData) return;
+    // SharedDomObserver уже дросселирует проходы. Дополнительный time-gate
+    // терял единственную мутацию при быстрой вставке таблицы после удаления.
     if (!isRouteDomReady()) return;
     clearPreviousRouteSnapshot();
-    applyAutoHeight();
-    trackInterval(setInterval(applyAutoHeight, 5000));
+    ensureAutoHeight();
     enhance(pendingGameData);
   });
 
@@ -1828,8 +1818,7 @@ function startMatchRoute(matchId: string): void {
       clearTrackedInterval(routeReadyInterval!);
       routeReadyInterval = null;
       clearPreviousRouteSnapshot();
-      applyAutoHeight();
-      trackInterval(setInterval(applyAutoHeight, 5000));
+      ensureAutoHeight();
       if (pendingGameData) enhance(pendingGameData);
     }, 100),
   );
@@ -1847,7 +1836,7 @@ function startMatchRoute(matchId: string): void {
 
 /** Вызывается единым URL-роутером content/index.ts. */
 export function syncMatchStatsRoute(matchId: string | null): void {
-  if (!settings || !matchId) {
+  if (!settings || !statsEnabled() || !matchId) {
     if (activeMatchId) stopMatchRoute(false);
     return;
   }
@@ -1864,18 +1853,18 @@ export const matchStatsFeature: Feature = {
   },
 
   update(ctx: FeatureContext): void {
-    const prevView = settings?.match_stats_view;
+    const prevView = viewMode();
     settings = ctx.settings;
-    // Смена вида разбора — мгновенная перерисовка без F5.
-    if (statsEnabled() && prevView !== ctx.settings.match_stats_view && activeMatchId) {
-      const cached = getLastGameData();
-      if (cached) enhance(cached);
-    }
-    // Если статистика выключена настройкой — снимаем добавленные элементы
-    // и возвращаем заголовок сайта (раньше он оставался нашим).
     if (!statsEnabled()) {
-      removeEnhancements();
-      restoreHeader();
+      if (activeMatchId) stopMatchRoute(false);
+      return;
+    }
+    const matchId = getMatchId();
+    if (!matchId || activeMatchId !== matchId) {
+      syncMatchStatsRoute(matchId);
+    } else if (prevView !== viewMode()) {
+      const cached = latestGameData ?? getLastGameData();
+      if (cached) enhance(cached);
     }
   },
 

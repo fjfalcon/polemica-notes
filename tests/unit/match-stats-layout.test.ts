@@ -18,6 +18,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 vi.mock("@core/dom", () => ({
   onDomChange: vi.fn(() => () => {}),
+  registerOwnContainer: vi.fn(),
+  unregisterOwnContainer: vi.fn(),
   safeClick: vi.fn(),
   isVisible: () => true,
 }));
@@ -38,14 +40,17 @@ vi.mock("@core/messaging", () => ({
 }));
 vi.mock("@core/toast", () => ({ showToast: vi.fn(), clearToasts: vi.fn() }));
 vi.mock("../../src/content/match-data", () => ({
-  getMatchId: () => "616168",
+  getMatchId: () => location.pathname.match(/^\/match\/([^/]+)/)?.[1] ?? null,
   getLastGameData: () => null,
   parseMatchOnPage: vi.fn(),
 }));
 
-import { matchStatsFeature } from "@content/features/match-stats";
+import { matchStatsFeature, syncMatchStatsRoute } from "@content/features/match-stats";
+import { onDomChange } from "@core/dom";
 import { log } from "@core/log";
 import type { Settings } from "@shared/types";
+import match673463 from "../fixtures/match_673463.json";
+import match598995 from "../../docs/fixtures/match_598995.json";
 
 /**
  * Живые scope сайта на 07.08.2026 (в коде НЕ зашиты, читаются из DOM):
@@ -61,7 +66,7 @@ const ctx = {
   settings: {
     match_page_stats_enabled: true,
     statistics_enabled: true,
-    match_stats_view: "hints",
+    match_stats_view: "legend",
   } as unknown as Settings,
 };
 
@@ -108,8 +113,8 @@ const GAME_DATA = {
   winner: 1,
 };
 
-function fireGameData(): void {
-  document.dispatchEvent(new CustomEvent("gameDataParsed", { detail: GAME_DATA }));
+function fireGameData(detail: unknown = GAME_DATA): void {
+  document.dispatchEvent(new CustomEvent("gameDataParsed", { detail }));
   // Таблицу фича ждёт интервалом в 500 мс — без прокрутки строки не встанут.
   vi.advanceTimersByTime(600);
 }
@@ -120,8 +125,164 @@ const phaseRows = (): HTMLElement[] =>
 
 beforeEach(() => {
   vi.useFakeTimers();
+  history.replaceState(null, "", "/match/616168");
+  sessionStorage.clear();
   document.head.innerHTML = "";
   document.body.innerHTML = "";
+});
+
+describe("полный и прежние виды: три тура матча 673463", () => {
+  function context(view = "hints", enabled = true) {
+    return { settings: { ...ctx.settings, match_stats_view: view, statistics_enabled: enabled } };
+  }
+  const full = () => document.querySelector<HTMLElement>(".pn-match-review")!;
+  const pickView = (view: string) => full().querySelector<HTMLButtonElement>(`[data-pn-review-view="${view}"]`)!.click();
+  const pickDay = (n: number) => full().querySelector<HTMLButtonElement>(`[data-pn-review-day="${n}"]`)!.click();
+
+  function start(view = "hints", match = match673463.id) {
+    history.replaceState(null, "", `/match/${match}`);
+    buildSitePage(SCOPE_ATTR);
+    matchStatsFeature.enable(context(view));
+  }
+
+  test("хронология, таблица и фильтруемый журнал используют одни и те же три тура", () => {
+    start();
+    fireGameData(match673463);
+    const panel = full();
+    expect(panel.nextElementSibling).toBe(document.querySelector(".game-stats-table"));
+    expect(phaseRows()).toHaveLength(0);
+    const openDay = panel.querySelector(".pn-mr-day[open]")!;
+    expect(openDay.querySelector("summary")?.textContent).toMatch(/День 2.*3 тура/s);
+    expect(openDay.querySelector("summary")?.textContent).toContain("Ушёл №7 · 6:3");
+    expect(openDay.querySelectorAll(".pn-mr-card .pn-mr-leading")).toHaveLength(7); // 4 + 2 + 1
+    expect(openDay.querySelector(".pn-mr-final .pn-mr-leading .pn-mr-voters")?.textContent)
+      .toBe("Голосовали№1№3№5№6№7№10");
+    expect(openDay.textContent).toContain("Лучший ход");
+    expect(panel.querySelector('[data-pn-review-detail="3"] summary')?.textContent).toContain("Дисквалификация: №6");
+
+    pickView("table");
+    const rows = Array.from(panel.querySelectorAll<HTMLTableRowElement>("tbody tr"));
+    expect(rows).toHaveLength(4); // выставления отдельно
+    expect(Array.from(rows[1].querySelectorAll<HTMLTableCellElement>(".pn-mr-leading")).map((c) => c.cellIndex))
+      .toEqual([1, 3, 4, 7]);
+    expect(rows[3].cells[7].querySelector("b")?.textContent).toBe("6");
+    expect(rows[3].cells[1].querySelector("b")?.textContent).toBe("3");
+
+    pickView("journal");
+    const counts = () => Array.from(panel.querySelectorAll("[data-pn-review-round]"), (el) => el.querySelectorAll("li").length);
+    expect(counts()).toEqual([9, 9, 9]);
+    const select = panel.querySelector("select")!;
+    select.value = "7";
+    select.dispatchEvent(new Event("change"));
+    expect(counts()).toEqual([3, 4, 6]); // голосовал сам или голосовали за него
+    panel.querySelector<HTMLButtonElement>('[data-pn-review-jump="3"]')!.click();
+    expect(document.activeElement).toBe(panel.querySelector('[data-pn-review-round="3"]'));
+    pickDay(4);
+    expect(counts()).toEqual([]);
+    expect(panel.querySelector(".pn-mr-day-banner")?.textContent).toContain("Матч завершён");
+    pickView("table");
+    expect(panel.querySelector(".pn-mr-day-banner strong")?.textContent).toBe("День 4");
+  });
+
+  test.each(["legend", "classic"])("%s: видны все три тура матча", (view) => {
+    start(view);
+    fireGameData(match673463);
+    expect(full()).toBeNull();
+    const day = phaseRows().find((r) => r.dataset.phase === "day-2")!;
+    if (view === "legend") document.querySelectorAll<HTMLElement>(".pn-tl-line")[1].click();
+    expect(day.style.display).toBe("");
+    const player7 = day.querySelector('[data-player="7"]')!;
+    expect(Array.from(player7.querySelectorAll(".action"), (a) => a.querySelectorAll(".voter").length))
+      .toEqual(view === "legend" ? [1, 2, 3, 6] : [2, 3, 6]);
+    expect(Array.from(player7.querySelectorAll(".action")).at(-1)?.getAttribute("data-tip"))
+      .toBe("Переголосование 2 за №7");
+    expect(!!player7.querySelector(".pn-tour-label")).toBe(view === "legend");
+  });
+
+  test("попил: бюллетень отдельно от числовых туров и не становится голосом за №1", () => {
+    start("hints", 598995);
+    fireGameData(match598995);
+    pickView("table");
+    pickDay(4);
+    expect(full().querySelector(".pn-mr-outcome")?.textContent).toBe("Подъём: ушли №4, №5");
+    const ballot = full().querySelector(".pn-mr-lift")!;
+    expect(ballot.textContent).toMatch(/Поднимаем всех\?.*За — 6.*Против — 0/s);
+    expect(full().querySelectorAll("tbody tr")).toHaveLength(3);
+  });
+
+  test("выбыл по голосам один игрок, дисквалифицирован другой — итоги не смешиваются", () => {
+    start();
+    const data = {
+      ...match673463.data,
+      players: match673463.data.players.map((p) => p.position === 8
+        ? { ...p, disqual: { day: 2, type: "speech" } } : p),
+    };
+    fireGameData({ ...match673463, data });
+    const statuses = full().querySelectorAll(".pn-mr-day[open] summary .pn-mr-outcome");
+    expect(Array.from(statuses, (el) => el.textContent)).toEqual(["Ушёл №7 · 6:3", "Дисквалификация: №8"]);
+  });
+
+  test("быстрый демонтаж и повторный монтаж таблицы — разбор восстанавливается", () => {
+    start();
+    fireGameData(match673463);
+    const flush = vi.mocked(onDomChange).mock.lastCall![0];
+    const native = document.querySelector(".game-stats-table")!;
+    const replacement = native.cloneNode(true);
+    native.remove();
+    flush([]); // Vue снял таблицу; пришёл проход наблюдателя, якоря ещё нет.
+    expect(full()).toBeNull();
+    vi.advanceTimersByTime(250);
+    document.body.append(replacement);
+    flush([]); // Vue смонтировал замену. Других DOM-изменений ждать нельзя.
+    vi.advanceTimersByTime(600);
+    expect(full()?.nextElementSibling).toBe(replacement);
+    expect(document.querySelectorAll(".pn-match-review")).toHaveLength(1);
+  });
+
+  test("таблица вернулась перед дедлайном ожидания, но после последнего тика", () => {
+    const setIntervalBeforeSpy = globalThis.setInterval;
+    const jitter = vi.spyOn(globalThis, "setInterval").mockImplementation(((fn: () => void, ms?: number) =>
+      setIntervalBeforeSpy(fn, ms === 500 ? 505 : ms)) as typeof setInterval);
+    try {
+      start();
+      const flush = vi.mocked(onDomChange).mock.lastCall![0];
+      const native = document.querySelector(".game-stats-table")!;
+      document.dispatchEvent(new CustomEvent("gameDataParsed", { detail: match673463 }));
+      native.remove();
+      vi.advanceTimersByTime(9700);
+      document.body.append(native);
+      flush([]);
+      expect(full()).toBeNull();
+      vi.advanceTimersByTime(300);
+      expect(full()?.nextElementSibling).toBe(native);
+    } finally {
+      jitter.mockRestore();
+    }
+  });
+
+  test("смена настроек и маршрута не оставляет панель, таймеры или старый разбор", () => {
+    start();
+    fireGameData(match673463);
+    pickView("journal");
+    const first = full();
+    matchStatsFeature.update!(context("classic"));
+    vi.advanceTimersByTime(600);
+    expect(first.isConnected).toBe(false);
+    expect(full()).toBeNull();
+    expect(phaseRows().length).toBeGreaterThan(0);
+    matchStatsFeature.update!(context());
+    vi.advanceTimersByTime(600);
+    expect(document.querySelectorAll(".pn-match-review")).toHaveLength(1);
+    expect(full().querySelector('[aria-pressed="true"]')?.textContent).toContain("Журнал");
+    matchStatsFeature.update!(context("legend")); // отложенный рендер старого матча
+    history.replaceState(null, "", "/match/616168");
+    syncMatchStatsRoute("616168");
+    vi.advanceTimersByTime(600);
+    expect(phaseRows()).toHaveLength(0);
+    expect(full()).toBeNull();
+    matchStatsFeature.update!(context("hints", false));
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
 
 afterEach(() => {

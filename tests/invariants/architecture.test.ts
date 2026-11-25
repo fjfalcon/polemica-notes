@@ -1017,9 +1017,7 @@ describe("§4.7 lifecycle heuristic", () => {
     },
     "src/content/features/match-stats.ts": {
       listeners: 2,
-      // 3 → 2 при переходе на счёт по дереву (28.08.2026): один «таймер»
-      // был словом в строке/комментарии, а не вызовом.
-      timers: 2,
+      timers: 1,
       reason: "timeline row listeners are removed with nodes; timers are tracked in module sets",
     },
     // Диалоги: обработчики висят на УЗЛАХ САМОГО ОКНА и умирают вместе с

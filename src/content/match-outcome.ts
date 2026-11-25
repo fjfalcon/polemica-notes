@@ -10,7 +10,7 @@
  * Семантика туров (сверено с legacy/match_314446.json и AGENTS §4.8):
  *   num 0 — выставление (заявки кандидатур в речах);
  *   num 1 — голосование;
- *   num 2 — повторное голосование (перевес).
+ *   num 2 и далее — повторные голосования (num 3 подтверждён в match/673463).
  */
 
 /** Голос в данных матча. Поля именно такие, как их шлёт сайт. */
@@ -44,6 +44,10 @@ export interface DayOutcome {
  */
 export function isLiftBallot(vote: MatchVote): boolean {
   return vote.num === undefined || vote.num === null;
+}
+
+export function voteRoundName(num: number): string {
+  return num === 0 ? "Выставления" : num === 1 ? "Голосование" : `Переголосование ${num - 1}`;
 }
 
 /**

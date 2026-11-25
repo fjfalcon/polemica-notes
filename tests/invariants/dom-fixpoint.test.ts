@@ -105,7 +105,9 @@ import { playerActionKeysFeature } from "@content/features/player-action-keys";
 import { tiltButtonFeature } from "@content/features/tilt-button";
 import { queueCountsRefreshFeature } from "@content/features/queue-counts-refresh";
 import { roomQueueCountsFeature } from "@content/features/room-queue-counts";
+import { matchStatsFeature } from "@content/features/match-stats";
 import type { FeatureContext } from "@core/feature";
+import match673463 from "../fixtures/match_673463.json";
 
 const ROUND_MS = 600;
 const MAX_ROUNDS = 60;
@@ -176,6 +178,7 @@ afterEach(() => {
   tiltButtonFeature.disable();
   queueCountsRefreshFeature.disable();
   roomQueueCountsFeature.disable();
+  matchStatsFeature.disable();
   syncProfileCrossoverRoute(null);
   syncProfileMmrRoute(null);
   vi.useRealTimers();
@@ -584,6 +587,45 @@ describe("§4 fixpoint: скрыть рейтинг", () => {
     const r = await driveToFixpoint();
     expect(r.settled, `DOM не затих за ${r.rounds} раундов — цикл подписчика`).toBe(true);
     expect(document.querySelectorAll("[data-pn-rating-site]").length).toBe(1 + 3 + 1);
+  });
+});
+
+describe("§4 fixpoint: полный разбор", () => {
+  test("три вида, перемонтирование таблицы сайта и выключение", async () => {
+    history.replaceState(null, "", "/match/673463");
+    document.body.innerHTML = '<div class="game-stats-header">Оригинал</div>';
+    const mountTable = () => document.body.insertAdjacentHTML("beforeend",
+      '<div class="game-stats-table"><div class="table">' +
+        '<div class="row"><div class="cell title">Роль</div></div></div></div>');
+    mountTable();
+    const before = domObserver.subscriberCount();
+    matchStatsFeature.enable({ settings: { match_stats_view: "hints" } } as FeatureContext);
+    expect(domObserver.subscriberCount()).toBe(before + 1);
+    document.dispatchEvent(new CustomEvent("gameDataParsed", { detail: match673463 }));
+    expect((await driveToFixpoint()).settled).toBe(true);
+    const first = document.querySelector(".pn-match-review")!;
+    expect(first.textContent).toContain("Переголосование 2");
+    first.querySelector<HTMLButtonElement>('[data-pn-review-view="journal"]')!.click();
+    first.querySelector<HTMLButtonElement>('[data-pn-review-day="4"]')!.click();
+    const picker = first.querySelector("select")!;
+    picker.value = "7";
+    picker.dispatchEvent(new Event("change"));
+    expect((await driveToFixpoint()).settled).toBe(true);
+    expect(document.querySelector(".pn-match-review")).toBe(first);
+    document.querySelector(".game-stats-table")!.remove();
+    mountTable();
+    expect((await driveToFixpoint()).settled).toBe(true);
+    const panes = document.querySelectorAll(".pn-match-review");
+    expect(panes).toHaveLength(1);
+    expect(panes[0]).not.toBe(first);
+    expect(panes[0].querySelector('[aria-pressed="true"]')?.textContent).toContain("Журнал");
+    expect(panes[0].querySelector(".pn-mr-day-summary")?.textContent).toContain("День 4");
+    expect(panes[0].querySelector("select")?.value).toBe("7");
+    matchStatsFeature.disable();
+    expect(document.querySelector(".pn-match-review")).toBeNull();
+    expect(document.querySelector(".game-stats-header")?.textContent).toBe("Оригинал");
+    expect(domObserver.subscriberCount()).toBe(before);
+    sessionStorage.clear();
   });
 });
 
