@@ -43,10 +43,14 @@ export function createMatchReview(
     const name = players.get(pos)?.username;
     return typeof name === "string" ? name : "";
   };
+  const roleOf = (pos?: number) => {
+    const role = pos !== undefined ? players.get(pos)?.role : undefined;
+    return role === 0 || role === 1 || role === 2 || role === 3 ? role : undefined;
+  };
   const seat = (pos?: number): string => {
     if (!Number.isSafeInteger(pos)) return `<span class="pn-mr-seat" title="Номер не указан">?</span>`;
-    const role = players.get(pos!)?.role;
-    const tone = role === 0 || role === 1 || role === 2 || role === 3 ? ` pn-mr-role-${role}` : "";
+    const role = roleOf(pos);
+    const tone = role !== undefined ? ` pn-mr-role-${role}` : "";
     return `<span class="pn-mr-seat${tone}" title="${escapeHtml(nameOf(pos!))}">№${pos}</span>`;
   };
   const person = (pos?: number) => {
@@ -70,8 +74,15 @@ export function createMatchReview(
   }
 
   function roleLabel(pos: number): string {
-    const role = players.get(pos)?.role;
-    return role === 0 || role === 1 || role === 2 || role === 3 ? `<small>${ROLE_NAMES[role]}</small>` : "";
+    const role = roleOf(pos);
+    return role !== undefined ? `<small class="pn-mr-role-label pn-mr-role-${role}">${ROLE_NAMES[role]}</small>` : "";
+  }
+
+  function voterNumber(pos?: number): string {
+    if (pos === undefined || !Number.isSafeInteger(pos)) return "?";
+    const role = roleOf(pos);
+    return role === undefined ? String(pos)
+      : `<span class="pn-mr-role-${role}" title="№${pos} · ${ROLE_NAMES[role]}">${pos}</span>`;
   }
 
   function formerNameLabel(pos: number): string {
@@ -223,7 +234,7 @@ export function createMatchReview(
   const dayBanner = (d: ReviewDay) => {
     const meta = [voterCount(d), roundCount(d)].filter(Boolean).join(" · ");
     return `<div class="pn-mr-day-summary"><strong>День ${d.day}</strong>${meta ? ` <span>${meta}</span>` : ""}</div>
-      <div class="pn-mr-results"><span class="pn-mr-outcome">${result(d)}</span>
+      <div class="pn-mr-results"><span class="pn-mr-outcome${d.rounds.length ? " pn-mr-vote-result" : ""}">${result(d)}</span>
       ${d.removed.length ? `<span class="pn-mr-outcome">Дисквалификация: ${seats(d.removed)}</span>` : ""}</div>`;
   };
 
@@ -245,7 +256,7 @@ export function createMatchReview(
               const voters = candidates.get(pos);
               const top = r.num > 0 && r.leaders.includes(pos);
               return voters ? `<td${top ? ' class="pn-mr-leading"' : ""}><b>${voters.length}</b>
-                <span class="pn-mr-table-voters">${voters.map((v) => v ?? "?").join(", ")}</span></td>`
+                <span class="pn-mr-table-voters">${voters.map(voterNumber).join(", ")}</span></td>`
                 : '<td class="pn-mr-empty-cell">—</td>';
           }).join("")}</tr>`;
         }).join("")}</tbody>
