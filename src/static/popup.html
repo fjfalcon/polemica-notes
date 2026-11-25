@@ -614,11 +614,16 @@
             <div class="row child"><span>Вид разбора</span>
                 <select id="match_stats_view" class="sel">
                     <option value="hints">Полный вид</option>
+                    <option value="phase_hints">С подсказками</option>
                     <option value="legend">Только сводка</option>
                     <option value="classic">Как в старой версии</option>
                 </select>
             </div>
+            <div class="row child"><span>Раскрывать все дни<span class="hint">В таблице и ходе игры. Кнопка в разборе тоже запоминает выбор для следующих матчей.</span></span>
+                <label class="switch"><input type="checkbox" id="match_review_all_days" aria-label="Раскрывать все дни"><span class="slider"></span></label>
+            </div>
             <p style="font-size:10px;color:var(--muted);margin:6px 2px 0;line-height:1.5">Полный вид — таблица, ход игры и журнал; переключатель на странице матча.<br>
+            С подсказками — фазы раскрыты, туры подписаны, сводка открывается по клику.<br>
             Только сводка — компакт: сводка раскрыта, фазы по клику.<br>
             Старая версия — без сводки и подписей.</p>
         </div>

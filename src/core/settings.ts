@@ -51,6 +51,7 @@ export const DEFAULT_SETTINGS: Settings = {
   obs_clip_minutes: 1,
   match_page_stats_enabled: true,
   match_stats_view: "hints",
+  match_review_all_days: false,
   // "default" теперь БЕЛАЯ (просьба владельца 13.08.2026). Прежний тёмно-синий
   // доступен как "classic" — вернуть старый вид можно одним выбором.
   stats_button_theme: "default",

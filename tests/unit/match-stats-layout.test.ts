@@ -25,7 +25,7 @@ vi.mock("@core/dom", () => ({
 }));
 vi.mock("@core/env", () => ({
   browser: {
-    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) } },
+    storage: { local: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) }, sync: { set: vi.fn(async () => {}) } },
     runtime: { id: "x", getManifest: () => ({ version: "9.7.0" }) },
   },
 }));
@@ -47,6 +47,7 @@ vi.mock("../../src/content/match-data", () => ({
 
 import { matchStatsFeature, syncMatchStatsRoute } from "@content/features/match-stats";
 import { onDomChange } from "@core/dom";
+import { browser } from "@core/env";
 import { AliasResolver, applyMatchAliases, clearAllAliases } from "@content/features/player-notes/nick-alias";
 import type { AliasPolicy } from "@shared/alias-policy";
 import { log } from "@core/log";
@@ -188,6 +189,50 @@ describe("полный и прежние виды: три тура матча 67
     expect(panel.querySelector(".pn-mr-day-banner strong")?.textContent).toBe("День 4");
   });
 
+  test("все дни: одна сетка с итогами матча, возврат в выбранный день и раскрытие хронологии", () => {
+    start("hints", match673041.id);
+    fireGameData(match673041);
+    const panel = full();
+    const all = panel.querySelector<HTMLButtonElement>("[data-pn-review-all]")!;
+    const days = Array.from(panel.querySelectorAll<HTMLDetailsElement>(".pn-mr-day"));
+    all.click();
+    expect(days.every((d) => d.open)).toBe(true);
+    expect(browser.storage.sync.set).toHaveBeenLastCalledWith({ match_review_all_days: true });
+    expect(all.textContent).toBe("Свернуть все дни");
+    all.click();
+    expect(days.every((d) => !d.open)).toBe(true);
+    expect(browser.storage.sync.set).toHaveBeenLastCalledWith({ match_review_all_days: false });
+    pickView("table");
+    all.click();
+    const table = panel.querySelector("table")!;
+    expect(table.tBodies.length).toBe(days.length);
+    const secondDay = Array.from(table.tBodies).find((group) =>
+      group.querySelector(".pn-mr-day-summary strong")?.textContent === "День 2");
+    expect(secondDay?.querySelector(".pn-mr-outcome")?.textContent).toBe("Ушёл №7 · 7:2");
+    expect(secondDay?.querySelectorAll("tr.pn-mr-final")).toHaveLength(1);
+    expect(panel.querySelectorAll("thead")).toHaveLength(1);
+    expect(panel.querySelectorAll("tfoot")).toHaveLength(1);
+    pickDay(2); // даже уже выбранный до открытия всех дней
+    expect(browser.storage.sync.set).toHaveBeenLastCalledWith({ match_review_all_days: false });
+    expect(panel.querySelector("table")?.tBodies.length).toBe(1);
+    expect(all.textContent).toBe("Открыть все дни");
+    pickView("journal");
+    expect(all.hidden).toBe(true);
+  });
+
+  test("сохранённая настройка открывает следующий матч; изменение из попапа применяется на месте", () => {
+    const init = context();
+    buildSitePage(SCOPE_ATTR);
+    history.replaceState(null, "", `/match/${match673463.id}`);
+    matchStatsFeature.enable({ settings: { ...init.settings, match_review_all_days: true } });
+    fireGameData(match673463);
+    expect(full().querySelectorAll(".pn-mr-day:not([open])")).toHaveLength(0);
+    pickView("table");
+    expect(full().querySelector("table")!.tBodies.length).toBeGreaterThan(1);
+    matchStatsFeature.update!(init);
+    expect(full().querySelector("table")!.tBodies).toHaveLength(1);
+  });
+
   test("№673041: одна таблица с голосами, баллами и MMR, ник и профиль по ID", () => {
     start("hints", match673041.id);
     const native = document.querySelector<HTMLElement>(".game-stats-table")!;
@@ -213,10 +258,14 @@ describe("полный и прежние виды: три тура матча 67
     expect(document.querySelector(".pn-mr-table")).toBeNull(); // CSS сайта не видит её
     expect(full().querySelectorAll("table")).toHaveLength(1);
     expect(full().querySelector(".pn-mr-roster")?.hasAttribute("hidden")).toBe(true);
-    const name = table.tHead?.rows[0].cells[9].querySelector("a");
+    const [places, names, roles] = Array.from(table.tHead!.rows);
+    expect(places.cells[9].textContent).toBe("№9");
+    expect(roles.cells[9].textContent).toBe("Мирный");
+    const name = names.cells[9].querySelector("a");
     expect(name?.textContent).toBe("yfii7i7ft6tdr6u6dyt");
     expect(name?.getAttribute("href")).toBe("/profile/158505");
-    expect(table.tHead?.rows[0].cells[9].querySelector(".pn-mr-former")?.textContent)
+    expect(names.cells[9].querySelector("details")?.open).toBe(false);
+    expect(names.cells[9].querySelector(".pn-mr-former")?.textContent)
       .toBe("В матче: Неординарный 2099");
     expect(table.tFoot?.rows[0].cells[9].textContent).toBe("-0,1");
     expect(table.tFoot?.rows[1].cells[9].textContent).toBe("+11");
@@ -280,19 +329,30 @@ describe("полный и прежние виды: три тура матча 67
     expect(full().querySelector(".pn-mr-panel")?.innerHTML).not.toContain("Псевдоним");
   });
 
-  test.each(["legend", "classic"])("%s: видны все три тура матча", (view) => {
+  test.each(["phase_hints", "legend", "classic"])("%s: видны все три тура матча", (view) => {
     start(view);
     fireGameData(match673463);
     expect(full()).toBeNull();
     const day = phaseRows().find((r) => r.dataset.phase === "day-2")!;
+    if (view === "phase_hints") {
+      expect(phaseRows().every((row) => row.style.display !== "none")).toBe(true);
+      const summary = document.querySelector<HTMLElement>(".pn-tl-body")!;
+      expect(summary.style.display).toBe("none");
+      document.querySelector<HTMLElement>(".pn-tl-header")!.click();
+      expect(summary.style.display).toBe("");
+      const toggle = summary.querySelectorAll<HTMLElement>(".pn-tl-line")[1];
+      toggle.click();
+      expect(day.style.display).toBe("none");
+      toggle.click();
+    }
     if (view === "legend") document.querySelectorAll<HTMLElement>(".pn-tl-line")[1].click();
     expect(day.style.display).toBe("");
     const player7 = day.querySelector('[data-player="7"]')!;
     expect(Array.from(player7.querySelectorAll(".action"), (a) => a.querySelectorAll(".voter").length))
-      .toEqual(view === "legend" ? [1, 2, 3, 6] : [2, 3, 6]);
+      .toEqual(view === "classic" ? [2, 3, 6] : [1, 2, 3, 6]);
     expect(Array.from(player7.querySelectorAll(".action")).at(-1)?.getAttribute("data-tip"))
       .toBe("Переголосование 2 за №7");
-    expect(!!player7.querySelector(".pn-tour-label")).toBe(view === "legend");
+    expect(!!player7.querySelector(".pn-tour-label")).toBe(view !== "classic");
   });
 
   test("попил: бюллетень отдельно от числовых туров и не становится голосом за №1", () => {

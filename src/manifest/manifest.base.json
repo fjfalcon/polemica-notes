@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Polemica Notes",
-  "version": "10.4.2",
+  "version": "10.4.3",
   "description": "Неофициальное расширение для polemicagame.com: заметки об игроках, статистика, цветные ники, пауза, мьют и разбор матчей.",
   "permissions": [
     "storage",

@@ -55,6 +55,7 @@ export interface Settings {
   match_page_stats_enabled: boolean;
   /** Вид страницы разбора матча: hints | legend | classic. */
   match_stats_view: string;
+  match_review_all_days: boolean;
   stats_button_theme: StatsTheme;
   /** Цвет темы «своя» (#rrggbb). Работает, когда выбрана тема custom. */
   stats_button_color: string;

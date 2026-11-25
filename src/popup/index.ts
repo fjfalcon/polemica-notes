@@ -1841,6 +1841,7 @@ document.addEventListener("DOMContentLoaded", () => {
     micHotkeyCode = typeof items.mic_sync_hotkey === "string" ? items.mic_sync_hotkey : "";
     renderMicKey();
     set("match_page_stats_enabled", items.match_page_stats_enabled);
+    set("match_review_all_days", items.match_review_all_days);
 
     const sbt = $<HTMLSelectElement>("stats_button_theme");
     if (sbt) sbt.value = items.stats_button_theme || "default";
@@ -2123,6 +2124,7 @@ document.addEventListener("DOMContentLoaded", () => {
       own_avatar_source:
         $<HTMLSelectElement>("own_avatar_source")?.value === "custom" ? "custom" : "site",
       match_page_stats_enabled: cb("match_page_stats_enabled", true),
+      match_review_all_days: cb("match_review_all_days", false),
       match_stats_view: $<HTMLSelectElement>("match_stats_view")?.value || "hints",
       stats_button_theme: ($<HTMLSelectElement>("stats_button_theme")?.value || "default"),
       stats_button_color: readButtonColor(currentButtonColor),
@@ -2267,6 +2269,7 @@ document.addEventListener("DOMContentLoaded", () => {
     "match_page_stats_enabled",
     "stats_button_theme",
     "match_stats_view",
+    "match_review_all_days",
     "auto_hide_roles_enabled",
     "role_phase_auto_switch_enabled",
     "roles_reveal_on_game_end",

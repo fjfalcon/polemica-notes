@@ -81,10 +81,17 @@ export const MATCH_REVIEW_STYLES = `
   .pn-mr-table :is(th,td):last-child { border-right: 0; }
   .pn-mr-table th { background: var(--pn-raised); }
   .pn-mr-table th:first-child { position: sticky; left: 0; z-index: 1; width: 150px; text-align: left; padding-left: 11px; }
+  .pn-mr-table th.pn-mr-group-head { position: static; width: auto; padding: 0; background: var(--pn-soft); }
+  .pn-mr-table td.pn-mr-day-more { padding: 0; text-align: left; }
+  .pn-mr-table thead :is(th,td) { padding-block: 5px; }
+  .pn-mr-table thead th:first-child, .pn-mr-table thead .pn-mr-place {
+    color: var(--pn-muted); font-size: 12px; font-weight: 600;
+  }
+  .pn-mr-table .pn-mr-player-name { vertical-align: top; }
   .pn-mr-table th :is(.pn-mr-name,small), .pn-mr-table-voters { display: block; font-size: 11px; }
   .pn-mr-table th .pn-mr-name {
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
-    font-size: 12px; line-height: 1.35; margin: 4px 0 2px;
+    font-size: 13px; line-height: 1.35;
   }
   .pn-mr-name { color: inherit; font-weight: 650; text-decoration: none; }
   a.pn-mr-name { text-decoration: underline; text-decoration-color: #77777b; text-underline-offset: .18em; }
@@ -93,7 +100,8 @@ export const MATCH_REVIEW_STYLES = `
   .pn-mr-table th small, .pn-mr-table-voters, .pn-mr-empty-cell { color: var(--pn-muted); }
   .pn-mr-table th small { font-weight: 450; }
   .pn-mr-table-voters { margin-top: 2px; font-variant-numeric: tabular-nums; }
-  .pn-mr-table-voters span, .pn-mr-table th .pn-mr-role-label, .pn-mr-roster-player .pn-mr-role-label {
+  .pn-mr-nominators { margin-top: 0; font-size: 13px; }
+  .pn-mr-table-voters span, .pn-mr-table .pn-mr-role-label, .pn-mr-roster-player .pn-mr-role-label {
     color: var(--role-ink); font-weight: 650;
   }
   .pn-mr-table td b { font-size: 18px; font-variant-numeric: tabular-nums; }
@@ -175,7 +183,7 @@ export const MATCH_REVIEW_STYLES = `
   }
   .pn-mr-roster-player small, .pn-mr-roster-scores { color: var(--pn-muted); font-size: 12px; }
   .pn-mr-former { display: block; color: var(--pn-muted); font-size: 10px; }
-  .pn-mr-table .pn-mr-former { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .pn-mr-name-history { margin-top: 3px; color: var(--pn-muted); font-size: 11px; font-weight: 450; }
   .pn-mr-roster-scores { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 3px; }
   .pn-mr-shooting-list li { margin-top: 4px; color: var(--pn-muted); font-size: 12px; }
   @media (forced-colors: active) {

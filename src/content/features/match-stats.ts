@@ -13,6 +13,8 @@ import { onDomChange } from "@core/dom";
 import { escapeHtml } from "@core/escape";
 import { actionTip, isLiftBallot, resolveDayOutcome, voteRoundName } from "../match-outcome";
 import { log } from "@core/log";
+import { setSettings } from "@core/settings";
+import { showToast } from "@core/toast";
 import { getLastGameData, getMatchId } from "../match-data";
 import { analyzeMafiaShots, shotIconTitle } from "../mafia-shots";
 import { buildMatchReview, type ReviewBestMove } from "../match-review-data";
@@ -155,9 +157,9 @@ function applyScope(el: HTMLElement, scopeAttr: string | null): void {
 }
 
 /** Ключ hints остаётся прежним: он уже записан в настройках пользователей. */
-function viewMode(): "hints" | "legend" | "classic" {
+function viewMode(): "hints" | "phase_hints" | "legend" | "classic" {
   const view = settings?.match_stats_view;
-  return view === "legend" || view === "classic" ? view : "hints";
+  return view === "phase_hints" || view === "legend" || view === "classic" ? view : "hints";
 }
 
 function statsEnabled(): boolean {
@@ -284,6 +286,16 @@ function enhance(gameData: any): void {
       fullReview = createMatchReview(review, fullReviewState, {
         id: matchIdAtStart, winner: winnerBadge(gameData.winnerCode).text, mafiaWon: gameData.winnerCode === 1,
         judge: typeof gameData.judge?.username === "string" ? gameData.judge.username : undefined,
+        allDays: settings?.match_review_all_days === true,
+        saveAllDays: (next) => {
+          if (!settings || settings.match_review_all_days === next) return;
+          settings = { ...settings, match_review_all_days: next };
+          void setSettings({ match_review_all_days: next }).catch((e) => {
+            log.warn(SCOPE, "не удалось сохранить режим всех дней", e);
+            if (activeMatchId === matchIdAtStart && settings?.match_review_all_days === next)
+              showToast("Не удалось запомнить выбор дней для следующих матчей", { kind: "warn" });
+          });
+        },
       });
       fullReviewTable = table;
       fullReviewAnchor = anchor;
@@ -292,7 +304,7 @@ function enhance(gameData: any): void {
       replaceNativeHeader();
       return;
     }
-    enhanceTable(table, gameData, view === "classic");
+    enhanceTable(table, gameData, view);
     trackTimeout(() => {
       if (!current() || !table.isConnected) return;
       addBestMoveIndicators(table, moves);
@@ -499,7 +511,8 @@ function renderVotesBlock(
  * не встречался в данных (ожидаемо `candidate: 0`).
  */
 
-function enhanceTable(table: HTMLElement, gameData: any, classic: boolean): void {
+function enhanceTable(table: HTMLElement, gameData: any, view: "phase_hints" | "legend" | "classic"): void {
+  const classic = view === "classic";
   const gameDetails = gameData.data || {};
   const players = gameDetails.players || [];
   const phases = processGamePhases(gameDetails);
@@ -625,7 +638,7 @@ function enhanceTable(table: HTMLElement, gameData: any, classic: boolean): void
   // Таймлайн со сворачиванием: детальные строки фаз спрятаны, над таблицей —
   // компактная строка на каждый день (итог голосования + ночь + штрафы);
   // клик по строке раскрывает подробности. Таблица вдвое короче.
-  if (!classic) buildPhaseTimeline(table, players, phases, gameDetails);
+  if (!classic) buildPhaseTimeline(table, players, phases, gameDetails, view === "legend");
 }
 
 /**
@@ -712,6 +725,7 @@ function buildPhaseTimeline(
   players: any[],
   phases: Array<{ day: any[]; night: any[] }>,
   gameDetails: any,
+  compact: boolean,
 ): void {
   const detailRowsByPhase = new Map<number, HTMLElement[]>();
   table.querySelectorAll<HTMLElement>(".row[data-phase]").forEach((row) => {
@@ -720,7 +734,7 @@ function buildPhaseTimeline(
     const n = parseInt(m[1], 10);
     if (!detailRowsByPhase.has(n)) detailRowsByPhase.set(n, []);
     detailRowsByPhase.get(n)!.push(row);
-    row.style.display = "none";
+    if (compact) row.style.display = "none";
     row.classList.add("pn-phase-detail");
   });
   if (detailRowsByPhase.size === 0) return;
@@ -735,9 +749,10 @@ function buildPhaseTimeline(
 
   const tlHeader = document.createElement("div");
   tlHeader.className = "pn-tl-header";
-  tlHeader.innerHTML = '<span class="pn-tl-toggle">▾</span> Сводка по дням';
+  tlHeader.innerHTML = `<span class="pn-tl-toggle">${compact ? "▾" : "▸"}</span> Сводка по дням`;
   const tlBody = document.createElement("div");
   tlBody.className = "pn-tl-body";
+  if (!compact) tlBody.style.display = "none";
   tlHeader.addEventListener("click", () => {
     const show = tlBody.style.display === "none";
     tlBody.style.display = show ? "" : "none";
@@ -801,7 +816,7 @@ function buildPhaseTimeline(
     const line = document.createElement("div");
     line.className = "pn-tl-line";
     line.innerHTML =
-      '<span class="pn-tl-toggle">▸</span>' +
+      `<span class="pn-tl-toggle">${compact ? "▸" : "▾"}</span>` +
       `<span class="pn-tl-phase">${n} ☀️</span><span class="pn-tl-group">${dayHtml}</span>` +
       (nightHtml ? `<span class="pn-tl-phase">🌙</span><span class="pn-tl-group">${nightHtml}</span>` : "") +
       penaltyHtml;
@@ -1856,6 +1871,7 @@ export const matchStatsFeature: Feature = {
 
   update(ctx: FeatureContext): void {
     const prevView = viewMode();
+    const prevAll = settings?.match_review_all_days === true;
     settings = ctx.settings;
     if (!statsEnabled()) {
       if (activeMatchId) stopMatchRoute(false);
@@ -1867,6 +1883,8 @@ export const matchStatsFeature: Feature = {
     } else if (prevView !== viewMode()) {
       const cached = latestGameData ?? getLastGameData();
       if (cached) enhance(cached);
+    } else if (prevAll !== (settings.match_review_all_days === true)) {
+      fullReview?.setAllDays(settings.match_review_all_days === true);
     }
   },
 
