@@ -48,6 +48,7 @@ vi.mock("../../src/content/match-data", () => ({
 import { matchStatsFeature, syncMatchStatsRoute } from "@content/features/match-stats";
 import { onDomChange } from "@core/dom";
 import { browser } from "@core/env";
+import { showToast } from "@core/toast";
 import { AliasResolver, applyMatchAliases, clearAllAliases } from "@content/features/player-notes/nick-alias";
 import type { AliasPolicy } from "@shared/alias-policy";
 import { log } from "@core/log";
@@ -149,6 +150,50 @@ describe("полный и прежние виды: три тура матча 67
     buildSitePage(SCOPE_ATTR);
     matchStatsFeature.enable(context(view));
   }
+
+  const viewPicker = () => document.querySelector<HTMLSelectElement>(".pn-match-view-picker select");
+  // jsdom не создаёт доверенные события ввода; вызываем обработчик самого контрола.
+  async function chooseFormat(select: HTMLSelectElement, value: string) {
+    select.value = value;
+    await select.onchange!.call(select, { isTrusted: true } as Event);
+  }
+
+  test("выбор на странице пишет только вид разбора; страница следует общей настройке во всех форматах", async () => {
+    start("classic");
+    fireGameData(match673463);
+    const select = viewPicker()!;
+    expect(select.value).toBe("classic");
+    expect(Array.from(select.options, (option) => option.text)).toEqual([
+      "Полный вид", "С подсказками", "Только сводка", "Как в старой версии",
+    ]);
+    for (const view of ["phase_hints", "legend", "classic", "hints"]) {
+      await chooseFormat(select, view);
+      expect(browser.storage.sync.set).toHaveBeenLastCalledWith({ match_stats_view: view });
+      matchStatsFeature.update!(context(view)); // доставка изменения storage через FeatureManager
+      vi.advanceTimersByTime(600);
+      expect(viewPicker()).toBe(select);
+      expect(select.closest("[data-pn-review-replaced]")).toBeNull();
+      expect(!!host()).toBe(view === "hints");
+      expect(!!document.querySelector(".pn-timeline")).toBe(view === "phase_hints" || view === "legend");
+    }
+    matchStatsFeature.update!(context("legend")); // выбор из попапа
+    expect(select.value).toBe("legend");
+    matchStatsFeature.disable();
+    expect(viewPicker()).toBeNull();
+    start("legend", match673041.id);
+    fireGameData(match673041);
+    expect(viewPicker()?.value).toBe("legend");
+  });
+
+  test("отказ записи возвращает сохранённый формат и сообщает об ошибке", async () => {
+    start();
+    fireGameData(match673463);
+    vi.mocked(browser.storage.sync.set).mockRejectedValueOnce(new Error("quota"));
+    await chooseFormat(viewPicker()!, "classic");
+    expect(viewPicker()?.value).toBe("hints");
+    expect(host()).not.toBeNull();
+    expect(showToast).toHaveBeenCalledWith("Не удалось сохранить вид разбора", { kind: "warn" });
+  });
 
   test("хронология, таблица и фильтруемый журнал используют одни и те же три тура", () => {
     start();

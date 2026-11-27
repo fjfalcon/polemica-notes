@@ -52,6 +52,7 @@ let fullReviewTable: HTMLElement | null = null;
 let fullReviewAnchor: HTMLElement | null = null;
 let fullReviewHeader: HTMLElement | null = null;
 let fullReviewState: MatchReviewState | null = null;
+let viewPicker: { label: HTMLLabelElement; select: HTMLSelectElement } | null = null;
 const REPLACED_BY_REVIEW = "data-pn-review-replaced";
 /**
  * Ожидание таблицы от ПРЕДЫДУЩЕГО enhance(). Обязано быть модульным: два
@@ -157,9 +158,49 @@ function applyScope(el: HTMLElement, scopeAttr: string | null): void {
 }
 
 /** Ключ hints остаётся прежним: он уже записан в настройках пользователей. */
-function viewMode(): "hints" | "phase_hints" | "legend" | "classic" {
+const VIEW_LABELS = {
+  hints: "Полный вид",
+  phase_hints: "С подсказками",
+  legend: "Только сводка",
+  classic: "Как в старой версии",
+} as const;
+
+function viewMode(): keyof typeof VIEW_LABELS {
   const view = settings?.match_stats_view;
   return view === "phase_hints" || view === "legend" || view === "classic" ? view : "hints";
+}
+
+function mountViewPicker(matchId: string): void {
+  const header = document.querySelector<HTMLElement>(SITE.statsHeader);
+  if (!header) return;
+  if (!viewPicker) {
+    const label = document.createElement("label");
+    label.className = "pn-match-view-picker";
+    label.textContent = "Вид разбора";
+    const select = document.createElement("select");
+    select.title = "Запомнить вид для следующих матчей";
+    for (const [value, text] of Object.entries(VIEW_LABELS)) select.add(new Option(text, value));
+    select.value = viewMode();
+    let lastWrite = 0;
+    select.onchange = async (event) => {
+      if (!event.isTrusted || getMatchId() !== matchId || viewPicker?.select !== select) return;
+      const value = select.value;
+      if (!Object.hasOwn(VIEW_LABELS, value)) return;
+      const write = ++lastWrite;
+      try {
+        // Та же подписка на storage, что и у попапа, перерисует этот и другие матчи.
+        await setSettings({ match_stats_view: value });
+      } catch (e) {
+        log.warn(SCOPE, "не удалось сохранить вид разбора", e);
+        if (write !== lastWrite || viewPicker?.select !== select || getMatchId() !== matchId) return;
+        select.value = viewMode();
+        showToast("Не удалось сохранить вид разбора", { kind: "warn" });
+      }
+    };
+    label.append(select);
+    viewPicker = { label, select };
+  }
+  if (viewPicker.label.parentElement !== header.parentElement) header.before(viewPicker.label);
 }
 
 function statsEnabled(): boolean {
@@ -1412,6 +1453,10 @@ export function applyAutoHeight(): void {
 
 function injectBaseStyles(): void {
   appendStyle(`
+    .pn-match-view-picker { display: flex; flex-wrap: wrap; align-items: center;
+      justify-content: flex-end; gap: 8px; margin: 0 0 10px; color: #cbd5e1; font-size: 14px; }
+    .pn-match-view-picker select { font: inherit; color-scheme: dark; color: #f1f5f9;
+      background: #1e293b; border: 1px solid #475569; border-radius: 8px; padding: 5px 8px; }
     /*
      * Страховка раскладки НАШИХ строк фаз. Первый пояс — scope сайта
      * (detectScopeAttr), под которым лежит настоящий .table .row/.cell CSS;
@@ -1756,6 +1801,11 @@ function stopMatchRoute(preserveSnapshot = true): void {
   timeouts.clear();
   for (const style of injectedStyles) style.remove();
   injectedStyles.length = 0;
+  if (viewPicker) {
+    viewPicker.select.onchange = null;
+    viewPicker.label.remove();
+    viewPicker = null;
+  }
   removeEnhancements();
   // Ссылки на профили снимаем ТОЛЬКО здесь, при уходе со страницы или
   // выключении фичи. В removeEnhancements нельзя: он зовётся на каждой
@@ -1805,6 +1855,7 @@ function startMatchRoute(matchId: string): void {
     // без этого гейта enhance() выходил по несовпадению id, НЕ очищая pending,
     // и каждый DOM-флеш окна навешивал новый setInterval(applyAutoHeight).
     if (getMatchId() !== matchId || !statsEnabled()) return;
+    if (previousRouteTable === null) mountViewPicker(matchId);
     // Vue мог пересоздать секцию того же матча. Панель привязана к живой
     // таблице; если якорь исчез, восстанавливаем её один раз по тем же данным.
     if (fullReview && (!fullReview.root.isConnected || !fullReviewTable?.isConnected || !fullReviewAnchor?.isConnected)) {
@@ -1835,6 +1886,7 @@ function startMatchRoute(matchId: string): void {
       clearTrackedInterval(routeReadyInterval!);
       routeReadyInterval = null;
       clearPreviousRouteSnapshot();
+      if (getMatchId() === matchId) mountViewPicker(matchId);
       ensureAutoHeight();
       if (pendingGameData) enhance(pendingGameData);
     }, 100),
@@ -1877,6 +1929,7 @@ export const matchStatsFeature: Feature = {
       if (activeMatchId) stopMatchRoute(false);
       return;
     }
+    if (viewPicker && viewPicker.select.value !== viewMode()) viewPicker.select.value = viewMode();
     const matchId = getMatchId();
     if (!matchId || activeMatchId !== matchId) {
       syncMatchStatsRoute(matchId);
